@@ -1,5 +1,6 @@
+*.pyc
+.pytest-tmp/
 .venv/
+__pycache__/
 models/
 spike/audio/
-__pycache__/
-*.pyc
