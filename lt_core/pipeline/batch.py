@@ -11,7 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..asr.transcriber import SUPPORTED_LANGUAGES, Transcriber, TranscribeOptions
+from .. import languages
+from ..asr.transcriber import Transcriber, TranscribeOptions
 from ..asr.types import Transcript
 from ..media import MediaInfo, resolve
 from ..mt.translator import TranslationReport, Translator
@@ -45,12 +46,14 @@ class BatchResult:
 
     @property
     def language_name(self) -> str:
-        return SUPPORTED_LANGUAGES.get(self.transcript.language,
-                                       self.transcript.language)
+        # Named from the whole catalogue, not from what this build offers: a
+        # French recording should be reported as French, with a note that it is
+        # outside what has been measured, rather than as the bare code "fr".
+        return languages.describe(self.transcript.language)
 
     @property
     def is_supported_language(self) -> bool:
-        return self.transcript.language in SUPPORTED_LANGUAGES
+        return languages.is_active(self.transcript.language)
 
     def locate(self, sentence_index: int) -> float:
         """When the given translated sentence starts, in seconds."""
@@ -131,11 +134,11 @@ def transcribe_file(
     translated_cues = None
     report = None
     if translator is not None and target_language:
-        stage(f"Перевожу на {SUPPORTED_LANGUAGES.get(target_language, target_language)}")
+        stage(f"Перевожу на {languages.describe(target_language)}")
         # Whole sentences, not cues. A cue is cut for reading speed and is
         # often a fragment, and a fragment is what makes this model invent.
         groups = group_into_sentences(cues)
-        joiner = "" if transcript.language in ("zh", "ja") else " "
+        joiner = " " if languages.joins_with_space(transcript.language) else ""
         sentences = [
             joiner.join(cues[position].flat_text for position in group)
             for group in groups
@@ -144,7 +147,7 @@ def transcribe_file(
             sentences, transcript.language, target_language
         )
 
-        target_joins_with_space = target_language not in ("zh", "ja")
+        target_joins_with_space = languages.joins_with_space(target_language)
         translations: list[str] = [""] * len(cues)
         for group, translated in zip(groups, sentence_translations):
             shares = distribute(

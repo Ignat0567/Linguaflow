@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from lt_core import languages  # noqa: E402
 from lt_core.asr.transcriber import (  # noqa: E402
     SUPPORTED_LANGUAGES,
     Transcriber,

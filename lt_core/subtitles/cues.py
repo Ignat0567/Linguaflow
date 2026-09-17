@@ -22,10 +22,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .. import languages
 from ..asr.types import Segment, Transcript, Word
 
-# Languages written without spaces between words.
-_SCRIPTUA_CONTINUA = {"zh", "ja"}
+
+def _writes_without_spaces(language: str) -> bool:
+    """Chinese and Japanese put no spaces between words.
+
+    Read from the catalogue rather than hard-coded, so a language added there
+    brings its own answer with it.
+    """
+    entry = languages.get(language)
+    return bool(entry and entry.scriptio_continua)
+
 
 # Strong break: a sentence ended here, so a cue may end here at no cost.
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]]*$")
@@ -91,7 +100,7 @@ class CueStyle:
 
     @classmethod
     def for_language(cls, language: str) -> "CueStyle":
-        if language in _SCRIPTUA_CONTINUA:
+        if _writes_without_spaces(language):
             # A Chinese line of 42 characters is roughly three times the
             # content of a Latin one and takes far longer to read.
             return cls(

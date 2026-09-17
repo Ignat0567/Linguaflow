@@ -10,17 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-# Whisper's two-letter codes mapped to the codes NLLB uses. The script matters:
-# NLLB distinguishes rus_Cyrl from rus_Latn, and zho_Hans from zho_Hant.
+from .. import languages
+
+# Whisper's two-letter codes mapped to the codes NLLB uses, for every language
+# in the catalogue -- including those this build does not currently offer, so
+# that enabling one needs no change here.
 NLLB_CODES: dict[str, str] = {
-    "en": "eng_Latn",
-    "de": "deu_Latn",
-    "ru": "rus_Cyrl",
-    "zh": "zho_Hans",
-    "ja": "jpn_Jpan",
-    "es": "spa_Latn",
-    "it": "ita_Latn",
-    "fr": "fra_Latn",
+    code: language.nllb for code, language in languages.CATALOGUE.items()
 }
 
 

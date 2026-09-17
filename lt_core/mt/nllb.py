@@ -24,6 +24,7 @@ import re
 import time
 from pathlib import Path
 
+from .. import languages
 from ..runtime import bootstrap
 from .types import NLLB_CODES, TranslationError
 
@@ -182,7 +183,7 @@ class NllbTranslator:
                 tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip()
             )
 
-        joiner = "" if target in {"zh", "ja"} else " "
+        joiner = " " if languages.joins_with_space(target) else ""
         return [
             _strip_subtitle_artefacts(
                 joiner.join(part for part in parts if part), texts[position]

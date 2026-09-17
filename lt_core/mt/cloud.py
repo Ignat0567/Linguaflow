@@ -19,19 +19,19 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from .. import languages
 from .types import TranslationError
 
-# DeepL's own codes. It distinguishes target variants (EN-GB vs EN-US) and
-# rejects a plain "EN" as a target.
+# DeepL's own codes, and the English names an LLM prompt needs. Both are
+# properties of a language, so both live with it.
 _DEEPL_SOURCE = {
-    "en": "EN", "de": "DE", "ru": "RU", "zh": "ZH",
-    "ja": "JA", "es": "ES", "it": "IT", "fr": "FR",
+    code: language.deepl_source for code, language in languages.CATALOGUE.items()
 }
-_DEEPL_TARGET = {**_DEEPL_SOURCE, "en": "EN-GB"}
-
+_DEEPL_TARGET = {
+    code: language.deepl_target for code, language in languages.CATALOGUE.items()
+}
 _LANGUAGE_NAMES = {
-    "en": "English", "de": "German", "ru": "Russian", "zh": "Chinese",
-    "ja": "Japanese", "es": "Spanish", "it": "Italian", "fr": "French",
+    code: language.english_name for code, language in languages.CATALOGUE.items()
 }
 
 

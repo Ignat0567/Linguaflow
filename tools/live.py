@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from lt_core import languages  # noqa: E402
 from lt_core.asr.transcriber import SUPPORTED_LANGUAGES, Transcriber  # noqa: E402
 from lt_core.audio.capture import CaptureError, FileSource, open_source  # noqa: E402
 from lt_core.audio.devices import default_device, find_device  # noqa: E402
@@ -97,8 +98,8 @@ def main() -> int:
             return 2
         session = ConversationSession(
             transcriber, translator,
-            Side(args.language, f"A · {SUPPORTED_LANGUAGES[args.language]}"),
-            Side(args.conversation, f"B · {SUPPORTED_LANGUAGES[args.conversation]}"),
+            Side(args.language, f"A · {languages.describe(args.language)}"),
+            Side(args.conversation, f"B · {languages.describe(args.conversation)}"),
             pace=pace,
         )
     else:
@@ -115,7 +116,7 @@ def main() -> int:
           f"ожидаемая задержка ~{pace.expected_delay:.1f} с")
     if translator is not None:
         print(f"Перевод:   {translator.provider.name} → "
-              f"{SUPPORTED_LANGUAGES.get(args.to, args.to)}")
+              f"{languages.describe(args.to)}")
     print("Ctrl+C — остановить.\n")
 
     begin = time.perf_counter()

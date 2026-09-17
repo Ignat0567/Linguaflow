@@ -18,22 +18,13 @@ from pathlib import Path
 
 import numpy as np
 
+from .. import languages
 from ..runtime import bootstrap
 from .types import Segment, Transcript, Word
 
-# The eight languages this product commits to. Whisper knows ninety-nine, but
-# auto-detection given a two-second cough will confidently return Welsh, and
-# every language outside this set is one nobody has measured.
-SUPPORTED_LANGUAGES: dict[str, str] = {
-    "en": "английский",
-    "de": "немецкий",
-    "ru": "русский",
-    "zh": "китайский",
-    "ja": "японский",
-    "es": "испанский",
-    "it": "итальянский",
-    "fr": "французский",
-}
+# Languages are declared in one place; see lt_core.languages for why, and for
+# how to offer more of them.
+SUPPORTED_LANGUAGES: dict[str, str] = languages.names()
 
 DEFAULT_MODEL = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 
@@ -102,10 +93,15 @@ class Transcriber:
         only if the caller knows the total, hence `total_duration` for arrays.
         """
         options = options or TranscribeOptions()
-        if options.language and options.language not in SUPPORTED_LANGUAGES:
+        if options.language and not languages.is_active(options.language):
+            known = languages.get(options.language)
+            extra = (
+                f" Язык «{known.name}» есть в каталоге, но в этой сборке выключен."
+                if known else ""
+            )
             raise UnsupportedLanguage(
-                f"Язык «{options.language}» не поддерживается. Доступны: "
-                + ", ".join(f"{code} ({name})" for code, name in SUPPORTED_LANGUAGES.items())
+                f"Язык «{options.language}» не поддерживается. "
+                f"Доступны: {languages.offered_list()}.{extra}"
             )
 
         source = str(Path(audio).resolve()) if isinstance(audio, (str, Path)) else audio

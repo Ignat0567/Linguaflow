@@ -95,12 +95,10 @@ def test_unknown_export_format_is_refused_before_transcribing(tmp_path):
         transcribe_file(path, ExplodingTranscriber(), formats=("srt", "docx"))
 
 
-def test_supported_languages_are_the_eight_agreed():
+def test_this_build_offers_the_three_agreed_languages():
     from lt_core.asr.transcriber import SUPPORTED_LANGUAGES
 
-    assert set(SUPPORTED_LANGUAGES) == {
-        "en", "de", "ru", "zh", "ja", "es", "it", "fr"
-    }
+    assert set(SUPPORTED_LANGUAGES) == {"ru", "en", "de"}
 
 
 def test_unsupported_language_is_rejected_by_name():
