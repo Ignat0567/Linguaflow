@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from lt_core import languages
 
 from . import glass, theme
+from .i18n import _
 from .store import display_name
 
 
@@ -121,7 +122,7 @@ class LanguagePair(QWidget):
         self._from.clear()
         self._to.clear()
         if self._allow_auto:
-            self._from.addItem("Автоопределение", "auto")
+            self._from.addItem(_("Автоопределение"), "auto")
         for code, language in languages.active().items():
             label = display_name(language.code)
             self._from.addItem(label, code)
@@ -200,7 +201,7 @@ class GlassCard(glass.Hoverable):
         glass.paint_glass(
             self, painter, self.rect().adjusted(0, 0, -1, -1),
             theme.RADIUS_CARD,
-            theme.TINT + (0.04 if self._hover else 0.0),
+            theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
             accent_fill=self._accent,
         )
 
@@ -220,7 +221,7 @@ class AccentSwatch(glass.Hoverable):
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
         painter.setBrush(QColor(self.colour))
         painter.setPen(
-            QPen(theme.white(0.95), 2) if self.isChecked() else QPen(theme.white(0.25), 1)
+            QPen(theme.ink(0.95), 2) if self.isChecked() else QPen(theme.ink(0.25), 1)
         )
         painter.drawEllipse(rect)
 
@@ -243,10 +244,11 @@ class NavItem(glass.Hoverable):
         path = QPainterPath()
         path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
         if self.isChecked():
-            painter.fillPath(path, theme.white(0.96))
-            painter.setPen(theme.INK)
+            painter.fillPath(path, theme.ink(0.96))
+            painter.setPen(theme.base())
         else:
-            painter.setPen(theme.white(1.0 if self._hover else theme.SECONDARY))
+            painter.setPen(theme.ink(theme.text_alpha(
+                1.0 if self._hover else theme.SECONDARY)))
         painter.setFont(theme.font(13, 600))
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
@@ -256,16 +258,24 @@ class NavBar(glass.GlassPanel):
 
     chosen = Signal(str)
 
-    ITEMS = (
-        ("home", "Главная"),
-        ("realtime", "Реальное время"),
-        ("upload", "Загрузка"),
-        ("history", "История"),
-        ("settings", "Настройки"),
-    )
+    #: Screen order. The captions are looked up when the bar is built, not
+    #: here: a class body runs at import, before the stored interface
+    #: language has been applied, and the nav would stay in Russian while
+    #: every other caption changed.
+    SCREENS = ("home", "realtime", "upload", "history", "settings")
+
+    @staticmethod
+    def captions() -> tuple[tuple[str, str], ...]:
+        return (
+            ("home", _("Главная")),
+            ("realtime", _("Реальное время")),
+            ("upload", _("Загрузка")),
+            ("history", _("История")),
+            ("settings", _("Настройки")),
+        )
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent, radius=theme.RADIUS_PILL, tint=theme.TINT_RAISED)
+        super().__init__(parent, radius=theme.RADIUS_PILL, tint=theme.tint(raised=True))
         self.setFixedHeight(theme.NAV_HEIGHT + 16)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
@@ -279,7 +289,7 @@ class NavBar(glass.GlassPanel):
         row.setSpacing(4)
         row.addWidget(mark)
         self._items: dict[str, NavItem] = {}
-        for index, (key, text) in enumerate(self.ITEMS):
+        for index, (key, text) in enumerate(self.captions()):
             item = NavItem(text, key, self)
             if key == "realtime":
                 item.setMinimumWidth(128)
@@ -290,8 +300,8 @@ class NavBar(glass.GlassPanel):
         self.set_active("home")
 
     def _emit(self, index: int) -> None:
-        if 0 <= index < len(self.ITEMS):
-            self.chosen.emit(self.ITEMS[index][0])
+        if 0 <= index < len(self.SCREENS):
+            self.chosen.emit(self.SCREENS[index])
 
     def set_active(self, key: str) -> None:
         item = self._items.get(key)
@@ -315,8 +325,8 @@ def dashed_panel(widget: QWidget, painter: QPainter, radius: int = 28) -> None:
     """The upload dropzone: glass fill, dashed rather than solid edge."""
     rect = widget.rect().adjusted(1, 1, -2, -2)
     path = glass.paint_glass(
-        widget, painter, rect, radius, theme.TINT, border=0.0
+        widget, painter, rect, radius, None, border=0.0
     )
-    painter.setPen(QPen(theme.white(0.35), 1.5, Qt.DashLine))
+    painter.setPen(QPen(theme.ink(0.35), 1.5, Qt.DashLine))
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(path)

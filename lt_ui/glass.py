@@ -47,11 +47,19 @@ def paint_glass(
     painter: QPainter,
     rect: QRect,
     radius: int,
-    tint: float = theme.TINT,
+    tint: float | None = None,
     accent_fill: bool = False,
-    border: float = theme.BORDER,
+    border: float | None = None,
 ) -> QPainterPath:
-    """Paint the handoff's glass recipe into `rect` of `widget`."""
+    """Paint the handoff's glass recipe into `rect` of `widget`.
+
+    `tint` and `border` default to whatever the current mode asks for, and
+    are resolved here rather than in the signature: a default argument is
+    bound once at import, which would freeze the app in the mode it started
+    in.
+    """
+    if tint is None:
+        tint = theme.tint()
     if radius >= theme.RADIUS_PILL:
         radius = rect.height() // 2
     path = QPainterPath()
@@ -71,10 +79,10 @@ def paint_glass(
     if accent_fill:
         gradient = QLinearGradient(QPointF(rect.topLeft()), QPointF(rect.bottomRight()))
         gradient.setColorAt(0.0, theme.accent(0.55))
-        gradient.setColorAt(1.0, theme.white(0.10))
+        gradient.setColorAt(1.0, theme.surface(0.10))
         painter.fillPath(path, QBrush(gradient))
     else:
-        painter.fillPath(path, theme.white(tint))
+        painter.fillPath(path, theme.surface(tint))
 
     # The inset highlight along the top edge. Without it a panel reads as a
     # flat wash; with it, as something with a lit edge.
@@ -82,10 +90,11 @@ def paint_glass(
     highlight.addRoundedRect(
         QRectF(rect.x(), rect.y(), rect.width(), 2.0), radius, radius
     )
-    painter.fillPath(highlight, theme.white(theme.HIGHLIGHT))
+    painter.fillPath(highlight, theme.white(theme.highlight()))
     painter.restore()
 
-    painter.setPen(QPen(theme.white(border), 1))
+    edge = theme.border_colour() if border is None else theme.ink(border)
+    painter.setPen(QPen(edge, 1))
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(path)
     return path
@@ -98,7 +107,7 @@ class GlassPanel(QWidget):
         self,
         parent: QWidget | None = None,
         radius: int = theme.RADIUS_PANEL,
-        tint: float = theme.TINT,
+        tint: float | None = None,
         accent_fill: bool = False,
     ) -> None:
         super().__init__(parent)
@@ -175,13 +184,13 @@ class GlassButton(Hoverable):
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), radius, radius)
             painter.fillPath(path, theme.accent(0.88 if self._hover else 1.0))
-            painter.setPen(theme.INK)
+            painter.setPen(theme.on_accent())
         else:
             paint_glass(
                 self, painter, rect, theme.RADIUS_PILL,
-                theme.TINT + (0.04 if self._hover else 0.0),
+                theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
             )
-            painter.setPen(theme.white(theme.PRIMARY))
+            painter.setPen(theme.ink(theme.PRIMARY))
         if self.hasFocus():
             pen = painter.pen()
             painter.setPen(QPen(theme.accent(0.9), 2))
@@ -212,7 +221,8 @@ class TextLink(Hoverable):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setFont(theme.font(self._size, 500))
-        painter.setPen(theme.white(1.0 if self._hover else self._alpha))
+        painter.setPen(theme.ink(theme.text_alpha(
+            1.0 if self._hover else self._alpha)))
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
@@ -256,7 +266,11 @@ class Toggle(QAbstractButton):
             painter.fillPath(path, theme.accent(0.95))
         else:
             paint_glass(self, painter, rect, theme.RADIUS_PILL)
-        painter.setBrush(theme.white(0.95))
+        # On the accent fill a white knob reads; on a pale glass panel in
+        # light mode it disappears into the panel.
+        lit = self.isChecked() or not theme.is_light()
+        knob = theme.white(0.98) if lit else theme.ink(0.45)
+        painter.setBrush(knob)
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(QPointF(self._position + 8.5, rect.height() / 2), 8.5, 8.5)
 
@@ -287,10 +301,11 @@ class Chip(Hoverable):
             painter.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
-            painter.fillPath(path, theme.white(0.94))
-            painter.setPen(theme.INK)
+            painter.fillPath(path, theme.ink(0.94))
+            painter.setPen(theme.base())
         else:
-            painter.setPen(theme.white(0.88 if self._hover else theme.SECONDARY))
+            painter.setPen(theme.ink(theme.text_alpha(
+                0.88 if self._hover else theme.SECONDARY)))
         painter.setFont(theme.font(self._size, 600))
         painter.drawText(rect, Qt.AlignCenter, self.text())
 
@@ -305,7 +320,7 @@ class GlassSelect(QComboBox):
     unreadable.
     """
 
-    STYLE = """
+    DARK = """
     QComboBox {
         background: rgba(255,255,255,0.10);
         border: 1px solid rgba(255,255,255,0.20);
@@ -328,13 +343,40 @@ class GlassSelect(QComboBox):
     }
     """
 
+    LIGHT = """
+    QComboBox {
+        background: rgba(255,255,255,0.72);
+        border: 1px solid rgba(13,15,26,0.14);
+        border-radius: 19px;
+        padding: 0 34px 0 18px;
+        color: rgba(13,15,26,0.95);
+    }
+    QComboBox:hover { background: rgba(255,255,255,0.86); }
+    QComboBox:focus { border: 1px solid rgba(90,125,215,0.85); }
+    QComboBox::drop-down { border: none; width: 26px; }
+    QComboBox::down-arrow { image: none; }
+    QComboBox QAbstractItemView {
+        background: #ffffff;
+        border: 1px solid rgba(13,15,26,0.14);
+        border-radius: 12px;
+        color: rgba(13,15,26,0.92);
+        selection-background-color: rgba(127,164,255,0.35);
+        padding: 6px;
+        outline: none;
+    }
+    """
+
+    @classmethod
+    def style_for_mode(cls) -> str:
+        return cls.LIGHT if theme.is_light() else cls.DARK
+
     def __init__(self, parent: QWidget | None = None, width: int = 150) -> None:
         super().__init__(parent)
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setFont(theme.font(14, 500))
         self.setFixedHeight(38)
         self.setMinimumWidth(width)
-        self.setStyleSheet(self.STYLE)
+        self.setStyleSheet(self.style_for_mode())
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
@@ -342,7 +384,7 @@ class GlassSelect(QComboBox):
         # here, in the flat shapes the handoff uses instead of an icon set.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(theme.white(0.55), 1.6))
+        painter.setPen(QPen(theme.ink(0.55), 1.6))
         x, y = self.width() - 24, self.height() // 2 - 2
         painter.drawLine(x, y, x + 5, y + 5)
         painter.drawLine(x + 5, y + 5, x + 10, y)
@@ -395,16 +437,16 @@ class RecordButton(QAbstractButton):
         body = QRect(int(centre.x()) - 48, int(centre.y()) - 48, 96, 96)
         if self.isChecked():
             painter.setBrush(theme.accent(0.95))
-            painter.setPen(QPen(theme.white(0.35), 1))
+            painter.setPen(QPen(theme.ink(0.30), 1))
             painter.drawEllipse(body)
-            painter.setBrush(theme.INK)
+            painter.setBrush(theme.on_accent())
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(
                 QRect(body.center().x() - 10, body.center().y() - 10, 22, 22), 5, 5
             )
         else:
-            paint_glass(self, painter, body, body.height() // 2, theme.TINT_RAISED)
-            painter.setBrush(theme.white(0.92))
+            paint_glass(self, painter, body, body.height() // 2, theme.tint(raised=True))
+            painter.setBrush(theme.ink(0.92))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPointF(body.center()), 17, 17)
 
@@ -430,8 +472,9 @@ class ProgressRing(QWidget):
         gradient = QConicalGradient(QPointF(rect.center()), 90.0)
         gradient.setColorAt(0.0, theme.accent(0.95))
         gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(0.95))
-        gradient.setColorAt(stop, theme.white(0.15))
-        gradient.setColorAt(1.0, theme.white(0.15))
+        empty = theme.ink(0.15)
+        gradient.setColorAt(stop, empty)
+        gradient.setColorAt(1.0, empty)
 
         # A conical gradient sweeps anticlockwise from its start angle, so the
         # ring is mirrored to fill the way a clock face does.
@@ -445,9 +488,9 @@ class ProgressRing(QWidget):
         painter.restore()
 
         inner = rect.adjusted(18, 18, -18, -18)
-        paint_glass(self, painter, inner, inner.width() // 2, theme.TINT_RAISED)
+        paint_glass(self, painter, inner, inner.width() // 2, theme.tint(raised=True))
         painter.setFont(theme.font(30, 700, tracking=-2))
-        painter.setPen(theme.white(theme.PRIMARY))
+        painter.setPen(theme.ink(theme.PRIMARY))
         painter.drawText(inner, Qt.AlignCenter, f"{round(self._value * 100)}%")
 
 
@@ -465,7 +508,8 @@ def label(
 ) -> QLabel:
     widget = QLabel(text.upper() if uppercase else text)
     widget.setFont(theme.font(size, weight, tracking))
-    widget.setStyleSheet(f"color: rgba(255,255,255,{alpha:.3f}); background: transparent;")
+    widget.setProperty(theme.ALPHA_PROPERTY, alpha)
+    widget.setStyleSheet(theme.label_colour(alpha))
     widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
     widget.setWordWrap(wrap)
     if not wrap:

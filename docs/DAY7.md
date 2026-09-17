@@ -106,6 +106,59 @@ track 1 `rus` (default), track 2 `eng`, subtitle track `rus`, duration
 - **A link asked for as a dubbed video downloads the video.** `--no-video`
   keeps the old audio-only download for anyone on a metered connection.
 
+## Also asked for, and built
+
+A light theme, the interface in three languages, and a choice of where
+finished files are written.
+
+`lt_ui/theme.py` — two sets of values rather than an inversion.
+`lt_ui/i18n.py` — 92 strings in Russian, English and German.
+`lt_ui/store.py` — `appearance`, `ui_language`, `output_dir`, all remembered.
+
+317 tests.
+
+### Findings
+
+8. **The light theme is not an inversion of the dark one.** What inverts is
+   the text and the scrim; the glass does not, because frosted white over a
+   bright photograph is still glass. The thing that made it possible was
+   splitting one call in two: the surface colour and the foreground colour
+   were both `white()` before, which is exactly the shortcut that makes a
+   second theme impossible later.
+9. **Panels need six times more white on the light theme.** At the handoff's
+   8% a card over a bright photograph reads as a smudge rather than a
+   surface. 55% is where it becomes a panel again.
+10. **Secondary text had to be lifted.** White at 75% on a photograph reads;
+    near-black at 75% on a pale veil looks faded. Every step below primary
+    gains 12 percentage points on the light theme, and primary gains none.
+11. **A caption translated at import never changes language.** Twice: the nav
+    bar kept its Russian captions while every other string switched, and so
+    did the online-service list. Both were class or module level constants,
+    and both read as correct code. There is now a test that parses every
+    module in `lt_ui` and fails on a `_()` call outside a function.
+12. **A German interface exposed a layout bug the Russian one hid.** German
+    captions are longer, and the toggle rows collapsed onto their own text --
+    a scroll area that resizes its child to the viewport takes the extra
+    height out of whichever widget reports the smallest minimum, and a
+    wrapping label reports nearly none. The rows have a floor now.
+13. **The subtitle overlay must ignore the theme.** It does not sit on the
+    app's backdrop, it sits over someone else's video call, so its plate
+    stays dark and its text stays white. Letting the light theme reach it
+    would have put near-black letters on a near-black plate -- caught by
+    looking at the rendered window rather than at the code.
+14. **Changing language rebuilds the screens.** Ninety captions are read from
+    the catalogue when their widgets are created, and a person changes
+    language once, from a list. Rebuilding is cheaper to reason about than
+    ninety `setText` calls, and the models stay loaded.
+
+### Limits
+
+The interface is translated. Progress and error text coming out of
+`lt_core` -- «Распознаю», «Собираю субтитры», the translation report -- is
+still Russian in all three interfaces, because those strings are formatted
+where they are raised rather than where they are shown. Routing them
+through the same catalogue is the next step and is not done.
+
 ## Not done
 
 Packaging into an installer. Burning subtitles into the picture (they are

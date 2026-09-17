@@ -17,7 +17,14 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QBrush, QImage, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+)
 
 from . import theme
 
@@ -124,7 +131,7 @@ class Backdrop:
 
     def _compose(self, width: int, height: int) -> QImage:
         canvas = QImage(width, height, QImage.Format_ARGB32)
-        canvas.fill(theme.BASE)
+        canvas.fill(theme.base())
 
         if self._source is None and self.available:
             self._source = QImage(str(self.path)).convertToFormat(QImage.Format_ARGB32)
@@ -145,19 +152,23 @@ class Backdrop:
                 QPoint(-(scaled.width() - width) // 2, -(scaled.height() - height) // 2),
                 scaled,
             )
+        rgb, stops = theme.scrim()
         scrim = QLinearGradient(0, 0, 0, height)
-        scrim.setColorAt(0.00, self._scrim(0.55))
-        scrim.setColorAt(0.55, self._scrim(0.72))
-        scrim.setColorAt(1.00, self._scrim(0.88))
+        for position, alpha in zip((0.00, 0.55, 1.00), stops):
+            scrim.setColorAt(position, self._veil(rgb, alpha))
         painter.fillRect(QRect(0, 0, width, height), QBrush(scrim))
         painter.end()
         return canvas
 
     @staticmethod
-    def _scrim(alpha: float):
-        colour = theme.BASE.__class__(4, 6, 14)
+    def _veil(rgb: tuple[int, int, int], alpha: float) -> QColor:
+        colour = QColor(*rgb)
         colour.setAlphaF(alpha)
         return colour
+
+    def invalidate(self) -> None:
+        """Force a recompose, for when the mode changed but the size did not."""
+        self._size = (0, 0)
 
 
 _current: Backdrop | None = None

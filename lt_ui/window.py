@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
+from . import i18n
 from . import theme
 from .backdrop import Backdrop
 from .engine import Engine
@@ -66,6 +67,8 @@ class Window(QWidget):
         self.resize(1280, 800)
         self.store = store or Store()
         theme.set_accent(self.store.settings.accent)
+        theme.set_mode(self.store.settings.appearance)
+        i18n.set_language(self.store.settings.ui_language)
 
         self._backdrop = Backdrop()
         backdrop_module.install(self._backdrop)
@@ -73,6 +76,22 @@ class Window(QWidget):
         self.engine = Engine(self)
         self.overlay = OverlayWindow(self.store)
 
+        self._frame = QVBoxLayout(self)
+        self._frame.setContentsMargins(24, 20, 24, 28)
+        self._frame.setSpacing(0)
+        self._shell: QWidget | None = None
+        self._build_shell()
+        self.goto("home")
+
+    def _build_shell(self) -> None:
+        """Build the nav and the five screens.
+
+        Called again when the interface language changes. Every caption is
+        read from the catalogue when its widget is created, so the honest way
+        to change language is to build the widgets again -- cheaper to reason
+        about than a setText for each of ninety strings, and it happens once,
+        when a person picks a language from a list.
+        """
         self._nav = NavBar(self)
         self._nav.chosen.connect(self.goto)
 
@@ -88,7 +107,7 @@ class Window(QWidget):
             "history": self._history,
             "settings": self._settings,
         }
-        self._stack = QStackedWidget(self)
+        self._stack = QStackedWidget()
         self._stack.setStyleSheet("background: transparent;")
         for screen in self._pages.values():
             self._stack.addWidget(_Scroll(screen))
@@ -98,13 +117,45 @@ class Window(QWidget):
         nav_row.addWidget(self._nav)
         nav_row.addStretch()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 28)
-        layout.setSpacing(28)
-        layout.addLayout(nav_row)
-        layout.addWidget(self._stack, 1)
+        shell = QWidget(self)
+        shell.setAttribute(Qt.WA_TranslucentBackground, True)
+        inside = QVBoxLayout(shell)
+        inside.setContentsMargins(0, 0, 0, 0)
+        inside.setSpacing(28)
+        inside.addLayout(nav_row)
+        inside.addWidget(self._stack, 1)
+        self._frame.addWidget(shell)
+        self._shell = shell
 
-        self.goto("home")
+    # -- appearance and language ----------------------------------------
+    def apply_appearance(self) -> None:
+        """Repaint everything in the mode the settings now ask for."""
+        theme.set_mode(self.store.settings.appearance)
+        self._backdrop.invalidate()
+        self._backdrop.resize(self.width(), self.height())
+        theme.restyle(self)
+        self.overlay.restyle()
+        self.update()
+
+    def apply_language(self) -> None:
+        i18n.set_language(self.store.settings.ui_language)
+        current = self.current_screen
+        if self._shell is not None:
+            self._frame.removeWidget(self._shell)
+            self._shell.setParent(None)
+            self._shell.deleteLater()
+            self._shell = None
+        self._build_shell()
+        self.overlay.restyle()
+        self.goto(current)
+
+    @property
+    def current_screen(self) -> str:
+        if not getattr(self, "_pages", None):
+            return "home"
+        index = self._stack.currentIndex()
+        names = list(self._pages)
+        return names[index] if 0 <= index < len(names) else "home"
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.overlay.hide()
@@ -134,7 +185,7 @@ class Window(QWidget):
         if not self._backdrop.plain.isNull():
             painter.drawPixmap(0, 0, self._backdrop.plain)
         else:
-            painter.fillRect(self.rect(), theme.BASE)
+            painter.fillRect(self.rect(), theme.base())
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         self._backdrop.resize(self.width(), self.height())

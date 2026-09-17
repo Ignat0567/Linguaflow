@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFileDialog,
+    QHBoxLayout,
+    QVBoxLayout,
+    QWidget,
+)
 
 from lt_core import languages
 from lt_core.mt.cloud import ONLINE_SERVICES
 from lt_core.mt.types import TranslationMode
 
 from .. import glass, theme
-from ..store import display_name
+from ..i18n import _, UI_LANGUAGE_NAMES, UI_LANGUAGES, language_name
+from ..store import ROOT, display_name
 from ..widgets import (
     AccentSwatch,
     ChipGroup,
@@ -20,12 +27,25 @@ from ..widgets import (
 )
 
 
-_SERVICE_LABELS = {
-    "deepl": "DeepL",
-    "groq": "Groq",
-    "openai": "OpenAI",
-    "local": "Свой сервер",
-}
+#: The floor for one row of controls, in pixels.
+#:
+#: A scroll area that resizes its child to the viewport pays for the extra
+#: height out of whatever reports the smallest minimum, and a wrapping label
+#: reports nearly none -- so without a floor the toggle rows collapse onto
+#: their own captions, which is what a German interface exposed first because
+#: its captions are longer.
+_ROW_HEIGHT = 30
+
+
+def _service_labels() -> dict[str, str]:
+    """Looked up when the screen is built: a dict at module level would be
+    filled at import, before the stored interface language is applied."""
+    return {
+        "deepl": "DeepL",
+        "groq": "Groq",
+        "openai": "OpenAI",
+        "local": _("Свой сервер"),
+    }
 
 
 class SettingsScreen(QWidget):
@@ -34,24 +54,25 @@ class SettingsScreen(QWidget):
         self.app = app
         clear_fill(self)
 
-        title = glass.label("Настройки", 36, 700, tracking=-2)
+        title = glass.label(_("Настройки"), 36, 700, tracking=-2)
         title.setAlignment(Qt.AlignCenter)
 
-        langs = SettingsGroup("Языки по умолчанию")
+        langs = SettingsGroup(_("Языки по умолчанию"))
         self._pair = LanguagePair(langs)
         self._pair.changed.connect(self._sync_pair)
         langs.body.addWidget(self._pair)
 
-        voice = SettingsGroup("Голосовой перевод")
+        voice = SettingsGroup(_("Голосовой перевод"))
         voice_row = QHBoxLayout()
         voice_row.setSpacing(12)
         self._voice = glass.Toggle(voice)
         self._voice.toggled.connect(self._sync_voice)
         voice_row.addWidget(self._voice)
-        voice_row.addWidget(glass.label("Озвучивать перевод голосом", 14))
+        voice_row.addWidget(glass.label(_("Озвучивать перевод голосом"), 14))
         voice_row.addStretch()
         langs_voice = QWidget()
         clear_fill(langs_voice)
+        langs_voice.setMinimumHeight(_ROW_HEIGHT)
         langs_voice.setLayout(voice_row)
         voice.body.addWidget(langs_voice)
 
@@ -59,7 +80,7 @@ class SettingsScreen(QWidget):
         self._match.toggled.connect(self._sync_match)
         voice.body.addWidget(
             self._switch_row(
-                self._match, "Мужской голос мужчинам, женский женщинам"
+                self._match, _("Мужской голос мужчинам, женский женщинам")
             )
         )
 
@@ -67,33 +88,33 @@ class SettingsScreen(QWidget):
         self._dub_video.toggled.connect(self._sync_dub_video)
         voice.body.addWidget(
             self._switch_row(
-                self._dub_video, "Для видео сохранять копию с новой дорожкой"
+                self._dub_video, _("Для видео сохранять копию с новой дорожкой")
             )
         )
 
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
         voice.body.addWidget(self._voice_note)
 
-        fmt = SettingsGroup("Формат субтитров")
+        fmt = SettingsGroup(_("Формат субтитров"))
         self._format = ChipGroup((
             ("srt", "SRT"), ("vtt", "VTT"), ("txt", "TXT"),
         ), fmt)
         self._format.changed.connect(self._sync_format)
         fmt.body.addWidget(self._format)
 
-        where = SettingsGroup("Где выполняется перевод")
+        where = SettingsGroup(_("Где выполняется перевод"))
         self._mode = ChipGroup((
-            (TranslationMode.OFFLINE, "Офлайн"),
-            (TranslationMode.ONLINE, "Онлайн"),
+            (TranslationMode.OFFLINE, _("Офлайн")),
+            (TranslationMode.ONLINE, _("Онлайн")),
         ), where)
         self._mode.changed.connect(self._sync_mode)
         self._where_note = glass.label(
-            "Офлайн — ничего не покидает компьютер. "
-            "Онлайн отправляет текст во внешний сервис, который вы выберете.",
+            _("Офлайн — ничего не покидает компьютер. Онлайн отправляет "
+              "текст во внешний сервис, который вы выберете."),
             12, 400, theme.TERTIARY, wrap=True,
         )
         self._service = ChipGroup(
-            tuple((key, _SERVICE_LABELS[key]) for key in ONLINE_SERVICES),
+            tuple((key, _service_labels()[key]) for key in ONLINE_SERVICES),
             where,
         )
         self._service.changed.connect(self._sync_service)
@@ -101,30 +122,32 @@ class SettingsScreen(QWidget):
         where.body.addWidget(self._where_note)
         where.body.addWidget(self._service)
 
-        capture = SettingsGroup("Источник звука")
+        capture = SettingsGroup(_("Источник звука"))
         self._capture = ChipGroup((
-            ("microphone", "Микрофон"),
-            ("system", "Звук системы"),
+            ("microphone", _("Микрофон")),
+            ("system", _("Звук системы")),
         ), capture)
         self._capture.changed.connect(self._sync_capture)
         capture.body.addWidget(self._capture)
         capture.body.addWidget(glass.label(
-            "«Звук системы» — то, что играет из колонок, через WASAPI loopback.",
+            _("«Звук системы» — то, что играет из колонок, через "
+              "WASAPI loopback."),
             12, 400, theme.TERTIARY, wrap=True,
         ))
 
-        overlay = SettingsGroup("Окно субтитров")
+        overlay = SettingsGroup(_("Окно субтитров"))
         overlay_row = QHBoxLayout()
         overlay_row.setSpacing(12)
         self._overlay = glass.Toggle(overlay)
         self._overlay.toggled.connect(self._sync_overlay)
         overlay_row.addWidget(self._overlay)
         overlay_row.addWidget(glass.label(
-            "Показывать поверх других окон во время записи", 14
+            _("Показывать поверх других окон во время записи"), 14
         ))
         overlay_row.addStretch()
         overlay_wrap = QWidget()
         clear_fill(overlay_wrap)
+        overlay_wrap.setMinimumHeight(_ROW_HEIGHT)
         overlay_wrap.setLayout(overlay_row)
         overlay.body.addWidget(overlay_wrap)
 
@@ -134,37 +157,39 @@ class SettingsScreen(QWidget):
         self._share.toggled.connect(self._sync_share)
         share_row.addWidget(self._share)
         share_row.addWidget(glass.label(
-            "Скрывать с демонстрации экрана (Meet, Zoom)", 14
+            _("Скрывать с демонстрации экрана (Meet, Zoom)"), 14
         ))
         share_row.addStretch()
         share_wrap = QWidget()
         clear_fill(share_wrap)
+        share_wrap.setMinimumHeight(_ROW_HEIGHT)
         share_wrap.setLayout(share_row)
         overlay.body.addWidget(share_wrap)
         overlay.body.addWidget(glass.label(
-            "Окно остаётся у вас на мониторе, но не попадает в полный экран, "
-            "которым вы делитесь. Переключается и на самом окне субтитров, "
-            "не уходя из звонка. На «поделиться окном» это не влияет — "
-            "субтитры и так в другом окне.",
+            _("Окно остаётся у вас на мониторе, но не попадает в полный "
+              "экран, которым вы делитесь. Переключается и на самом окне "
+              "субтитров, не уходя из звонка. На «поделиться окном» это не "
+              "влияет — субтитры и так в другом окне."),
             12, 400, theme.TERTIARY, wrap=True,
         ))
 
-        notify = SettingsGroup("Уведомления")
+        notify = SettingsGroup(_("Уведомления"))
         notify_row = QHBoxLayout()
         notify_row.setSpacing(12)
         self._notify = glass.Toggle(notify)
         self._notify.toggled.connect(self._sync_notify)
         notify_row.addWidget(self._notify)
         notify_row.addWidget(glass.label(
-            "Поднимать окно, когда файл обработан", 14
+            _("Поднимать окно, когда файл обработан"), 14
         ))
         notify_row.addStretch()
         notify_wrap = QWidget()
         clear_fill(notify_wrap)
+        notify_wrap.setMinimumHeight(_ROW_HEIGHT)
         notify_wrap.setLayout(notify_row)
         notify.body.addWidget(notify_wrap)
 
-        accent = SettingsGroup("Акцент")
+        accent = SettingsGroup(_("Акцент"))
         swatches = QHBoxLayout()
         swatches.setSpacing(10)
         self._swatches = QButtonGroup(self)
@@ -177,15 +202,48 @@ class SettingsScreen(QWidget):
         swatches.addStretch()
         accent_wrap = QWidget()
         clear_fill(accent_wrap)
+        accent_wrap.setMinimumHeight(_ROW_HEIGHT)
         accent_wrap.setLayout(swatches)
         accent.body.addWidget(accent_wrap)
+
+        look = SettingsGroup(_("Вид"))
+        self._light = glass.Toggle(look)
+        self._light.toggled.connect(self._sync_appearance)
+        look.body.addWidget(self._switch_row(self._light, _("Светлая тема")))
+        look.body.addWidget(glass.label(
+            _("Язык интерфейса"), 12, 500, theme.TERTIARY
+        ))
+        self._ui_language = ChipGroup(
+            tuple((code, UI_LANGUAGE_NAMES[code]) for code in UI_LANGUAGES), look
+        )
+        self._ui_language.changed.connect(self._sync_ui_language)
+        look.body.addWidget(self._ui_language)
+
+        where_files = SettingsGroup(_("Куда сохранять файлы"))
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(12)
+        self._folder = glass.label("", 13, 500, theme.SECONDARY, wrap=True)
+        self._folder.setMinimumWidth(320)
+        folder_row.addWidget(self._folder, 1)
+        pick = glass.GlassButton(_("Выбрать папку"), where_files, height=34)
+        pick.clicked.connect(self._choose_folder)
+        folder_row.addWidget(pick)
+        reset = glass.TextLink(_("По умолчанию"), where_files, size=12)
+        reset.clicked.connect(self._reset_folder)
+        folder_row.addWidget(reset)
+        folder_wrap = QWidget()
+        clear_fill(folder_wrap)
+        folder_wrap.setMinimumHeight(_ROW_HEIGHT)
+        folder_wrap.setLayout(folder_row)
+        where_files.body.addWidget(folder_wrap)
 
         column = QVBoxLayout(self)
         column.setContentsMargins(8, 0, 8, 8)
         column.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         column.addWidget(title)
         column.addSpacing(28)
-        for group in (langs, voice, fmt, where, capture, overlay, notify, accent):
+        for group in (langs, voice, fmt, where_files, where, capture,
+                      overlay, notify, look, accent):
             group.setMaximumWidth(700)
             column.addWidget(group)
             column.addSpacing(14)
@@ -202,6 +260,11 @@ class SettingsScreen(QWidget):
             toggle.blockSignals(True)
             toggle.setChecked(value)
             toggle.blockSignals(False)
+        self._light.blockSignals(True)
+        self._light.setChecked(settings.appearance == theme.LIGHT)
+        self._light.blockSignals(False)
+        self._ui_language.set_value(settings.ui_language)
+        self._show_folder()
         self._format.set_value(settings.sub_format)
         self._mode.set_value(settings.translation_mode)
         self._service.set_value(settings.online_service)
@@ -298,8 +361,41 @@ class SettingsScreen(QWidget):
         row.addStretch()
         holder = QWidget()
         clear_fill(holder)
+        holder.setMinimumHeight(_ROW_HEIGHT)
         holder.setLayout(row)
         return holder
+
+    def _show_folder(self) -> None:
+        chosen = self.app.store.settings.output_dir
+        self._folder.setText(
+            chosen or _("Внутри программы, по одной папке на задание")
+        )
+
+    def _choose_folder(self) -> None:
+        start = self.app.store.settings.output_dir or str(ROOT)
+        chosen = QFileDialog.getExistingDirectory(
+            self, _("Выберите папку для готовых файлов"), start
+        )
+        if not chosen:
+            return
+        self.app.store.settings.output_dir = chosen
+        self.app.store.save_settings()
+        self._show_folder()
+
+    def _reset_folder(self) -> None:
+        self.app.store.settings.output_dir = ""
+        self.app.store.save_settings()
+        self._show_folder()
+
+    def _sync_appearance(self, light: bool) -> None:
+        self.app.store.settings.appearance = theme.LIGHT if light else theme.DARK
+        self.app.store.save_settings()
+        self.app.apply_appearance()
+
+    def _sync_ui_language(self, code: str) -> None:
+        self.app.store.settings.ui_language = code
+        self.app.store.save_settings()
+        self.app.apply_language()
 
     def _sync_match(self, on: bool) -> None:
         self.app.store.settings.match_voices = on
@@ -314,23 +410,24 @@ class SettingsScreen(QWidget):
         code = self.app.store.settings.to_lang
         language = languages.get(code)
         if language is None or not language.piper_voice:
-            self._voice_note.setText("Для этого языка голос ещё не задан.")
+            self._voice_note.setText(_("Для этого языка голос ещё не задан."))
             return
 
-        spoken = languages.describe(code)
+        spoken = language_name(code)
         if self.app.store.settings.match_voices and languages.has_voice_pair(code):
-            self._voice_note.setText(
-                f"Язык перевода — {spoken}. Мужские реплики читает голос "
-                f"{_voice_label(language.piper_male)}, женские — "
-                f"{_voice_label(language.piper_female)}. Кто говорит, "
-                "определяется по высоте голоса в оригинале, отдельно для "
-                "каждой реплики."
-            )
+            self._voice_note.setText(_(
+                "Язык перевода — {language}. Мужские реплики читает голос "
+                "{male}, женские — {female}. Кто говорит, определяется по "
+                "высоте голоса в оригинале, отдельно для каждой реплики.",
+                language=spoken,
+                male=_voice_label(language.piper_male),
+                female=_voice_label(language.piper_female),
+            ))
         else:
-            self._voice_note.setText(
-                f"Язык перевода — {spoken}. Всё читает один голос, "
-                f"{_voice_label(language.piper_voice)}."
-            )
+            self._voice_note.setText(_(
+                "Язык перевода — {language}. Всё читает один голос, {voice}.",
+                language=spoken, voice=_voice_label(language.piper_voice),
+            ))
 
 
 def _voice_label(voice: str) -> str:

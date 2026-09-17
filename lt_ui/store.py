@@ -20,6 +20,8 @@ from pathlib import Path
 from lt_core import languages
 from lt_core.mt.types import TranslationMode
 
+from .i18n import UI_LANGUAGES
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA = ROOT / "data"
 MODEL_ROOT = ROOT / "models"
@@ -33,8 +35,15 @@ _MONTHS = (
 
 
 def display_name(code: str) -> str:
-    """Capitalised name for pickers: «Русский», not «русский»."""
-    name = languages.describe(code)
+    """The language's name, capitalised, in whatever the interface speaks.
+
+    Goes through the interface catalogue rather than the core registry: the
+    registry names every language in Russian, which is right for a log and
+    wrong for a picker in a German window.
+    """
+    from .i18n import language_name
+
+    name = language_name(code)
     return name[:1].upper() + name[1:] if name else code
 
 
@@ -76,6 +85,16 @@ class Settings:
     online_service: str = "deepl"
     capture_kind: str = "microphone"  # microphone | system
     accent: str = "#7fa4ff"
+    #: "dark" or "light". The handoff is dark; the light theme is a second set
+    #: of values rather than an inversion of it.
+    appearance: str = "dark"
+    #: Which language the interface itself speaks: ru, en or de.
+    ui_language: str = "ru"
+    #: Where finished files are written. Empty means the app's own `data/jobs`,
+    #: one folder per job. A folder chosen by the user is used as given --
+    #: someone who picks «Загрузки» wants the file in «Загрузки», not in a
+    #: subfolder of it.
+    output_dir: str = ""
     #: Floating caption window over the meeting.
     overlay: bool = True
     #: True: the window stays on this monitor but is absent from Zoom/Meet
@@ -112,8 +131,17 @@ class Settings:
             self.translation_mode = TranslationMode.OFFLINE
         if self.capture_kind not in {"microphone", "system"}:
             self.capture_kind = "microphone"
+        if self.appearance not in {"dark", "light"}:
+            self.appearance = "dark"
+        if self.ui_language not in UI_LANGUAGES:
+            self.ui_language = "ru"
         self.overlay_w = max(420, int(self.overlay_w))
         self.overlay_h = max(128, int(self.overlay_h))
+        # A folder on a drive that has since been unplugged must not stop a
+        # job halfway through writing to it.
+        if self.output_dir and not Path(self.output_dir).is_dir():
+            self.output_dir = ""
+
 
     def set_from(self, code: str) -> None:
         if code == self.to_lang:
@@ -230,6 +258,18 @@ class Store:
         return self.entries[:limit]
 
     def job_dir(self, entry_id: str) -> Path:
+        """Where this job's files go: the chosen folder, or one of our own."""
+        chosen = self.settings.output_dir
+        if chosen:
+            path = Path(chosen)
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+            except OSError:
+                # Read-only or vanished. Fall back rather than lose the job,
+                # and forget the setting so the next one does not retry it.
+                self.settings.output_dir = ""
+                self.save_settings()
         path = self.jobs / entry_id
         path.mkdir(parents=True, exist_ok=True)
         return path

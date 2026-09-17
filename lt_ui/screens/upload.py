@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from lt_core.subtitles.export import format_srt_time
 
 from .. import glass, theme
+from ..i18n import _
 from ..store import (
     ROOT,
     HistoryEntry,
@@ -28,10 +29,12 @@ from ..store import (
 from ..widgets import LanguagePair, clear_fill, dashed_panel
 
 
-_FILTER = (
-    "Медиа (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.mp4 *.mov *.mkv *.webm);;"
-    "Все файлы (*.*)"
-)
+def _filter() -> str:
+    """Built when the dialog opens, not at import: the language can change."""
+    return (
+        f'{_("Медиа")} (*.mp3 *.wav *.m4a *.aac *.flac *.ogg '
+        f'*.mp4 *.mov *.mkv *.webm);;{_("Все файлы")} (*.*)'
+    )
 _EXAMPLE = ROOT / "spike" / "audio" / "lecture.m4a"
 
 
@@ -81,7 +84,7 @@ class UploadScreen(QWidget):
     def open_path(self, path: str | Path) -> None:
         target = Path(path)
         if not target.exists():
-            self._busy.set_stage(f"Файл не найден: {target.name}")
+            self._busy.set_stage(_("Файл не найден: {name}", name=target.name))
             self._stack.setCurrentWidget(self._busy)
             return
         self._path = target
@@ -117,7 +120,7 @@ class UploadScreen(QWidget):
         self.app.store.add(HistoryEntry(
             id=self._job_id,
             kind="file",
-            title=result.media.title or (self._path.name if self._path else "файл"),
+            title=result.media.title or (self._path.name if self._path else _("файл")),
             source_language=result.transcript.language,
             target_language=result.target_language or settings.to_lang,
             duration=result.media.duration,
@@ -140,8 +143,8 @@ class _Idle(QWidget):
         self.pair = LanguagePair(self, allow_auto=True)
         self.pair.changed.connect(screen._sync_pair)
 
-        from_label = glass.eyebrow("Исходный язык")
-        to_label = glass.eyebrow("Перевод на")
+        from_label = glass.eyebrow(_("Исходный язык"))
+        to_label = glass.eyebrow(_("Перевод на"))
         captions = QHBoxLayout()
         captions.setContentsMargins(4, 0, 4, 0)
         captions.addWidget(from_label)
@@ -149,9 +152,9 @@ class _Idle(QWidget):
         captions.addWidget(to_label)
 
         zone = _Dropzone(screen)
-        demo = glass.GlassButton("Выбрать файл", zone, primary=True)
+        demo = glass.GlassButton(_("Выбрать файл"), zone, primary=True)
         demo.clicked.connect(zone.pick)
-        example = glass.TextLink("Открыть пример", zone, size=13)
+        example = glass.TextLink(_("Открыть пример"), zone, size=13)
         example.clicked.connect(lambda: screen.open_path(_EXAMPLE) if _EXAMPLE.exists() else None)
         if not _EXAMPLE.exists():
             example.hide()
@@ -160,10 +163,10 @@ class _Idle(QWidget):
         inner.setContentsMargins(40, 48, 40, 40)
         inner.setSpacing(0)
         inner.setAlignment(Qt.AlignCenter)
-        title = glass.label("Перетащите файл", 36, 700, tracking=-2)
+        title = glass.label(_("Перетащите файл"), 36, 700, tracking=-2)
         title.setAlignment(Qt.AlignCenter)
         hint = glass.label(
-            "видео, аудио или песня — MP3, WAV, MP4, MOV",
+            _("видео, аудио или песня — MP3, WAV, MP4, MOV"),
             13, 400, theme.TERTIARY,
         )
         hint.setAlignment(Qt.AlignCenter)
@@ -226,7 +229,7 @@ class _Dropzone(glass.GlassPanel):
 
     def pick(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите медиафайл", str(ROOT), _FILTER
+            self, _("Выберите медиафайл"), str(ROOT), _filter()
         )
         if path:
             self.screen.open_path(path)
@@ -237,7 +240,7 @@ class _Busy(QWidget):
         super().__init__()
         clear_fill(self)
         self._ring = glass.ProgressRing(self, 160)
-        self._stage = glass.label("Загружаю модели…", 13, 400, 0.75)
+        self._stage = glass.label(_("Загружаю модели…"), 13, 400, 0.75)
         self._stage.setAlignment(Qt.AlignCenter)
         self._name = glass.label("", 12, 400, theme.MUTED)
         self._name.setAlignment(Qt.AlignCenter)
@@ -252,7 +255,7 @@ class _Busy(QWidget):
 
     def reset(self, name: str) -> None:
         self._ring.set_value(0.0)
-        self._stage.setText("Загружаю модели…")
+        self._stage.setText(_("Загружаю модели…"))
         self._name.setText(name)
 
     def set_stage(self, text: str) -> None:
@@ -292,7 +295,7 @@ class _Done(QWidget):
         name = glass.label(result.media.title, 26, 700, tracking=-2, wrap=True)
         source = display_name(result.transcript.language)
         if settings.detect_language:
-            source = f"{source} · авто"
+            source = f'{source} · {_("авто")}'
         meta = glass.label(
             f"{format_clock(result.media.duration)}  ·  "
             f"{source} → {display_name(settings.to_lang)}",
@@ -300,7 +303,7 @@ class _Done(QWidget):
         )
         titles.addWidget(name)
         titles.addWidget(meta)
-        reset = glass.TextLink("Другой файл", self, size=13)
+        reset = glass.TextLink(_("Другой файл"), self, size=13)
         reset.clicked.connect(self.screen.reset)
         header.addLayout(titles, 1)
         header.addWidget(reset, 0, Qt.AlignTop)
@@ -315,7 +318,8 @@ class _Done(QWidget):
             self._body.addSpacing(16)
         if len(cues) > 24:
             more = glass.label(
-                f"… и ещё {len(cues) - 24} субтитров в сохранённых файлах",
+                _("… и ещё {count} субтитров в сохранённых файлах",
+                  count=len(cues) - 24),
                 12, 400, theme.MUTED,
             )
             self._body.addWidget(more)
@@ -324,18 +328,18 @@ class _Done(QWidget):
         chips = QHBoxLayout()
         chips.setSpacing(10)
         labels = {
-            "srt": "Субтитры (.srt)",
-            "srt." + settings.to_lang: f"Перевод (.srt)",
-            "srt.bilingual": "Оба языка (.srt)",
-            "vtt": "Субтитры (.vtt)",
-            "txt": "Текст (.txt)",
-            "audio": "Озвучка (.wav)",
-            "video": "Видео с переводом",
+            "srt": _("Субтитры (.srt)"),
+            "srt." + settings.to_lang: f_("Перевод (.srt)"),
+            "srt.bilingual": _("Оба языка (.srt)"),
+            "vtt": _("Субтитры (.vtt)"),
+            "txt": _("Текст (.txt)"),
+            "audio": _("Озвучка (.wav)"),
+            "video": _("Видео с переводом"),
         }
         for key, path in result.outputs.items():
             caption = labels.get(key)
             if caption is None and key.startswith("srt."):
-                caption = f"Перевод ({key})"
+                caption = f'{_(_("Перевод (.srt)"))} · {key}'
             if caption is None:
                 continue
             button = glass.GlassButton(caption, self, height=36, padding=16)

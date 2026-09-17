@@ -14,6 +14,7 @@ from lt_core.subtitles.export import to_srt, write
 from lt_core.subtitles.cues import Cue
 
 from .. import glass, theme
+from ..i18n import _
 from ..store import HistoryEntry, format_clock, new_id
 from ..widgets import ChipGroup, LanguagePair, clear_fill
 
@@ -40,9 +41,9 @@ class RealtimeScreen(QWidget):
         self._pair = LanguagePair(self, compact=True)
         self._pair.changed.connect(self._sync_pair)
         self._modes = ChipGroup((
-            ("subtitles", "Субтитры"),
-            ("voice", "Текст + озвучка"),
-            ("conversation", "Разговор"),
+            ("subtitles", _("Субтитры")),
+            ("voice", _("Текст + озвучка")),
+            ("conversation", _("Разговор")),
         ), self, stretch=False)
         self._modes.changed.connect(self._sync_mode)
         mode_pill = glass.GlassPanel(self, radius=theme.RADIUS_PILL)
@@ -62,7 +63,7 @@ class RealtimeScreen(QWidget):
         self._record = glass.RecordButton(self)
         self._record.toggled.connect(self._toggled)
         self._status = glass.label(
-            "Нажмите, чтобы начать запись", 13, 400, 0.70
+            _("Нажмите, чтобы начать запись"), 13, 400, 0.70
         )
         self._status.setAlignment(Qt.AlignCenter)
 
@@ -74,15 +75,15 @@ class RealtimeScreen(QWidget):
         self._feed.setSpacing(18)
         self._feed.setAlignment(Qt.AlignCenter)
         self._placeholder = glass.label(
-            "Нажмите на кнопку, чтобы начать", 13, 400, theme.MUTED
+            _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
         )
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._feed.addWidget(self._placeholder)
 
-        self._save = glass.GlassButton("Сохранить транскрипт", self)
+        self._save = glass.GlassButton(_("Сохранить транскрипт"), self)
         self._save.clicked.connect(self._save_transcript)
         self._save.hide()
-        self._overlay_btn = glass.GlassButton("Окно субтитров", self)
+        self._overlay_btn = glass.GlassButton(_("Окно субтитров"), self)
         self._overlay_btn.clicked.connect(self._toggle_overlay)
 
         actions = QHBoxLayout()
@@ -146,19 +147,19 @@ class RealtimeScreen(QWidget):
             self._saved = None
             self._save.hide()
             self._render()
-            self._status.setText("Загружаю модели…")
+            self._status.setText(_("Загружаю модели…"))
             self.app.engine.prepare(self.app.store.settings)
         else:
             self._pending_start = False
             self.app.engine.stop_live()
             if self.app.engine.live_running:
-                self._status.setText("Останавливаю…")
+                self._status.setText(_("Останавливаю…"))
 
     def _on_ready(self) -> None:
         if not self._pending_start:
             return
         self._pending_start = False
-        self._status.setText("Слушаю…")
+        self._status.setText(_("Слушаю…"))
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
             self.app.overlay.set_caption(listening=True)
@@ -176,7 +177,7 @@ class RealtimeScreen(QWidget):
         self._record.blockSignals(True)
         self._record.setChecked(False)
         self._record.blockSignals(False)
-        self._status.setText("Остановлено")
+        self._status.setText(_("Остановлено"))
         if self._lines or self._current.original:
             self._save.show()
         self._push_overlay()
@@ -217,7 +218,7 @@ class RealtimeScreen(QWidget):
             visible.append(self._current)
         if not visible:
             placeholder = glass.label(
-                "Нажмите на кнопку, чтобы начать", 13, 400, theme.MUTED
+                _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
             )
             placeholder.setAlignment(Qt.AlignCenter)
             self._feed.addWidget(placeholder)
@@ -279,7 +280,7 @@ class RealtimeScreen(QWidget):
         duration = worker.audio_seconds if worker else cursor
         self.app.store.add(HistoryEntry(
             id=entry_id, kind="live",
-            title="Живой перевод",
+            title=_("Живой перевод"),
             source_language=settings.from_lang,
             target_language=settings.to_lang,
             duration=duration,
@@ -289,7 +290,9 @@ class RealtimeScreen(QWidget):
         ))
         self.app.history_changed()
         self._saved = folder
-        self._status.setText(f"Сохранено · {format_clock(duration)}")
+        self._status.setText(
+            _("Сохранено · {duration}", duration=format_clock(duration))
+        )
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
 

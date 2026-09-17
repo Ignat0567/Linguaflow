@@ -9,6 +9,7 @@ from PySide6.QtGui import QDesktopServices, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from .. import glass, theme
+from ..i18n import _
 from ..store import format_clock, format_date
 from ..widgets import clear_fill
 
@@ -18,7 +19,7 @@ class HistoryScreen(QWidget):
         super().__init__()
         self.app = app
         clear_fill(self)
-        title = glass.label("История переводов", 36, 700, tracking=-2)
+        title = glass.label(_("История переводов"), 36, 700, tracking=-2)
         title.setAlignment(Qt.AlignCenter)
         self._list = QVBoxLayout()
         self._list.setSpacing(12)
@@ -42,7 +43,7 @@ class HistoryScreen(QWidget):
                 widget.deleteLater()
         entries = self.app.store.entries
         if not entries:
-            empty = glass.label("Пока нет переводов.", 14, 400, theme.MUTED)
+            empty = glass.label(_("Пока нет переводов."), 14, 400, theme.MUTED)
             empty.setAlignment(Qt.AlignCenter)
             self._list.addWidget(empty)
             return
@@ -70,7 +71,7 @@ class _Row(glass.GlassPanel):
         texts.addWidget(meta)
         row.addLayout(texts, 1)
         if entry.folder and Path(entry.folder).exists():
-            link = glass.TextLink("Скачать  ↓", self, size=12)
+            link = glass.TextLink(_("Скачать  ↓"), self, size=12)
             link.clicked.connect(
                 lambda: QDesktopServices.openUrl(
                     QUrl.fromLocalFile(entry.folder)
@@ -89,5 +90,5 @@ class _Dot(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(theme.accent(1.0) if self._live else theme.white(0.60))
+        painter.setBrush(theme.accent(1.0) if self._live else theme.ink(0.60))
         painter.drawEllipse(self.rect())

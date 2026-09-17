@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import affinity, glass, theme
+from .i18n import _
 from .store import Settings, Store
 
 
@@ -40,7 +41,7 @@ class OverlayWindow(QWidget):
     def __init__(self, store: Store) -> None:
         super().__init__(None)
         self.store = store
-        self.setWindowTitle("Linguaflow — субтитры")
+        self.setWindowTitle(_("Linguaflow — субтитры"))
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.setWindowFlags(
             Qt.Tool
@@ -59,7 +60,7 @@ class OverlayWindow(QWidget):
         self._share = glass.Toggle(self, on=store.settings.overlay_hidden_from_share)
         self._share.toggled.connect(self._on_share)
         self._share_label = _caption(
-            "Скрыто с демонстрации", 12, 500, theme.SECONDARY
+            _("Скрыто с демонстрации"), 12, 500, theme.SECONDARY
         )
         close = glass.TextLink("✕", self, size=14, alpha=0.7)
         close.clicked.connect(self._close)
@@ -67,7 +68,7 @@ class OverlayWindow(QWidget):
         chrome = QHBoxLayout()
         chrome.setContentsMargins(4, 0, 0, 0)
         chrome.setSpacing(10)
-        chrome.addWidget(_caption("Субтитры", 11, 600, theme.TERTIARY))
+        chrome.addWidget(_caption(_("Субтитры"), 11, 600, theme.TERTIARY))
         chrome.addStretch()
         chrome.addWidget(self._share)
         chrome.addWidget(self._share_label)
@@ -77,7 +78,7 @@ class OverlayWindow(QWidget):
         self._speaker.setAlignment(Qt.AlignCenter)
         self._speaker.hide()
         self._translated = _caption(
-            "Субтитры появятся после начала записи", 28, 600, theme.PRIMARY
+            _("Субтитры появятся после начала записи"), 28, 600, theme.PRIMARY
         )
         self._translated.setAlignment(Qt.AlignCenter)
         self._translated.setWordWrap(True)
@@ -129,10 +130,10 @@ class OverlayWindow(QWidget):
             self._translated.setText(main)
             self._translated.setStyleSheet(_colour(theme.PRIMARY))
         elif listening:
-            self._translated.setText("Слушаю…")
+            self._translated.setText(_("Слушаю…"))
             self._translated.setStyleSheet(_colour(theme.MUTED))
         else:
-            self._translated.setText("Субтитры появятся после начала записи")
+            self._translated.setText(_("Субтитры появятся после начала записи"))
             self._translated.setStyleSheet(_colour(theme.MUTED))
 
         # When the translation is up, the original sits underneath as a check.
@@ -149,7 +150,7 @@ class OverlayWindow(QWidget):
         self.store.settings.overlay_hidden_from_share = hidden
         self.store.save_settings()
         self._share_label.setText(
-            "Скрыто с демонстрации" if hidden else "Видно на демонстрации"
+            _("Скрыто с демонстрации") if hidden else _("Видно на демонстрации")
         )
         if self.isVisible():
             self._apply_affinity()
@@ -161,7 +162,7 @@ class OverlayWindow(QWidget):
         ok = affinity.apply(hwnd, hidden)
         self._affinity_ok = ok
         if hidden and not ok:
-            self._share_label.setText("Не удалось скрыть с захвата")
+            self._share_label.setText(_("Не удалось скрыть с захвата"))
 
     # -- placement -------------------------------------------------------
     def _place(self, settings: Settings) -> None:
@@ -230,6 +231,21 @@ class OverlayWindow(QWidget):
             return
         super().mouseReleaseEvent(event)
 
+    def restyle(self) -> None:
+        """Re-apply captions after the app's theme or language changed.
+
+        The plate stays dark either way; what this fixes is `theme.restyle`
+        having walked in and recoloured these labels along with the rest.
+        """
+        for label, alpha in (
+            (self._share_label, theme.TERTIARY),
+            (self._speaker, theme.TERTIARY),
+            (self._translated, theme.PRIMARY),
+            (self._original, theme.SECONDARY),
+        ):
+            label.setStyleSheet(_colour(alpha))
+        self.update()
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -243,14 +259,24 @@ class OverlayWindow(QWidget):
         highlight.addRoundedRect(
             QRectF(rect.x(), rect.y(), rect.width(), 2.0), 18, 18
         )
-        painter.fillPath(highlight, theme.white(theme.HIGHLIGHT))
+        painter.fillPath(highlight, theme.white(0.30))
         painter.setPen(QPen(theme.white(0.22), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
 
 
 def _caption(text: str, size: int, weight: int, alpha: float) -> QLabel:
+    """A caption on the overlay's own dark plate.
+
+    Always white, whatever theme the app is in. The overlay does not sit on
+    the app's backdrop -- it sits over someone else's video call, where a
+    plate dark enough to read against is the only thing that works. Taking
+    the light theme's near-black text here would have put black letters on a
+    near-black plate.
+    """
     widget = glass.label(text, size, weight, alpha, wrap=True)
+    widget.setStyleSheet(_colour(alpha))
+    widget.setProperty(theme.ALPHA_PROPERTY, None)
     widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
     return widget
 
