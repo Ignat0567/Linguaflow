@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <meta name="design_doc_mode" content="canvas">
+  <style>
+    body { margin: 0; background: #04060c; }
+    * { box-sizing: border-box; }
+    ::-webkit-scrollbar { height: 6px; width: 6px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+    select { color-scheme: dark; }
+    a { color: #bcd0ff; }
+    a:hover { color: #dfe8ff; }
+    @keyframes ring { 0% { transform: scale(1); opacity: .6; } 100% { transform: scale(1.9); opacity: 0; } }
+    @keyframes riseIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</helmet>
+
+<div style="position:relative; width:100%; min-height:100vh; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Inter',Helvetica,Arial,sans-serif;">
+  <div style="position:fixed; inset:0; z-index:0; background-image:url('assets/bg-translate.png'); background-size:145% auto; background-position:center 130px; filter:saturate(1.05);"></div>
+  <div style="position:fixed; inset:0; z-index:0; background:linear-gradient(180deg, rgba(4,6,14,0.55) 0%, rgba(4,6,14,0.72) 55%, rgba(4,6,14,0.88) 100%);"></div>
+
+  <div style="position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:24px 20px 60px 20px;">
+
+    <!-- FLOATING GLASS NAV -->
+    <div style="display:flex; align-items:center; gap:6px; padding:8px 10px; border-radius:999px; background:rgba(255,255,255,0.10); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:1px solid rgba(255,255,255,0.22); box-shadow:inset 0 1px 0 rgba(255,255,255,0.35), 0 8px 32px rgba(0,0,0,0.35); margin-bottom:36px;">
+      <div style="font-weight:700; letter-spacing:-0.02em; font-size:19px; padding:0 14px 0 10px;">Linguaflow</div>
+      <sc-for list="{{navItems}}" as="item" hint-placeholder-count="5">
+        <div onClick="{{item.onSelect}}" style="{{item.navStyle}}">{{item.label}}</div>
+      </sc-for>
+    </div>
+
+    <div style="width:100%; max-width:1080px;">
+
+      <!-- HOME -->
+      <sc-if value="{{isHome}}">
+        <div style="text-align:center; max-width:640px; margin:20px auto 40px auto;">
+          <div style="font-weight:700; letter-spacing:-0.03em; font-size:52px; line-height:1.08;">Что переводим сегодня?</div>
+          <div style="font-size:14.5px; color:rgba(255,255,255,0.75); margin-top:14px; line-height:1.6;">Живой разговор или готовая запись — текст, субтитры или голос на восьми языках.</div>
+        </div>
+
+        <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center;">
+          <div onClick="{{goRealtime}}" style="{{glassCardAccent}}">
+            <div style="font-weight:600; letter-spacing:.06em; font-size:11px; opacity:.65;">01 · LIVE</div>
+            <div>
+              <div style="font-weight:700; letter-spacing:-0.02em; font-size:29px; line-height:1.15; margin-top:10px;">Перевод в реальном времени</div>
+              <div style="font-size:13px; margin-top:10px; opacity:.8; line-height:1.5;">Субтитры, синхронная озвучка или разговор двух людей на разных языках.</div>
+            </div>
+            <div style="font-size:13px; font-weight:600; margin-top:18px;">Начать →</div>
+          </div>
+          <div onClick="{{goUpload}}" style="{{glassCard}}">
+            <div style="font-weight:600; letter-spacing:.06em; font-size:11px; color:rgba(255,255,255,0.55);">02 · FILE</div>
+            <div>
+              <div style="font-weight:700; letter-spacing:-0.02em; font-size:29px; line-height:1.15; margin-top:10px;">Загрузка файла</div>
+              <div style="font-size:13px; margin-top:10px; color:rgba(255,255,255,0.7); line-height:1.5;">Видео, аудио или песня — транскрипт, субтитры и переведённая озвучка.</div>
+            </div>
+            <div style="font-size:13px; font-weight:600; margin-top:18px;">Загрузить →</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-top:52px; padding:0 4px;">
+          <div style="font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(255,255,255,0.6);">Последние переводы</div>
+          <div onClick="{{goHistory}}" style="font-size:12.5px; color:#bcd0ff; cursor:pointer;">Все →</div>
+        </div>
+        <div style="display:flex; gap:14px; margin-top:16px; overflow-x:auto; padding:4px 4px 10px 4px;">
+          <sc-for list="{{recentItems}}" as="row" hint-placeholder-count="3">
+            <div style="flex:0 0 220px; border-radius:18px; padding:16px; background:rgba(255,255,255,0.08); backdrop-filter:blur(20px) saturate(160%); -webkit-backdrop-filter:blur(20px) saturate(160%); border:1px solid rgba(255,255,255,0.18); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25);">
+              <div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:{{row.typeColor}};">{{row.typeLabel}}</div>
+              <div style="font-size:14px; font-weight:600; margin-top:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{row.title}}</div>
+              <div style="border-top:1px dashed rgba(255,255,255,0.2); margin:12px 0 10px 0;"></div>
+              <div style="display:flex; justify-content:space-between; font-size:11.5px; color:rgba(255,255,255,0.65);"><span>{{row.from}} → {{row.to}}</span><span>{{row.duration}}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- REALTIME -->
+      <sc-if value="{{isRealtime}}">
+        <div style="display:flex; flex-direction:column; align-items:center; gap:20px;">
+
+          <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; justify-content:center;">
+            <div style="{{pillRow}}">
+              <select value="{{fromLang}}" onChange="{{onFromChange}}" style="background:transparent; color:#fff; border:none; font-size:12.5px; font-family:inherit;">
+                <sc-for list="{{langs}}" as="l" hint-placeholder-count="8"><option value="{{l.code}}" style="background:#0d0f1a;">{{l.name}}</option></sc-for>
+              </select>
+              <div onClick="{{swapLangs}}" style="cursor:pointer; font-size:14px; opacity:.7;">⇄</div>
+              <select value="{{toLang}}" onChange="{{onToChange}}" style="background:transparent; color:#fff; border:none; font-size:12.5px; font-family:inherit;">
+                <sc-for list="{{langs}}" as="l" hint-placeholder-count="8"><option value="{{l.code}}" style="background:#0d0f1a;">{{l.name}}</option></sc-for>
+              </select>
+            </div>
+            <div style="{{pillRow}}">
+              <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+                <div onClick="{{m.onSelect}}" style="{{m.style}}">{{m.label}}</div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="position:relative; width:150px; height:150px; display:flex; align-items:center; justify-content:center; margin-top:12px;">
+            <sc-if value="{{recording}}"><div style="position:absolute; inset:0; border-radius:50%; border:1px solid rgba(255,255,255,0.5); animation:ring 1.8s ease-out infinite;"></div></sc-if>
+            <sc-if value="{{recording}}"><div style="position:absolute; inset:0; border-radius:50%; border:1px solid rgba(255,255,255,0.5); animation:ring 1.8s ease-out infinite .6s;"></div></sc-if>
+            <div onClick="{{toggleRecording}}" style="{{micButtonStyle}}">
+              <div style="{{micIconStyle}}"></div>
+            </div>
+          </div>
+          <div style="font-size:12.5px; color:rgba(255,255,255,0.7); letter-spacing:.04em;">{{recordingStatusText}}</div>
+
+          <div style="width:100%; max-width:760px; min-height:200px; border-radius:24px; padding:32px; background:rgba(255,255,255,0.07); backdrop-filter:blur(28px) saturate(180%); -webkit-backdrop-filter:blur(28px) saturate(180%); border:1px solid rgba(255,255,255,0.18); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25), 0 12px 40px rgba(0,0,0,0.3); display:flex; flex-direction:column; align-items:center; gap:22px; justify-content:center;">
+            <sc-if value="{{noCaptions}}"><div style="color:rgba(255,255,255,0.4); font-size:13px;">Нажмите на кнопку, чтобы начать</div></sc-if>
+            <sc-for list="{{visibleCaptions}}" as="c" hint-placeholder-count="4">
+              <div style="{{c.wrapStyle}}">
+                <sc-if value="{{isConversationMode}}"><div style="font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:5px;">{{c.speakerLabel}}</div></sc-if>
+                <div style="{{c.origStyle}}">{{c.original}}</div>
+                <div style="font-size:15px; color:rgba(255,255,255,0.72); margin-top:4px;">{{c.translated}}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{hasStoppedRecording}}">
+            <div style="display:flex; gap:10px;">
+              <div style="{{glassPillBtn}}">Сохранить транскрипт</div>
+              <div style="{{glassPillBtn}}">Скачать аудио перевода</div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- UPLOAD -->
+      <sc-if value="{{isUpload}}">
+        <sc-if value="{{uploadIdle}}">
+          <div onClick="{{startUpload}}" style="cursor:pointer; margin:20px auto 0 auto; max-width:560px; border-radius:28px; padding:64px 40px; text-align:center; background:rgba(255,255,255,0.07); backdrop-filter:blur(28px) saturate(180%); -webkit-backdrop-filter:blur(28px) saturate(180%); border:1.5px dashed rgba(255,255,255,0.35); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25);">
+            <div style="font-weight:700; letter-spacing:-0.02em; font-size:36px;">Перетащите файл</div>
+            <div style="font-size:13px; color:rgba(255,255,255,0.65); margin-top:10px;">видео, аудио или песня — MP3, WAV, MP4, MOV</div>
+            <div style="{{glassPillBtnFilled}}">Загрузить демо-файл</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{uploadProcessing}}">
+          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; margin-top:40px;">
+            <div style="{{circleStyle}}">
+              <div style="width:126px; height:126px; border-radius:50%; background:rgba(10,12,20,0.55); backdrop-filter:blur(20px); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:22px;">{{uploadProgress}}%</div>
+            </div>
+            <div style="font-size:13px; color:rgba(255,255,255,0.75);">{{processingStatusText}}</div>
+            <div style="font-size:12px; color:rgba(255,255,255,0.45);">{{fileName}}</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{uploadDone}}">
+          <div style="max-width:760px; margin:20px auto 0 auto; border-radius:26px; padding:36px; background:rgba(255,255,255,0.07); backdrop-filter:blur(28px) saturate(180%); -webkit-backdrop-filter:blur(28px) saturate(180%); border:1px solid rgba(255,255,255,0.18); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25);">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:20px;">
+              <div>
+                <div style="font-weight:700; letter-spacing:-0.02em; font-size:26px;">{{fileName}}</div>
+                <div style="font-size:12px; color:rgba(255,255,255,0.6); margin-top:6px;">{{fileMeta}} · {{fromLangName}} → {{toLangName}}</div>
+              </div>
+              <div onClick="{{resetUpload}}" style="font-size:12.5px; color:#bcd0ff; cursor:pointer;">Другой файл</div>
+            </div>
+
+            <div style="margin-top:26px; display:flex; flex-direction:column; gap:22px;">
+              <sc-for list="{{transcript}}" as="t" hint-placeholder-count="4">
+                <div style="display:grid; grid-template-columns:52px 1fr; gap:18px;">
+                  <div style="font-weight:600; font-size:11px; color:rgba(255,255,255,0.4); padding-top:3px;">{{t.time}}</div>
+                  <div>
+                    <div style="font-weight:500; font-size:17px; line-height:1.4;">{{t.original}}</div>
+                    <div style="font-size:14px; color:rgba(255,255,255,0.68); margin-top:4px; line-height:1.5;">{{t.translated}}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:30px; border-top:1px solid rgba(255,255,255,0.2); padding-top:22px;">
+              <sc-for list="{{downloads}}" as="d" hint-placeholder-count="4">
+                <div style="{{glassPillBtn}}">{{d}}</div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </sc-if>
+
+      <!-- HISTORY -->
+      <sc-if value="{{isHistory}}">
+        <div style="max-width:700px; margin:0 auto;">
+          <div style="font-weight:700; letter-spacing:-0.02em; font-size:36px; text-align:center; margin-bottom:28px;">История переводов</div>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <sc-for list="{{historyRows}}" as="row" hint-placeholder-count="5">
+              <div style="display:flex; align-items:center; gap:16px; border-radius:18px; padding:16px 20px; background:rgba(255,255,255,0.07); backdrop-filter:blur(22px) saturate(170%); -webkit-backdrop-filter:blur(22px) saturate(170%); border:1px solid rgba(255,255,255,0.16);">
+                <div style="width:8px; height:8px; border-radius:50%; background:{{row.typeColor}}; flex-shrink:0;"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:18px;">{{row.title}}</div>
+                  <div style="display:flex; gap:14px; margin-top:3px; font-size:11.5px; color:rgba(255,255,255,0.6);">
+                    <span>{{row.from}} → {{row.to}}</span><span>{{row.duration}}</span><span>{{row.date}}</span>
+                  </div>
+                </div>
+                <div style="font-size:12px; color:#bcd0ff; cursor:pointer; flex-shrink:0;">Скачать ↓</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- SETTINGS -->
+      <sc-if value="{{isSettings}}">
+        <div style="max-width:700px; margin:0 auto;">
+          <div style="font-weight:700; letter-spacing:-0.02em; font-size:36px; text-align:center; margin-bottom:28px;">Настройки</div>
+
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            <div style="{{settingsGroup}}">
+              <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:14px;">Языки по умолчанию</div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="{{pillRow}}">
+                  <select value="{{fromLang}}" onChange="{{onFromChange}}" style="background:transparent; color:#fff; border:none; font-size:13px; font-family:inherit;">
+                    <sc-for list="{{langs}}" as="l" hint-placeholder-count="8"><option value="{{l.code}}" style="background:#0d0f1a;">{{l.name}}</option></sc-for>
+                  </select>
+                </div>
+                <div style="opacity:.5;">→</div>
+                <div style="{{pillRow}}">
+                  <select value="{{toLang}}" onChange="{{onToChange}}" style="background:transparent; color:#fff; border:none; font-size:13px; font-family:inherit;">
+                    <sc-for list="{{langs}}" as="l" hint-placeholder-count="8"><option value="{{l.code}}" style="background:#0d0f1a;">{{l.name}}</option></sc-for>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div style="{{settingsGroup}}">
+              <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:14px;">Голосовой перевод</div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div onClick="{{toggleVoiceover}}" style="{{voiceoverTrackStyle}}"><div style="{{voiceoverKnobStyle}}"></div></div>
+                <div style="font-size:13.5px;">Озвучивать перевод голосом</div>
+              </div>
+              <sc-if value="{{voiceoverOn}}">
+                <div style="display:flex; gap:8px; margin-top:14px;">
+                  <sc-for list="{{voiceOptions}}" as="v" hint-placeholder-count="3">
+                    <div onClick="{{v.onSelect}}" style="{{v.style}}">{{v.label}}</div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+
+            <div style="{{settingsGroup}}">
+              <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:14px;">Формат субтитров</div>
+              <div style="display:flex; gap:8px;">
+                <sc-for list="{{subFormats}}" as="f" hint-placeholder-count="3">
+                  <div onClick="{{f.onSelect}}" style="{{f.style}}">{{f.label}}</div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="{{settingsGroup}}">
+              <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:14px;">Уведомления</div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div onClick="{{toggleNotify}}" style="{{notifyTrackStyle}}"><div style="{{notifyKnobStyle}}"></div></div>
+                <div style="font-size:13.5px;">Уведомлять о завершении обработки файла</div>
+              </div>
+            </div>
+
+            <div style="{{settingsGroup}}">
+              <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:14px;">Аккаунт</div>
+              <div style="display:flex; align-items:center; gap:14px;">
+                <div style="width:36px; height:36px; border-radius:50%; background:rgba(255,255,255,0.2); flex-shrink:0;"></div>
+                <div style="flex:1;">
+                  <div style="font-size:13.5px; font-weight:600;">Мария Иванова</div>
+                  <div style="font-size:12px; color:rgba(255,255,255,0.6);">m.ivanova@company.com</div>
+                </div>
+                <div style="font-size:12.5px; color:rgba(255,255,255,0.75); cursor:pointer;">Выйти</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;accentColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#7fa4ff&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#7fa4ff&quot;,&quot;#b98cff&quot;,&quot;#5ee6c9&quot;,&quot;#ff9d7a&quot;],&quot;section&quot;:&quot;Тема&quot;},&quot;defaultRealtimeMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;subtitles&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;subtitles&quot;,&quot;voice&quot;,&quot;conversation&quot;],&quot;section&quot;:&quot;Поведение&quot;}}">
+
+class Component extends DCLogic {
+  LANGS = [
+    { code: 'RU', name: 'Русский' }, { code: 'EN', name: 'English' }, { code: 'DE', name: 'Deutsch' },
+    { code: 'ZH', name: '中文' }, { code: 'JA', name: '日本語' }, { code: 'ES', name: 'Español' },
+    { code: 'IT', name: 'Italiano' }, { code: 'FR', name: 'Français' }
+  ];
+  MODES = [
+    { id: 'subtitles', label: 'Субтитры' },
+    { id: 'voice', label: 'Текст + озвучка' },
+    { id: 'conversation', label: 'Разговор' }
+  ];
+  NAV = [
+    { id: 'home', label: 'Главная' },
+    { id: 'realtime', label: 'Реальное время' },
+    { id: 'upload', label: 'Загрузка' },
+    { id: 'history', label: 'История' },
+    { id: 'settings', label: 'Настройки' }
+  ];
+  HISTORY = [
+    { type: 'realtime', title: 'Созвон с клиентом', from: 'RU', to: 'EN', date: '16 сент 2026', duration: '12:04' },
+    { type: 'upload', title: 'podcast_episode_42.mp3', from: 'EN', to: 'DE', date: '15 сент 2026', duration: '34:20' },
+    { type: 'upload', title: 'interview_tokyo.mp4', from: 'JA', to: 'RU', date: '14 сент 2026', duration: '05:12' },
+    { type: 'realtime', title: 'Переговоры', from: 'ES', to: 'EN', date: '12 сент 2026', duration: '08:47' },
+    { type: 'upload', title: 'song_chanson.wav', from: 'FR', to: 'RU', date: '10 сент 2026', duration: '21:03' }
+  ];
+  CAPTIONS = [
+    { speaker: 'A', original: 'Здравствуйте, рады вас видеть.', translated: 'Hello, great to see you.' },
+    { speaker: 'B', original: 'Thanks for having me today.', translated: 'Спасибо, что пригласили меня сегодня.' },
+    { speaker: 'A', original: 'Давайте начнём с обзора проекта.', translated: "Let's start with a project overview." },
+    { speaker: 'B', original: 'Sounds good, I have the numbers ready.', translated: 'Отлично, у меня готовы цифры.' }
+  ];
+  TRANSCRIPT = [
+    { time: '00:00', original: 'Welcome back to the show.', translated: 'С возвращением на шоу.' },
+    { time: '00:04', original: "Today we're discussing remote work trends.", translated: 'Сегодня мы обсуждаем тенденции удалённой работы.' },
+    { time: '00:11', original: 'Our guest has been researching this for years.', translated: 'Наш гость изучает эту тему уже много лет.' },
+    { time: '00:19', original: "Let's get right into it.", translated: 'Давайте сразу перейдём к делу.' }
+  ];
+  DOWNLOADS = ['Субтитры (.srt)', 'Текстовая расшифровка (.txt)', 'Переведённая аудиодорожка (.mp3)', 'Видео с субтитрами (.mp4)'];
+
+  state = {
+    activeScreen: 'home',
+    fromLang: 'RU',
+    toLang: 'EN',
+    realtimeMode: this.props.defaultRealtimeMode ?? 'subtitles',
+    recording: false,
+    everRecorded: false,
+    captionIndex: 0,
+    uploadStage: 'idle',
+    uploadProgress: 0,
+    voiceoverOn: true,
+    voice: 'neutral',
+    subFormat: 'srt',
+    notifyOn: true
+  };
+
+  componentWillUnmount() {
+    clearInterval(this._capTimer);
+    clearInterval(this._uploadTimer);
+  }
+
+  setScreen(id) { this.setState({ activeScreen: id }); }
+  swapLangs() { this.setState(s => ({ fromLang: s.toLang, toLang: s.fromLang })); }
+  onFromChange(e) { this.setState({ fromLang: e.target.value }); }
+  onToChange(e) { this.setState({ toLang: e.target.value }); }
+  setMode(id) { this.setState({ realtimeMode: id }); }
+
+  toggleRecording() {
+    if (this.state.recording) {
+      clearInterval(this._capTimer);
+      this.setState({ recording: false });
+    } else {
+      this.setState({ recording: true, everRecorded: true, captionIndex: 0 });
+      this._capTimer = setInterval(() => {
+        this.setState(s => {
+          const next = s.captionIndex + 1;
+          if (next > this.CAPTIONS.length) { clearInterval(this._capTimer); return {}; }
+          return { captionIndex: next };
+        });
+      }, 1800);
+    }
+  }
+
+  startUpload() {
+    this.setState({ uploadStage: 'processing', uploadProgress: 0 });
+    this._uploadTimer = setInterval(() => {
+      this.setState(s => {
+        const next = Math.min(100, s.uploadProgress + 5);
+        if (next >= 100) { clearInterval(this._uploadTimer); return { uploadProgress: 100, uploadStage: 'done' }; }
+        return { uploadProgress: next };
+      });
+    }, 140);
+  }
+  resetUpload() { this.setState({ uploadStage: 'idle', uploadProgress: 0 }); }
+
+  toggleVoiceover() { this.setState(s => ({ voiceoverOn: !s.voiceoverOn })); }
+  setVoice(id) { this.setState({ voice: id }); }
+  setSubFormat(id) { this.setState({ subFormat: id }); }
+  toggleNotify() { this.setState(s => ({ notifyOn: !s.notifyOn })); }
+
+  langName(code) { const l = this.LANGS.find(x => x.code === code); return l ? l.name : code; }
+
+  renderVals() {
+    const accent = this.props.accentColor ?? '#7fa4ff';
+    const captionFont = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', Helvetica, Arial, sans-serif";
+    const s = this.state;
+
+    const glassBase = { borderRadius: '22px', padding: '30px 28px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px', cursor: 'pointer', flex: '1 1 420px', minHeight: '210px', backdropFilter: 'blur(26px) saturate(180%)', WebkitBackdropFilter: 'blur(26px) saturate(180%)' };
+    const glassCard = { ...glassBase, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.18)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 12px 40px rgba(0,0,0,0.3)' };
+    const glassCardAccent = { ...glassBase, background: `linear-gradient(135deg, ${accent}55, rgba(255,255,255,0.10))`, border: `1px solid ${accent}88`, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 12px 40px ${accent}33` };
+    const pillRow = { display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 16px', borderRadius: '999px', background: 'rgba(255,255,255,0.09)', backdropFilter: 'blur(20px) saturate(170%)', WebkitBackdropFilter: 'blur(20px) saturate(170%)', border: '1px solid rgba(255,255,255,0.2)' };
+    const glassPillBtn = { padding: '10px 18px', borderRadius: '999px', fontSize: '12.5px', cursor: 'pointer', background: 'rgba(255,255,255,0.09)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.22)' };
+    const glassPillBtnFilled = { display: 'inline-block', marginTop: '22px', fontSize: '13px', fontWeight: 600, color: '#0d0f1a', background: accent, padding: '11px 24px', borderRadius: '999px', cursor: 'pointer', boxShadow: `0 8px 24px ${accent}55` };
+    const settingsGroup = { borderRadius: '20px', padding: '22px 24px', background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(24px) saturate(170%)', WebkitBackdropFilter: 'blur(24px) saturate(170%)', border: '1px solid rgba(255,255,255,0.16)' };
+
+    const navItems = this.NAV.map(n => {
+      const active = n.id === s.activeScreen;
+      return {
+        ...n,
+        onSelect: () => this.setScreen(n.id),
+        navStyle: { cursor: 'pointer', fontSize: '12.5px', padding: '9px 15px', borderRadius: '999px', color: active ? '#0d0f1a' : 'rgba(255,255,255,0.75)', background: active ? '#fff' : 'transparent' }
+      };
+    });
+
+    const typeMeta = (type) => type === 'realtime' ? { label: 'Реал. время', color: accent } : { label: 'Файл', color: 'rgba(255,255,255,0.6)' };
+    const historyRows = this.HISTORY.map(h => { const t = typeMeta(h.type); return { ...h, typeLabel: t.label, typeColor: t.color }; });
+    const recentItems = historyRows.slice(0, 3);
+
+    const modes = this.MODES.map(m => {
+      const active = m.id === s.realtimeMode;
+      return { ...m, onSelect: () => this.setMode(m.id), style: { cursor: 'pointer', padding: '5px 12px', borderRadius: '999px', fontSize: '12px', background: active ? '#fff' : 'transparent', color: active ? '#0d0f1a' : 'rgba(255,255,255,0.8)' } };
+    });
+
+    const isConversationMode = s.realtimeMode === 'conversation';
+    const visibleCaptions = this.CAPTIONS.slice(0, s.captionIndex).map((c) => ({
+      ...c,
+      speakerLabel: c.speaker === 'A' ? `${this.langName(s.fromLang)} · A` : `${this.langName(s.toLang)} · B`,
+      wrapStyle: { textAlign: isConversationMode ? (c.speaker === 'A' ? 'left' : 'right') : 'center', alignSelf: isConversationMode ? (c.speaker === 'A' ? 'flex-start' : 'flex-end') : 'center', maxWidth: '640px', animation: 'riseIn .5s ease both' },
+      origStyle: { fontFamily: captionFont, fontWeight: 600, letterSpacing: '-0.01em', fontSize: '25px', lineHeight: '1.3' }
+    }));
+
+    const voiceOptions = [{ id: 'neutral', label: 'Нейтральный' }, { id: 'male', label: 'Мужской' }, { id: 'female', label: 'Женский' }]
+      .map(v => ({ ...v, onSelect: () => this.setVoice(v.id), style: { padding: '8px 14px', borderRadius: '999px', fontSize: '12.5px', cursor: 'pointer', background: s.voice === v.id ? accent : 'rgba(255,255,255,0.08)', color: s.voice === v.id ? '#0d0f1a' : 'rgba(255,255,255,0.75)', border: '1px solid rgba(255,255,255,0.18)' } }));
+
+    const subFormats = [{ id: 'srt', label: 'SRT' }, { id: 'vtt', label: 'VTT' }, { id: 'txt', label: 'TXT' }]
+      .map(f => ({ ...f, onSelect: () => this.setSubFormat(f.id), style: { padding: '8px 14px', borderRadius: '999px', fontSize: '12.5px', cursor: 'pointer', background: s.subFormat === f.id ? accent : 'rgba(255,255,255,0.08)', color: s.subFormat === f.id ? '#0d0f1a' : 'rgba(255,255,255,0.75)', border: '1px solid rgba(255,255,255,0.18)' } }));
+
+    return {
+      accent, glassCard, glassCardAccent, pillRow, glassPillBtn, glassPillBtnFilled, settingsGroup,
+      navItems,
+      isHome: s.activeScreen === 'home', isRealtime: s.activeScreen === 'realtime',
+      isUpload: s.activeScreen === 'upload', isHistory: s.activeScreen === 'history', isSettings: s.activeScreen === 'settings',
+      goRealtime: () => this.setScreen('realtime'), goUpload: () => this.setScreen('upload'), goHistory: () => this.setScreen('history'),
+      recentItems, historyRows,
+      langs: this.LANGS, fromLang: s.fromLang, toLang: s.toLang,
+      onFromChange: (e) => this.onFromChange(e), onToChange: (e) => this.onToChange(e), swapLangs: () => this.swapLangs(),
+      fromLangName: this.langName(s.fromLang), toLangName: this.langName(s.toLang),
+      modes, isConversationMode, noCaptions: s.captionIndex === 0, recording: s.recording,
+      visibleCaptions,
+      toggleRecording: () => this.toggleRecording(),
+      recordingStatusText: s.recording ? 'Слушаю…' : (s.everRecorded ? 'Остановлено' : 'Нажмите, чтобы начать запись'),
+      micButtonStyle: { cursor: 'pointer', width: '96px', height: '96px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: s.recording ? accent : 'rgba(255,255,255,0.10)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.3)', position: 'relative', zIndex: 1, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4)' },
+      micIconStyle: s.recording ? { width: '22px', height: '22px', borderRadius: '4px', background: '#0d0f1a' } : { width: '24px', height: '24px', borderRadius: '50%', background: '#fff' },
+      hasStoppedRecording: s.everRecorded && !s.recording,
+      uploadIdle: s.uploadStage === 'idle', uploadProcessing: s.uploadStage === 'processing', uploadDone: s.uploadStage === 'done',
+      startUpload: () => this.startUpload(), resetUpload: () => this.resetUpload(),
+      fileName: 'podcast_episode_51.mp3', fileMeta: '26.4 МБ · 18:42',
+      uploadProgress: s.uploadProgress,
+      circleStyle: { width: '160px', height: '160px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `conic-gradient(${accent} ${s.uploadProgress}%, rgba(255,255,255,0.15) 0)`, border: '1px solid rgba(255,255,255,0.25)' },
+      processingStatusText: s.uploadProgress < 40 ? 'Распознавание речи…' : s.uploadProgress < 80 ? 'Перевод текста…' : 'Финализация…',
+      transcript: this.TRANSCRIPT, downloads: this.DOWNLOADS,
+      voiceoverOn: s.voiceoverOn, toggleVoiceover: () => this.toggleVoiceover(),
+      voiceoverTrackStyle: { width: '38px', height: '21px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0, background: s.voiceoverOn ? accent : 'rgba(255,255,255,0.2)' },
+      voiceoverKnobStyle: { position: 'absolute', top: '2px', width: '17px', height: '17px', borderRadius: '50%', background: '#fff', transition: 'left .15s ease', left: s.voiceoverOn ? '19px' : '2px' },
+      voiceOptions, subFormats,
+      notifyOn: s.notifyOn, toggleNotify: () => this.toggleNotify(),
+      notifyTrackStyle: { width: '38px', height: '21px', borderRadius: '11px', position: 'relative', cursor: 'pointer', flexShrink: 0, background: s.notifyOn ? accent : 'rgba(255,255,255,0.2)' },
+      notifyKnobStyle: { position: 'absolute', top: '2px', width: '17px', height: '17px', borderRadius: '50%', background: '#fff', transition: 'left .15s ease', left: s.notifyOn ? '19px' : '2px' }
+    };
+  }
+}
+
+</script>
+</body>
+</html>

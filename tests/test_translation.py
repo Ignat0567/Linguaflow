@@ -20,8 +20,10 @@ class FakeProvider:
 
     name = "fake"
 
-    def __init__(self, outputs=None, offline=True, pairs=None) -> None:
+    def __init__(self, outputs=None, offline=True, pairs=None,
+                 unreliable_on_short_input=False) -> None:
         self.is_offline = offline
+        self.unreliable_on_short_input = unreliable_on_short_input
         self.outputs = outputs
         self.calls: list[list[str]] = []
         self.pairs = pairs
@@ -409,7 +411,7 @@ def test_genuine_repetition_in_the_source_survives():
 
 def test_short_inputs_are_flagged_for_review():
     """"Yes." came back as "Нет, нет." -- the opposite. Unfixable, so visible."""
-    translator = Translator(FakeProvider(offline=True))
+    translator = Translator(FakeProvider(unreliable_on_short_input=True))
     _, report = translator.translate(
         ["Yes.", "A sentence with a good many words in it."], "en", "ru"
     )
@@ -417,9 +419,9 @@ def test_short_inputs_are_flagged_for_review():
     assert report.needs_review
 
 
-def test_short_inputs_are_not_flagged_for_a_cloud_provider():
-    """The warning is about this local model, not about short text."""
-    translator = Translator(FakeProvider(offline=False))
+def test_short_inputs_are_not_flagged_for_a_provider_that_handles_them():
+    """The warning belongs to NLLB, not to short text or to being offline."""
+    translator = Translator(FakeProvider(offline=True, unreliable_on_short_input=False))
     _, report = translator.translate(["Yes."], "en", "ru")
     assert report.risky_short == []
 
@@ -509,3 +511,120 @@ def test_deduplication_keeps_every_position_aligned():
     for left, right in zip(texts, results):
         if left:
             assert right == f"[de] {left}"
+
+
+# -- online services -----------------------------------------------------
+
+def test_groq_is_offered_as_a_service():
+    from lt_core.mt.cloud import LLM_SERVICES, ONLINE_SERVICES
+
+    assert "groq" in ONLINE_SERVICES
+    assert LLM_SERVICES["groq"].base_url == "https://api.groq.com/openai/v1"
+    assert LLM_SERVICES["groq"].env_var == "GROQ_API_KEY"
+
+
+def test_missing_key_names_the_service_and_where_to_get_one():
+    from lt_core.mt.cloud import build_cloud_provider
+
+    with pytest.raises(TranslationError) as caught:
+        build_cloud_provider("groq", api_key="")
+    message = str(caught.value)
+    assert "Groq" in message
+    assert "GROQ_API_KEY" in message
+    assert "console.groq.com" in message
+
+
+def test_each_service_keeps_its_own_endpoint_and_model():
+    from lt_core.mt.cloud import build_cloud_provider
+
+    groq = build_cloud_provider("groq", api_key="k")
+    openai = build_cloud_provider("openai", api_key="k")
+    assert groq.base_url != openai.base_url
+    assert groq.model != openai.model
+
+
+def test_model_can_be_overridden():
+    from lt_core.mt.cloud import build_cloud_provider
+
+    provider = build_cloud_provider("groq", api_key="k", model="llama-3.1-8b-instant")
+    assert provider.model == "llama-3.1-8b-instant"
+
+
+def test_an_unknown_service_is_refused_by_name():
+    from lt_core.mt.cloud import build_cloud_provider
+
+    with pytest.raises(TranslationError, match="groq"):
+        build_cloud_provider("definitely-not-a-service")
+
+
+def test_a_local_endpoint_is_reported_as_staying_on_the_machine():
+    """The privacy question is where the text goes, not which protocol carries it."""
+    from lt_core.mt.cloud import build_cloud_provider
+
+    provider = build_cloud_provider("local")
+    assert provider.is_offline
+    assert "компьютере" in provider.name
+
+
+def test_a_local_service_pointed_at_a_remote_host_is_not_offline():
+    """Choosing "local" does not make a remote server local."""
+    from lt_core.mt.cloud import build_cloud_provider
+
+    provider = build_cloud_provider(
+        "local", base_url="https://elsewhere.example.com/v1", api_key="k"
+    )
+    assert not provider.is_offline
+    assert "онлайн" in provider.name
+
+
+def test_short_input_warning_belongs_to_the_model_not_to_being_offline():
+    """It is NLLB's subtitle training that causes it, not running locally."""
+    from lt_core.mt.cloud import build_cloud_provider
+
+    local_llm = build_cloud_provider("local")
+    assert local_llm.is_offline
+    assert not local_llm.unreliable_on_short_input
+
+
+def test_long_batches_are_split_across_requests(monkeypatch):
+    """A model given forty lines sometimes returns thirty-nine.
+
+    The whole request is then discarded, because alignment to timings cannot be
+    trusted. Smaller requests lose less work, and stay inside the per-minute
+    limits that Groq's free tier enforces strictly.
+    """
+    from lt_core.mt import cloud
+
+    seen: list[int] = []
+
+    def fake_post(url, payload, headers, timeout):
+        lines = payload["messages"][1]["content"].splitlines()
+        seen.append(len(lines))
+        body = "\n".join(f"{n + 1}. ok{n + 1}" for n in range(len(lines)))
+        return {"choices": [{"message": {"content": body}}]}
+
+    monkeypatch.setattr(cloud, "_post", fake_post)
+    provider = cloud.build_cloud_provider("groq", api_key="k", lines_per_request=10)
+    results = provider.translate([f"line {n}" for n in range(25)], "en", "de")
+
+    assert seen == [10, 10, 5]
+    assert len(results) == 25
+
+
+def test_the_request_carries_the_chosen_model_and_endpoint(monkeypatch):
+    from lt_core.mt import cloud
+
+    captured = {}
+
+    def fake_post(url, payload, headers, timeout):
+        captured["url"] = url
+        captured["model"] = payload["model"]
+        captured["auth"] = headers.get("Authorization", "")
+        return {"choices": [{"message": {"content": "1. eins"}}]}
+
+    monkeypatch.setattr(cloud, "_post", fake_post)
+    cloud.build_cloud_provider("groq", api_key="secret").translate(["one"], "en", "de")
+
+    assert captured["url"].startswith("https://api.groq.com/openai/v1")
+    assert captured["model"] == "llama-3.3-70b-versatile"
+    assert captured["auth"] == "Bearer secret"

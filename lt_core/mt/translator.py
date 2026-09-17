@@ -173,7 +173,7 @@ class Translator:
             risky_short=[
                 position for position, src in enumerate(texts)
                 if src.strip() and len(src.split()) <= RISKY_WORD_COUNT
-                and self.provider.is_offline
+                and getattr(self.provider, "unreliable_on_short_input", False)
             ],
         )
         if self.check_numbers:

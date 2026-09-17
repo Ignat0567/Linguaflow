@@ -64,6 +64,10 @@ class NllbTranslator:
 
     name = "NLLB-200 (локально)"
     is_offline = True
+    # This model answers a one-word input with an invented dialogue turn; see
+    # RISKY_WORD_COUNT in lt_core.mt.translator. It is a property of this model,
+    # not of running locally, so it is declared here rather than inferred.
+    unreliable_on_short_input = True
 
     def __init__(
         self,

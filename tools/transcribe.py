@@ -24,6 +24,7 @@ from lt_core.asr.transcriber import (  # noqa: E402
     UnsupportedLanguage,
 )
 from lt_core.media import MediaError, resolve  # noqa: E402
+from lt_core.mt.cloud import ONLINE_SERVICES  # noqa: E402
 from lt_core.mt.translator import build_translator  # noqa: E402
 from lt_core.mt.types import TranslationError, TranslationMode  # noqa: E402
 from lt_core.pipeline.batch import transcribe_file  # noqa: E402
@@ -66,8 +67,13 @@ def main() -> int:
         help="offline — ничего не покидает компьютер (по умолчанию); "
              "online — текст уходит во внешний сервис")
     translation.add_argument(
-        "--service", default="deepl", choices=["deepl", "openai"],
-        help="сервис для онлайн-режима")
+        "--service", default="deepl", choices=list(ONLINE_SERVICES),
+        help="сервис для онлайн-режима: deepl — лучшее качество на европейских "
+             "языках; groq — самый быстрый; openai — универсальный; "
+             "local — свой сервер с OpenAI-совместимым API")
+    translation.add_argument(
+        "--llm-model",
+        help="имя модели для groq/openai/local (по умолчанию своё у каждого)")
     translation.add_argument("--api-key", help="ключ доступа для онлайн-режима")
     translation.add_argument("--glossary", help="CSV или JSON с терминами")
     translation.add_argument(
@@ -99,6 +105,8 @@ def main() -> int:
         options = {"api_key": args.api_key} if args.api_key else {}
         if args.mode == TranslationMode.ONLINE:
             options["service"] = args.service
+            if args.llm_model:
+                options["model"] = args.llm_model
         try:
             translator = build_translator(
                 args.mode, glossary_path=args.glossary,
