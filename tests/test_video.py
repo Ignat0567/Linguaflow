@@ -169,6 +169,37 @@ def test_the_length_is_found_on_its_own_when_not_given(
     assert probe(result.path).duration == pytest.approx(VIDEO_SECONDS, abs=0.15)
 
 
+def test_the_language_tag_survives_the_container_being_added(
+    source_video, dub_audio, tmp_path
+):
+    """`with_suffix` treats «.ru» as a suffix and replaces it.
+
+    The pipeline names its output «<stem>.<language>», so the obvious call
+    turned «talk.ru» into «talk.mp4» -- the language gone, and, since file
+    mode writes beside the source by default, the same name as the source
+    video it was made from.
+    """
+    result = replace_audio(
+        source_video, dub_audio, tmp_path / "talk.ru", target_language="ru"
+    )
+    assert result.path.name == "talk.ru.mp4"
+
+
+def test_a_translation_is_never_written_over_its_own_source(
+    source_video, dub_audio
+):
+    """The input is the one file that cannot be replaced."""
+    with pytest.raises(MuxError, match="совпало бы"):
+        replace_audio(source_video, dub_audio, source_video)
+
+
+def test_a_destination_that_already_names_a_container_is_left_alone(
+    source_video, dub_audio, tmp_path
+):
+    result = replace_audio(source_video, dub_audio, tmp_path / "out.mp4")
+    assert result.path.name == "out.mp4"
+
+
 # -- containers and refusals -------------------------------------------
 
 @pytest.mark.parametrize("name,expected", [

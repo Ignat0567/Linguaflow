@@ -82,10 +82,22 @@ def replace_audio(
     if not voice.exists():
         raise MuxError(f"Звуковая дорожка не найдена: {voice}")
 
+    # The container is appended, never substituted. `with_suffix` was the
+    # obvious call and it silently ate the language tag: a destination of
+    # «talk.ru» came out as «talk.mp4», because `.ru` looks like a suffix.
+    # Worse than the wrong name -- with the pipeline's default of writing
+    # beside the source, «talk.mp4» is the source, and the original video
+    # would have been overwritten by its own translation.
     out = Path(destination)
     if out.suffix.lower() not in NATIVE_CONTAINERS:
-        out = out.with_suffix(container_for(source))
+        out = out.with_name(out.name + container_for(source))
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    if out.resolve() == source:
+        raise MuxError(
+            f"Переведённое видео совпало бы с исходным файлом «{source.name}». "
+            "Укажите другую папку для результатов."
+        )
 
     subtitle_path = Path(subtitles).resolve() if subtitles else None
     if subtitle_path is not None and not subtitle_path.exists():

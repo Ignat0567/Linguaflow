@@ -86,7 +86,15 @@ track 1 `rus` (default), track 2 `eng`, subtitle track `rus`, duration
 6. **The original soundtrack is kept as a second track.** At no cost, since it
    is muxed rather than mixed, and it is what a reviewer switches to when the
    numeric audit flags a line.
-7. **A slot-fitted voice is not the speaker's own voice.** The dubbed male
+7. **`with_suffix` ate the language tag, and nearly the source file.**
+   The pipeline names its output `<stem>.<language>` and lets the muxer add
+   the container, so `talk.ru` should become `talk.ru.mp4`. `with_suffix`
+   treats `.ru` as the suffix and replaces it: `talk.mp4`. Which, since file
+   mode writes beside the source by default, is the source video. Found by
+   looking at the filename in a real job the user had just run, not by a
+   test. The container is appended now, and a destination that resolves to
+   the source is refused outright.
+8. **A slot-fitted voice is not the speaker's own voice.** The dubbed male
    lines measure 124 Hz where the speaker was at 92. Register is matched;
    identity is not, and no amount of voice choice would change that.
 
@@ -115,38 +123,38 @@ finished files are written.
 `lt_ui/i18n.py` — 92 strings in Russian, English and German.
 `lt_ui/store.py` — `appearance`, `ui_language`, `output_dir`, all remembered.
 
-317 tests.
+320 tests.
 
 ### Findings
 
-8. **The light theme is not an inversion of the dark one.** What inverts is
+9. **The light theme is not an inversion of the dark one.** What inverts is
    the text and the scrim; the glass does not, because frosted white over a
    bright photograph is still glass. The thing that made it possible was
    splitting one call in two: the surface colour and the foreground colour
    were both `white()` before, which is exactly the shortcut that makes a
    second theme impossible later.
-9. **Panels need six times more white on the light theme.** At the handoff's
+10. **Panels need six times more white on the light theme.** At the handoff's
    8% a card over a bright photograph reads as a smudge rather than a
    surface. 55% is where it becomes a panel again.
-10. **Secondary text had to be lifted.** White at 75% on a photograph reads;
+11. **Secondary text had to be lifted.** White at 75% on a photograph reads;
     near-black at 75% on a pale veil looks faded. Every step below primary
     gains 12 percentage points on the light theme, and primary gains none.
-11. **A caption translated at import never changes language.** Twice: the nav
+12. **A caption translated at import never changes language.** Twice: the nav
     bar kept its Russian captions while every other string switched, and so
     did the online-service list. Both were class or module level constants,
     and both read as correct code. There is now a test that parses every
     module in `lt_ui` and fails on a `_()` call outside a function.
-12. **A German interface exposed a layout bug the Russian one hid.** German
+13. **A German interface exposed a layout bug the Russian one hid.** German
     captions are longer, and the toggle rows collapsed onto their own text --
     a scroll area that resizes its child to the viewport takes the extra
     height out of whichever widget reports the smallest minimum, and a
     wrapping label reports nearly none. The rows have a floor now.
-13. **The subtitle overlay must ignore the theme.** It does not sit on the
+14. **The subtitle overlay must ignore the theme.** It does not sit on the
     app's backdrop, it sits over someone else's video call, so its plate
     stays dark and its text stays white. Letting the light theme reach it
     would have put near-black letters on a near-black plate -- caught by
     looking at the rendered window rather than at the code.
-14. **Changing language rebuilds the screens.** Ninety captions are read from
+15. **Changing language rebuilds the screens.** Ninety captions are read from
     the catalogue when their widgets are created, and a person changes
     language once, from a list. Rebuilding is cheaper to reason about than
     ninety `setText` calls, and the models stay loaded.
