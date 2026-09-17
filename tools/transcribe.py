@@ -41,7 +41,9 @@ def _bar(done: float, total: float, width: int = 28) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Распознавание речи в файле или по ссылке")
+        prog="linguaflow",
+        description="Linguaflow — распознавание и перевод речи "
+                    "в файле или по ссылке")
     parser.add_argument("source", help="путь к медиафайлу или URL")
     parser.add_argument(
         "--language", "-l", choices=sorted(SUPPORTED_LANGUAGES),

@@ -3,6 +3,7 @@
 .pytest-tmp/
 .venv/
 __pycache__/
+design/*.zip
 downloads/
 models/
 spike/audio/
