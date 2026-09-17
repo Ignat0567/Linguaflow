@@ -70,6 +70,9 @@ class DeviceInfo:
     # has been unplugged, and an entry that enumerates cleanly can still refuse
     # to open, so one name needs more than one way in.
     alternates: tuple[tuple[int, int, int], ...] = field(default=())
+    # Backend-specific identifier for backends that address devices by name
+    # rather than by index -- currently the DirectShow moniker.
+    endpoint: str | None = field(default=None)
 
     @property
     def openings(self) -> tuple[tuple[int, int, int], ...]:

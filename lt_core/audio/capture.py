@@ -400,7 +400,59 @@ class FileSource(AudioSource):
                 raise CaptureError(f"ffmpeg could not decode {self.path.name}: {stderr}")
 
 
+class DshowMicrophoneSource(AudioSource):
+    """Capture a microphone through DirectShow, using the bundled ffmpeg.
+
+    The second road into the audio stack, and on some machines the only open
+    one. See lt_core.audio.dshow for what PortAudio does here and why this
+    exists.
+
+    ffmpeg downmixes and resamples in the same pass, so what arrives on stdout
+    is already mono at the target rate and no resampler is involved.
+    """
+
+    def __init__(self, device: DeviceInfo) -> None:
+        super().__init__()
+        if device.backend != "dshow":
+            raise CaptureError(f"{device.name} is not a DirectShow input")
+        self.device = device
+
+    def _run(self) -> None:
+        from .dshow import DshowDevice, open_stream
+
+        target = DshowDevice(self.device.name, self.device.endpoint or "")
+        try:
+            process = open_stream(target, TARGET_SAMPLE_RATE)
+        except OSError as exc:
+            raise CaptureError(
+                f"Не удалось запустить захват с «{self.device.name}».", str(exc)
+            ) from exc
+
+        nbytes = BLOCK_SAMPLES * 2
+        try:
+            while not self._stop.is_set():
+                raw = process.stdout.read(nbytes)
+                if not raw:
+                    break
+                self._emit(pcm16_to_float32(raw))
+        finally:
+            if process.poll() is None:
+                process.kill()
+            stderr = process.stderr.read().decode("utf-8", "replace").strip()
+            process.stdout.close()
+            process.stderr.close()
+            process.wait()
+            if self._samples_emitted == 0:
+                raise CaptureError(
+                    f"Микрофон «{self.device.name}» не отдал ни одного блока. "
+                    f"Обычно это значит, что устройство занято другой программой.",
+                    detail=stderr,
+                )
+
+
 def open_source(device: DeviceInfo) -> AudioSource:
     if device.kind == "system":
         return SystemAudioSource(device)
+    if device.backend == "dshow":
+        return DshowMicrophoneSource(device)
     return MicrophoneSource(device)

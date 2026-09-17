@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from .types import DeviceInfo
+from .types import TARGET_SAMPLE_RATE, DeviceInfo
 
 _LOOPBACK_SUFFIX = " [Loopback]"
 
@@ -144,9 +144,58 @@ def list_system_outputs() -> list[DeviceInfo]:
         pa.terminate()
 
 
-def list_capture_devices() -> list[DeviceInfo]:
-    """Everything the user can capture from: defaults first, then by name."""
-    devices = list_microphones() + list_system_outputs()
+def list_dshow_microphones() -> list[DeviceInfo]:
+    """Microphones reachable through DirectShow rather than PortAudio.
+
+    Preferred over the PortAudio list on Windows, because PortAudio's capture
+    path is the one that breaks: see lt_core.audio.dshow for what was measured.
+    ffmpeg negotiates the format itself, so the nominal rate here is just what
+    we ask for rather than a property of the device.
+    """
+    from .dshow import list_audio_devices
+
+    try:
+        found = list_audio_devices()
+    except Exception:
+        return []
+
+    portaudio_defaults = {
+        device.name for device in list_microphones() if device.is_default
+    }
+    return [
+        DeviceInfo(
+            backend="dshow",
+            index=position,
+            name=_clean_name(device.name),
+            kind="microphone",
+            sample_rate=TARGET_SAMPLE_RATE,
+            channels=1,
+            is_default=_clean_name(device.name) in portaudio_defaults,
+            endpoint=device.moniker,
+        )
+        for position, device in enumerate(found)
+    ]
+
+
+def list_capture_devices(prefer_dshow: bool = True) -> list[DeviceInfo]:
+    """Everything the user can capture from: defaults first, then by name.
+
+    On Windows the microphone list comes from DirectShow when it has anything
+    to offer, and PortAudio supplies only the devices DirectShow does not know
+    about. Listing both in full would show every microphone twice under
+    identical names, which is precisely the confusion the deduplication above
+    exists to prevent.
+    """
+    microphones = list_dshow_microphones() if prefer_dshow else []
+    if microphones:
+        known = {device.name for device in microphones}
+        microphones += [
+            device for device in list_microphones() if device.name not in known
+        ]
+    else:
+        microphones = list_microphones()
+
+    devices = microphones + list_system_outputs()
     return sorted(
         devices,
         key=lambda d: (not d.is_default, d.is_low_quality, d.kind, d.name.lower()),

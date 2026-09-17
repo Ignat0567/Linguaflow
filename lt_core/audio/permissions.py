@@ -7,14 +7,18 @@ and only the attempt to open one fails -- with "Invalid device [PaErrorCode
 -9996]", or a DirectSound error, or an MME error, depending on which host API
 happens to be tried first.
 
-Nothing in that mentions permission. On the Day 1 machine every one of ten
-microphones failed this way while system-audio loopback kept working perfectly,
-because the setting covers capture endpoints and not render endpoints. Anyone
-meeting this without an explanation concludes the program is broken.
+Nothing in that mentions permission, so the setting is read directly.
 
-So the permission is read directly and reported as what it is. Reading only --
-the toggle belongs to the user, and an audio tool has no business changing a
-system privacy setting on their behalf.
+Read narrowly, though, and only an explicit Deny is treated as one. The first
+version of this module inferred denial from a *missing* consent value, which
+looked convincing -- the value was absent and all ten microphones were failing.
+It was wrong. The setting was enabled the whole time; the failure was
+PortAudio's capture path, and ffmpeg opened the same microphone immediately.
+An absent value means the toggle was never written, which is the normal state
+on a machine where nobody has touched it.
+
+Reading only, either way: the toggle belongs to the user, and an audio tool has
+no business changing a system privacy setting on their behalf.
 """
 
 from __future__ import annotations
@@ -85,21 +89,11 @@ def check_microphone_permission() -> MicrophonePermission:
             "запрет за ошибкой драйвера.",
             remedy=f"{setting} — включите.",
         )
-    if desktop is None:
-        # Not "denied" so much as never granted. Observed on the Day 1 machine:
-        # the master toggle reads Allow, this value is absent, and every one of
-        # ten microphones fails to open in two independent PortAudio builds
-        # while loopback keeps working. Worth reporting, but not as a verdict --
-        # the same absence can mean the setting was simply never touched.
-        return MicrophonePermission(
-            False,
-            "Разрешение на микрофон для классических приложений не выдано "
-            "(Windows не хранит для него значения). Обычно это и есть причина, "
-            "когда устройства видны, но ни одно не открывается.",
-            remedy=f"Проверьте: {setting}. Если оно уже включено, микрофон "
-                   f"держит другая программа в монопольном режиме.",
-        )
-
+    # An absent value means the toggle was never written, not that it is off.
+    # Reading it as denial produced a confident, wrong diagnosis: the setting
+    # was on the whole time, and every microphone still refused to open --
+    # because PortAudio was the thing failing, not permission. Only an explicit
+    # Deny is evidence of anything.
     return MicrophonePermission(True, "Доступ к микрофону разрешён.")
 
 
@@ -113,7 +107,7 @@ def explain_open_failure(device_name: str) -> str:
     if not permission.allowed:
         return f"{permission.reason} {permission.remedy or ''}".strip()
     return (
-        f"Не удалось открыть «{device_name}». Устройство числится в системе, "
-        f"но не отвечает — обычно это значит, что оно отключено или занято "
-        f"другой программой."
+        f"Не удалось открыть «{device_name}» через PortAudio. Попробуйте то же "
+        f"устройство с пометкой DirectShow — на части систем работает только "
+        f"этот путь. Если и он молчит, устройство занято другой программой."
     )

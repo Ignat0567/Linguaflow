@@ -305,11 +305,25 @@ def test_gate_extend_covers_queued_audio():
 # -- permissions ---------------------------------------------------------
 
 def test_permission_reports_denied_desktop_access(monkeypatch):
-    """The setting that blocks every microphone while breaking nothing else.
+    """An explicit Deny on the desktop-apps toggle is a real denial."""
+    import lt_core.audio.permissions as permissions
 
-    Windows 11 keeps a separate toggle for desktop programs. With it off, all
-    microphones enumerate normally and none of them open, and PortAudio calls
-    it a device error -- so the permission has to be read, not inferred.
+    monkeypatch.setattr(permissions.sys, "platform", "win32")
+    monkeypatch.setattr(
+        permissions, "_read_value",
+        lambda root, subkey: "Deny" if subkey.endswith("NonPackaged") else "Allow",
+    )
+    result = permissions.check_microphone_permission()
+    assert not result.allowed
+    assert result.remedy and "классическим" in result.remedy.lower()
+
+
+def test_absent_consent_value_is_not_a_denial(monkeypatch):
+    """Regression: inferring denial from a missing value gave a wrong verdict.
+
+    The value was absent, ten microphones were failing, and the conclusion --
+    permission is off -- was confident and false. The toggle was on; PortAudio
+    was the thing broken. A never-written setting is not a denied one.
     """
     import lt_core.audio.permissions as permissions
 
@@ -318,33 +332,7 @@ def test_permission_reports_denied_desktop_access(monkeypatch):
         permissions, "_read_value",
         lambda root, subkey: None if subkey.endswith("NonPackaged") else "Allow",
     )
-    result = permissions.check_microphone_permission()
-    assert not result.allowed
-    assert result.remedy and "классическим" in result.remedy.lower()
-
-
-def test_permission_distinguishes_never_granted_from_denied(monkeypatch):
-    """An absent value is not the same claim as an explicit Deny."""
-    import lt_core.audio.permissions as permissions
-
-    monkeypatch.setattr(permissions.sys, "platform", "win32")
-
-    monkeypatch.setattr(
-        permissions, "_read_value",
-        lambda root, subkey: "Deny" if subkey.endswith("NonPackaged") else "Allow",
-    )
-    denied = permissions.check_microphone_permission()
-
-    monkeypatch.setattr(
-        permissions, "_read_value",
-        lambda root, subkey: None if subkey.endswith("NonPackaged") else "Allow",
-    )
-    unset = permissions.check_microphone_permission()
-
-    assert not denied.allowed and not unset.allowed
-    assert denied.reason != unset.reason
-    # The unset case must admit the other possibility rather than assert a cause.
-    assert "монопольн" in (unset.remedy or "")
+    assert permissions.check_microphone_permission().allowed
 
 
 def test_permission_reports_global_denial(monkeypatch):
@@ -372,6 +360,15 @@ def test_open_failure_blames_permission_before_hardware(monkeypatch):
     message = permissions.explain_open_failure("Webcam")
     assert "конфиденциальност" in message.lower()
     assert "Webcam" not in message
+
+
+def test_open_failure_points_at_the_other_backend(monkeypatch):
+    """With permission fine, the useful advice is to try DirectShow."""
+    import lt_core.audio.permissions as permissions
+
+    monkeypatch.setattr(permissions.sys, "platform", "win32")
+    monkeypatch.setattr(permissions, "_read_value", lambda root, subkey: "Allow")
+    assert "DirectShow" in permissions.explain_open_failure("Webcam")
 
 
 def test_open_failure_falls_back_to_hardware_explanation(monkeypatch):
