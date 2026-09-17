@@ -123,6 +123,35 @@ def test_no_caption_is_translated_at_import_time():
     assert frozen == [], frozen
 
 
+def test_the_underscore_name_is_never_used_as_a_throwaway():
+    """`_` is the translator here, so it cannot also be the discard variable.
+
+    `path, _ = QFileDialog.getOpenFileName(...)` makes `_` a local for the
+    whole function, and the very next argument was a `_()` call -- the file
+    dialog raised UnboundLocalError before it could open. Python's most
+    common idiom and this module's alias collide silently, and only at the
+    moment the code runs.
+    """
+    offenders: list[str] = []
+    for path in sorted(UI_ROOT.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                targets = [node.target]
+            elif isinstance(node, ast.withitem) and node.optional_vars:
+                targets = [node.optional_vars]
+            for target in targets:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name) and name.id == "_":
+                        if path.name == "i18n.py":
+                            continue  # where the alias is defined
+                        offenders.append(f"{path.name}:{name.lineno}")
+    assert offenders == [], offenders
+
+
 # -- the light theme -----------------------------------------------------
 
 def test_the_foreground_inverts_but_the_glass_does_not():

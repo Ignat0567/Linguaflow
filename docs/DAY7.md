@@ -123,7 +123,7 @@ finished files are written.
 `lt_ui/i18n.py` — 92 strings in Russian, English and German.
 `lt_ui/store.py` — `appearance`, `ui_language`, `output_dir`, all remembered.
 
-320 tests.
+321 tests.
 
 ### Findings
 
@@ -154,7 +154,15 @@ finished files are written.
     stays dark and its text stays white. Letting the light theme reach it
     would have put near-black letters on a near-black plate -- caught by
     looking at the rendered window rather than at the code.
-15. **Changing language rebuilds the screens.** Ninety captions are read from
+15. **`_` cannot be both the translator and the throwaway.**
+    `path, _ = QFileDialog.getOpenFileName(...)` makes `_` a local for the
+    whole function, and the next argument on the same line was a `_()` call:
+    the file dialog raised `UnboundLocalError` before it could open. Python's
+    most common idiom and gettext's most common alias collide silently, and
+    only when the line runs -- no import fails, no test that does not click
+    the button notices. Found because the user clicked it. There is a test
+    that refuses `_` as an assignment target anywhere in `lt_ui`.
+16. **Changing language rebuilds the screens.** Ninety captions are read from
     the catalogue when their widgets are created, and a person changes
     language once, from a list. Rebuilding is cheaper to reason about than
     ninety `setText` calls, and the models stay loaded.

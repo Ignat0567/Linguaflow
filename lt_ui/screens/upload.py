@@ -228,7 +228,11 @@ class _Dropzone(glass.GlassPanel):
             self.screen.open_path(urls[0].toLocalFile())
 
     def pick(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        # Not `path, _ = ...`. `_` is the translator in this module, and
+        # unpacking into it shadows the import for the whole function -- the
+        # very next argument is a `_()` call, so the dialog raised
+        # UnboundLocalError before it ever opened.
+        path, _chosen_filter = QFileDialog.getOpenFileName(
             self, _("Выберите медиафайл"), str(ROOT), _filter()
         )
         if path:

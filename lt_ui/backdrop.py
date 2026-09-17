@@ -84,7 +84,7 @@ def blur(image: QImage, radius: int) -> QImage:
     )
     array = _to_array(small)
     step = max(1, radius // DOWNSCALE)
-    for _ in range(3):
+    for _pass in range(3):
         array = _box_pass(_box_pass(array, step, axis=0), step, axis=1)
     return _to_image(array).scaled(
         image.width(), image.height(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation
