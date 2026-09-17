@@ -36,7 +36,10 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication
 
 ROOT = Path(__file__).resolve().parent.parent
-BACKGROUND = ROOT / "design" / "design_handoff_linguaflow" / "assets" / "bg-translate.png"
+# The final artwork, supplied after the handoff. Same composition and size as
+# the prototype's placeholder, but a JPEG at a quarter the weight -- which
+# matters once it is inside an installer.
+BACKGROUND = ROOT / "assets" / "background.jpg"
 OUT = ROOT / "spike" / "glass_preview.png"
 
 WIDTH, HEIGHT = 1280, 800
@@ -171,9 +174,15 @@ def main() -> int:
         return 1
 
     source = QImage(str(BACKGROUND)).convertToFormat(QImage.Format_ARGB32)
-    # background-size: 145% auto; background-position: center 130px;
+
+    # The handoff positioned its placeholder at `center 130px` so the language
+    # bubbles peeked out above the cards. In the final artwork those bubbles sit
+    # along the bottom edge instead, and that position would push them off the
+    # window entirely. Scaled to cover instead: the bubbles then land behind the
+    # recent-translations row, and the globe stays in the upper right.
+    scale = max(WIDTH / source.width(), HEIGHT / source.height())
     scaled = source.scaled(
-        int(WIDTH * 1.45), int(WIDTH * 1.45 * source.height() / source.width()),
+        round(source.width() * scale), round(source.height() * scale),
         Qt.KeepAspectRatio, Qt.SmoothTransformation,
     )
 
@@ -181,7 +190,10 @@ def main() -> int:
     canvas.fill(QColor("#04060c"))
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.Antialiasing)
-    painter.drawImage(QPoint(-(scaled.width() - WIDTH) // 2, 130 - 300), scaled)
+    painter.drawImage(
+        QPoint(-(scaled.width() - WIDTH) // 2, -(scaled.height() - HEIGHT) // 2),
+        scaled,
+    )
     painter.end()
 
     # The scrim the handoff specifies, over the photograph.

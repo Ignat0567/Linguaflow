@@ -4,6 +4,7 @@
 .venv/
 __pycache__/
 design/*.zip
+design/image.jpg
 downloads/
 models/
 spike/audio/
