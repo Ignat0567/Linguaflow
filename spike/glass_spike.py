@@ -203,8 +203,21 @@ def main() -> int:
     painter.setRenderHint(QPainter.Antialiasing)
     painter.setRenderHint(QPainter.TextAntialiasing)
 
+    # Wordmark, top left, sharing the nav bar's vertical band so the two read
+    # as one row. The gutter is the same on the left as above.
+    GUTTER = 28
+    NAV_TOP, NAV_HEIGHT = 28, 44
+    mark = QRect(GUTTER, NAV_TOP, 168, NAV_HEIGHT)
+    glass_panel(painter, blurred, mark, 22, tint=0.09)
+    font = QFont("Segoe UI", 13)
+    font.setWeight(QFont.Weight.Bold)
+    font.setLetterSpacing(QFont.PercentageSpacing, 98)
+    painter.setFont(font)
+    painter.setPen(QColor(255, 255, 255, 245))
+    painter.drawText(mark, Qt.AlignCenter, "Linguaflow")
+
     # Pill nav.
-    glass_panel(painter, blurred, QRect(390, 28, 500, 44), 22, tint=0.09)
+    glass_panel(painter, blurred, QRect(390, NAV_TOP, 500, NAV_HEIGHT), 22, tint=0.09)
     items = ["Главная", "Реальное время", "Загрузка", "История", "Настройки"]
     x = 404
     for index, item in enumerate(items):
