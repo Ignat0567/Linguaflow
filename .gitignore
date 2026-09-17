@@ -1,6 +1,8 @@
 *.pyc
+.backup/
 .pytest-tmp/
 .venv/
 __pycache__/
+downloads/
 models/
 spike/audio/

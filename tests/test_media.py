@@ -1,0 +1,116 @@
+"""Day 2: source resolution and the batch pipeline's contracts."""
+
+from __future__ import annotations
+
+import wave
+
+import numpy as np
+import pytest
+
+from lt_core.media import MediaError, is_url, probe
+
+
+def write_wav(path, seconds: float, rate: int = 16_000) -> None:
+    t = np.arange(int(seconds * rate)) / rate
+    samples = (0.4 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(samples.tobytes())
+
+
+# -- URL detection -------------------------------------------------------
+
+@pytest.mark.parametrize("target", [
+    "https://youtube.com/watch?v=x",
+    "http://example.com/a.mp3",
+    "HTTPS://EXAMPLE.COM/A.MP4",
+    "  https://example.com/a.mp4  ",
+])
+def test_urls_are_recognised(target):
+    assert is_url(target)
+
+
+@pytest.mark.parametrize("target", [
+    "C:/video.mp4",
+    "/home/user/audio.wav",
+    "video.mp4",
+    r"E:\Media\talk.m4a",
+    "ftp://example.com/a.mp3",
+])
+def test_paths_are_not_urls(target):
+    """A Windows path starts with a drive letter and a colon, which is close
+    enough to a scheme to matter. Only http(s) counts."""
+    assert not is_url(target)
+
+
+# -- probing -------------------------------------------------------------
+
+def test_probe_reads_duration(tmp_path):
+    path = tmp_path / "clip.wav"
+    write_wav(path, 2.5)
+    info = probe(path)
+    assert info.duration == pytest.approx(2.5, abs=0.05)
+    assert info.has_audio
+    assert info.title == "clip"
+
+
+def test_probe_rejects_a_missing_file(tmp_path):
+    with pytest.raises(MediaError, match="не найден"):
+        probe(tmp_path / "absent.mp4")
+
+
+def test_probe_rejects_a_non_media_file(tmp_path):
+    path = tmp_path / "notes.txt"
+    path.write_text("this is not audio", encoding="utf-8")
+    with pytest.raises(MediaError):
+        probe(path)
+
+
+def test_media_error_separates_detail_from_message(tmp_path):
+    """Driver output belongs in a log, not in front of the user."""
+    path = tmp_path / "broken.mp4"
+    path.write_bytes(b"\x00" * 64)
+    with pytest.raises(MediaError) as caught:
+        probe(path)
+    assert "формат" in str(caught.value).lower()
+    assert hasattr(caught.value, "detail")
+
+
+# -- pipeline contracts --------------------------------------------------
+
+def test_unknown_export_format_is_refused_before_transcribing(tmp_path):
+    """Rejecting the format after ten minutes of GPU work would be rude."""
+    from lt_core.pipeline.batch import transcribe_file
+
+    path = tmp_path / "clip.wav"
+    write_wav(path, 0.5)
+
+    class ExplodingTranscriber:
+        def transcribe(self, *args, **kwargs):  # pragma: no cover
+            raise AssertionError("must not reach the model")
+
+    with pytest.raises(ValueError, match="Неизвестный формат"):
+        transcribe_file(path, ExplodingTranscriber(), formats=("srt", "docx"))
+
+
+def test_supported_languages_are_the_eight_agreed():
+    from lt_core.asr.transcriber import SUPPORTED_LANGUAGES
+
+    assert set(SUPPORTED_LANGUAGES) == {
+        "en", "de", "ru", "zh", "ja", "es", "it", "fr"
+    }
+
+
+def test_unsupported_language_is_rejected_by_name():
+    from lt_core.asr.transcriber import UnsupportedLanguage, Transcriber
+
+    options_cls = __import__(
+        "lt_core.asr.transcriber", fromlist=["TranscribeOptions"]
+    ).TranscribeOptions
+
+    # Constructed without loading a model: the check happens before inference.
+    transcriber = Transcriber.__new__(Transcriber)
+    with pytest.raises(UnsupportedLanguage, match="pl"):
+        Transcriber.transcribe(transcriber, "x.wav", options_cls(language="pl"))
