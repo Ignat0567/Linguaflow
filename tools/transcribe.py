@@ -24,6 +24,8 @@ from lt_core.asr.transcriber import (  # noqa: E402
     UnsupportedLanguage,
 )
 from lt_core.media import MediaError, resolve  # noqa: E402
+from lt_core.mt.translator import build_translator  # noqa: E402
+from lt_core.mt.types import TranslationError, TranslationMode  # noqa: E402
 from lt_core.pipeline.batch import transcribe_file  # noqa: E402
 from lt_core.subtitles.export import EXPORTERS, format_srt_time  # noqa: E402
 
@@ -53,6 +55,24 @@ def main() -> int:
     parser.add_argument(
         "--no-vad", action="store_true",
         help="не отфильтровывать тишину перед распознаванием")
+
+    translation = parser.add_argument_group("перевод")
+    translation.add_argument(
+        "--to", "-t", choices=sorted(SUPPORTED_LANGUAGES), metavar="LANG",
+        help="язык перевода; без него выполняется только расшифровка")
+    translation.add_argument(
+        "--mode", choices=[TranslationMode.OFFLINE, TranslationMode.ONLINE],
+        default=TranslationMode.OFFLINE,
+        help="offline — ничего не покидает компьютер (по умолчанию); "
+             "online — текст уходит во внешний сервис")
+    translation.add_argument(
+        "--service", default="deepl", choices=["deepl", "openai"],
+        help="сервис для онлайн-режима")
+    translation.add_argument("--api-key", help="ключ доступа для онлайн-режима")
+    translation.add_argument("--glossary", help="CSV или JSON с терминами")
+    translation.add_argument(
+        "--bilingual", action="store_true",
+        help="дополнительный SRT с обоими языками")
     args = parser.parse_args()
 
     # Resolve the source before loading the model. Loading costs a couple of
@@ -70,6 +90,27 @@ def main() -> int:
     if not media.has_audio:
         print(f"В «{media.path.name}» нет звуковой дорожки.")
         return 2
+
+    # Build the translator before the long transcription, not after it. A
+    # missing API key or an unreadable glossary should surface in a second,
+    # not once the GPU has finished ten minutes of work.
+    translator = None
+    if args.to:
+        options = {"api_key": args.api_key} if args.api_key else {}
+        if args.mode == TranslationMode.ONLINE:
+            options["service"] = args.service
+        try:
+            translator = build_translator(
+                args.mode, glossary_path=args.glossary,
+                model_root=MODEL_ROOT, **options,
+            )
+        except (TranslationError, FileNotFoundError) as error:
+            print(str(error))
+            detail = getattr(error, "detail", "")
+            if detail:
+                print("\nПодробности:")
+                print(f"  {detail}")
+            return 1
 
     started = time.perf_counter()
     print("Модель загружается...", end="", flush=True)
@@ -108,6 +149,9 @@ def main() -> int:
             on_stage=lambda message: print(f"\n{message}...", end="", flush=True),
             on_progress=on_progress,
             download_dir=download_dir,
+            translator=translator,
+            target_language=args.to,
+            bilingual=args.bilingual,
         )
     except UnsupportedLanguage as error:
         print(f"\n{error}")
@@ -143,6 +187,30 @@ def main() -> int:
     if fast:
         print(f"Темп:       {len(fast)} субтитров быстрее нормы чтения "
               f"(диктор говорит быстро; текст не сокращался)")
+
+    report = result.translation
+    if report is not None:
+        where = "офлайн, ничего не покидало компьютер" if report.offline else (
+            "ОНЛАЙН, текст отправлялся во внешний сервис")
+        print(f"Перевод:    {report.provider} -- {where}")
+        print(f"            {report.summary()}")
+        if report.number_mismatches:
+            print()
+            print(f"  ЧИСЛА РАСХОДЯТСЯ в {len(report.number_mismatches)} "
+                  f"фрагментах -- проверьте вручную:")
+            for mismatch in report.number_mismatches[:5]:
+                stamp = format_srt_time(result.locate(mismatch.index))[:-4]
+                print(f"    {stamp}: {mismatch.describe()}")
+                print(f"      было:  {mismatch.source[:70]}")
+                print(f"      стало: {mismatch.target[:70]}")
+            if len(report.number_mismatches) > 5:
+                print(f"    ... и ещё {len(report.number_mismatches) - 5}")
+        if report.risky_short:
+            print()
+            print(f"  {len(report.risky_short)} фрагментов короче трёх слов — "
+                  f"локальная модель на таких ненадёжна")
+            print(f"    (для реплик вроде «Да» или «Здравствуйте» "
+                  f"проверьте перевод вручную)")
 
     print()
     for name, path in result.outputs.items():

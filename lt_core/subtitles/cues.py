@@ -315,13 +315,37 @@ def _wrap(text: str, style: CueStyle) -> tuple[str, ...]:
     if best is not None:
         return best
 
-    # Nothing fits in two lines: fall back to greedy filling, accepting that
-    # the cue is over-long rather than dropping words from it.
+    # Nothing fits in two lines. This happens constantly on translated cues:
+    # Russian runs 15-20% longer than English, German longer still, so a cue
+    # laid out for the source language overflows in the target. Words are never
+    # dropped to make it fit -- that would change what was said -- so the cue
+    # takes a third line.
+    #
+    # Balanced across however many lines are needed, not filled greedily: a
+    # greedy fill leaves the remainder stranded on the last line, which is how
+    # a three-line cue ends with one short word on its own.
+    # How many lines this actually needs has to be discovered by packing, not
+    # by dividing the length: word boundaries decide it. A 78-character line
+    # with a 14-character word in the wrong place needs three lines even though
+    # 78 divided by 42 says two.
+    needed = len(_pack(words, style.max_chars_per_line))
+    return _pack(words, style.max_chars_per_line, target=len(text) / needed)
+
+
+def _pack(words: list[str], width: int, target: float | None = None) -> tuple[str, ...]:
+    """Fill lines up to `width`, breaking early to approach `target`."""
     lines: list[str] = []
     line = ""
     for word in words:
         candidate = f"{line} {word}".strip()
-        if line and len(candidate) > style.max_chars_per_line:
+        too_wide = len(candidate) > width
+        # Breaking early at the target keeps the last line from being a stub.
+        past_target = (
+            target is not None
+            and len(line) >= target * 0.7
+            and abs(len(line) - target) <= abs(len(candidate) - target)
+        )
+        if line and (too_wide or past_target):
             lines.append(line)
             line = word
         else:

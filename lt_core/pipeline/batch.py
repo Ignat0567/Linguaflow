@@ -14,6 +14,13 @@ from pathlib import Path
 from ..asr.transcriber import SUPPORTED_LANGUAGES, Transcriber, TranscribeOptions
 from ..asr.types import Transcript
 from ..media import MediaInfo, resolve
+from ..mt.translator import TranslationReport, Translator
+from ..subtitles.bilingual import (
+    distribute,
+    group_into_sentences,
+    merge_bilingual,
+    translate_cues,
+)
 from ..subtitles.cues import Cue, CueStyle, build_cues
 from ..subtitles.export import EXPORTERS, write
 
@@ -27,6 +34,14 @@ class BatchResult:
     cues: tuple[Cue, ...]
     outputs: dict[str, Path] = field(default_factory=dict)
     elapsed: float = 0.0
+    # Present only when a translation was requested.
+    translated_cues: tuple[Cue, ...] | None = None
+    translation: TranslationReport | None = None
+    target_language: str | None = None
+    # Which cues each translated sentence covered, so a flagged sentence can be
+    # reported at the time it was spoken rather than as an index nobody can
+    # locate in a subtitle file.
+    sentence_groups: list[list[int]] = field(default_factory=list)
 
     @property
     def language_name(self) -> str:
@@ -36,6 +51,14 @@ class BatchResult:
     @property
     def is_supported_language(self) -> bool:
         return self.transcript.language in SUPPORTED_LANGUAGES
+
+    def locate(self, sentence_index: int) -> float:
+        """When the given translated sentence starts, in seconds."""
+        if 0 <= sentence_index < len(self.sentence_groups):
+            first = self.sentence_groups[sentence_index][0]
+            if 0 <= first < len(self.cues):
+                return self.cues[first].start
+        return 0.0
 
     @property
     def fast_cues(self) -> tuple[Cue, ...]:
@@ -59,6 +82,9 @@ def transcribe_file(
     on_stage: Callable[[str], None] | None = None,
     on_progress: Callable[[float, float], None] | None = None,
     download_dir: Path | str | None = None,
+    translator: Translator | None = None,
+    target_language: str | None = None,
+    bilingual: bool = False,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -102,10 +128,59 @@ def transcribe_file(
         content = EXPORTERS[name](transcript, cues)
         outputs[name] = write(destination / f"{media.path.stem}.{name}", content)
 
+    translated_cues = None
+    report = None
+    if translator is not None and target_language:
+        stage(f"Перевожу на {SUPPORTED_LANGUAGES.get(target_language, target_language)}")
+        # Whole sentences, not cues. A cue is cut for reading speed and is
+        # often a fragment, and a fragment is what makes this model invent.
+        groups = group_into_sentences(cues)
+        joiner = "" if transcript.language in ("zh", "ja") else " "
+        sentences = [
+            joiner.join(cues[position].flat_text for position in group)
+            for group in groups
+        ]
+        sentence_translations, report = translator.translate(
+            sentences, transcript.language, target_language
+        )
+
+        target_joins_with_space = target_language not in ("zh", "ja")
+        translations: list[str] = [""] * len(cues)
+        for group, translated in zip(groups, sentence_translations):
+            shares = distribute(
+                translated,
+                [len(cues[position].flat_text) for position in group],
+                join_with_space=target_joins_with_space,
+            )
+            for position, share in zip(group, shares):
+                translations[position] = share
+        # Timings belong to the speech and do not move: only the words change.
+        translated_cues = translate_cues(
+            cues, translations, CueStyle.for_language(target_language)
+        )
+        for name in formats:
+            if name not in ("srt", "vtt"):
+                continue
+            stem = f"{media.path.stem}.{target_language}"
+            outputs[f"{name}.{target_language}"] = write(
+                destination / f"{stem}.{name}",
+                EXPORTERS[name](transcript, translated_cues),
+            )
+        if bilingual:
+            merged = merge_bilingual(cues, translated_cues)
+            outputs["srt.bilingual"] = write(
+                destination / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
+                EXPORTERS["srt"](transcript, merged),
+            )
+
     return BatchResult(
         media=media,
         transcript=transcript,
         cues=cues,
         outputs=outputs,
         elapsed=time.perf_counter() - started,
+        translated_cues=translated_cues,
+        translation=report,
+        target_language=target_language,
+        sentence_groups=groups if translator is not None and target_language else [],
     )
