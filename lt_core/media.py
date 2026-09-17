@@ -28,6 +28,9 @@ class MediaInfo:
     duration: float
     title: str
     has_audio: bool
+    #: Whether there is a picture to put a new soundtrack against. A dubbed
+    #: copy is only possible when there is.
+    has_video: bool = False
     source_url: str | None = None
 
 
@@ -71,6 +74,17 @@ def probe(path: Path | str) -> MediaInfo:
                     duration=float(payload.get("format", {}).get("duration", 0.0)),
                     title=target.stem,
                     has_audio=any(s.get("codec_type") == "audio" for s in streams),
+                    # A cover image inside an MP3 is a video stream by
+                    # ffprobe's reckoning. One still frame is not a video, and
+                    # muxing a soundtrack against it would produce a file that
+                    # claims to be one.
+                    has_video=any(
+                        s.get("codec_type") == "video"
+                        and s.get("disposition", {}).get("attached_pic", 0) != 1
+                        and (s.get("nb_frames") is None
+                             or int(s.get("nb_frames") or 0) > 1)
+                        for s in streams
+                    ),
                 )
         except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
             pass
@@ -100,6 +114,9 @@ def _probe_with_ffmpeg(target: Path) -> MediaInfo:
         duration = (int(hours) * 3600 + int(minutes) * 60 + int(seconds)
                     + float(f"0.{fraction}"))
     has_audio = bool(re.search(r"Stream #\d+:\d+.*: Audio:", output))
+    has_video = bool(re.search(r"Stream #\d+:\d+.*: Video:", output)) and not bool(
+        re.search(r"Video:.*\(attached pic\)", output)
+    )
 
     if duration == 0.0 and not has_audio:
         raise MediaError(
@@ -107,14 +124,21 @@ def _probe_with_ffmpeg(target: Path) -> MediaInfo:
             detail=output.strip()[-500:],
         )
     return MediaInfo(path=target, duration=duration, title=target.stem,
-                     has_audio=has_audio)
+                     has_audio=has_audio, has_video=has_video)
 
 
-def fetch_url(url: str, into: Path | str, timeout: float = 1800.0) -> MediaInfo:
-    """Download a URL's audio track with yt-dlp.
+def fetch_url(
+    url: str,
+    into: Path | str,
+    timeout: float = 1800.0,
+    want_video: bool = False,
+) -> MediaInfo:
+    """Download a URL with yt-dlp.
 
-    Audio only: the video is downloaded and discarded otherwise, which on a
-    long recording is gigabytes of traffic for nothing.
+    Audio only by default: the video is downloaded and discarded otherwise,
+    which on a long recording is gigabytes of traffic for nothing. Asked for
+    a dubbed copy of the picture, there is no way around fetching it, so
+    `want_video` says so explicitly rather than guessing.
     """
     try:
         import yt_dlp  # noqa: F401
@@ -126,11 +150,20 @@ def fetch_url(url: str, into: Path | str, timeout: float = 1800.0) -> MediaInfo:
     destination = Path(into).resolve()
     destination.mkdir(parents=True, exist_ok=True)
 
+    if want_video:
+        wanted = [
+            "--format", "bestvideo*+bestaudio/best",
+            "--merge-output-format", "mp4",
+        ]
+    else:
+        wanted = [
+            "--format", "bestaudio/best",
+            "--extract-audio", "--audio-format", "wav",
+        ]
     command = [
         str(Path(_python_exe())), "-m", "yt_dlp",
         "--no-playlist", "--no-warnings", "--quiet",
-        "--format", "bestaudio/best",
-        "--extract-audio", "--audio-format", "wav",
+        *wanted,
         "--print", "after_move:filepath",
         "--output", str(destination / "%(title).120B.%(ext)s"),
         url,
@@ -157,7 +190,8 @@ def fetch_url(url: str, into: Path | str, timeout: float = 1800.0) -> MediaInfo:
 
     info = probe(Path(downloaded[-1]))
     return MediaInfo(path=info.path, duration=info.duration, title=info.path.stem,
-                     has_audio=info.has_audio, source_url=url)
+                     has_audio=info.has_audio, has_video=info.has_video,
+                     source_url=url)
 
 
 def _python_exe() -> str:
@@ -167,8 +201,10 @@ def _python_exe() -> str:
     return str(Path(sys.executable).resolve())
 
 
-def resolve(target: str, download_dir: Path | str) -> MediaInfo:
+def resolve(
+    target: str, download_dir: Path | str, want_video: bool = False
+) -> MediaInfo:
     """Accept a path or a URL and return something decodable either way."""
     if is_url(target):
-        return fetch_url(target, download_dir)
+        return fetch_url(target, download_dir, want_video=want_video)
     return probe(target)

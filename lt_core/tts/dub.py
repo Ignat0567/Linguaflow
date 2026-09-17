@@ -17,7 +17,9 @@ import numpy as np
 from ..audio.capture import FileSource
 from ..audio.types import TARGET_SAMPLE_RATE
 from ..subtitles.cues import Cue
-from .speaker import Speaker, Utterance, resample
+from . import casting
+from .casting import Cast
+from .speaker import Speaker, Utterance, VoiceBank, resample
 
 #: How far the original is turned down while the dub is speaking.
 #:
@@ -36,6 +38,9 @@ class DubResult:
     overran: int = 0
     tightest_scale: float = 1.0
     utterances: list[Utterance] = field(default_factory=list)
+    #: Which voice read which line, when the recording had more than one
+    #: speaker in it. Empty when a single voice read the whole thing.
+    cast: Cast | None = None
 
     @property
     def duration(self) -> float:
@@ -46,34 +51,57 @@ class DubResult:
         """Lines squeezed near the limit of what still sounds like speech."""
         return [u for u in self.utterances if u.length_scale < 0.80]
 
+    @property
+    def voices(self) -> dict[str, int]:
+        """How many lines each voice read."""
+        counts: dict[str, int] = {}
+        for utterance in self.utterances:
+            if utterance.voice:
+                counts[utterance.voice] = counts.get(utterance.voice, 0) + 1
+        return counts
+
 
 def synthesise_track(
     cues: tuple[Cue, ...],
-    speaker: Speaker,
+    speaker: Speaker | VoiceBank,
     total_seconds: float,
     rate: int = TARGET_SAMPLE_RATE,
+    cast: Cast | None = None,
 ) -> DubResult:
-    """Speak every cue into its own slot on one timeline."""
+    """Speak every cue into its own slot on one timeline.
+
+    `speaker` may be a single voice or a bank of them. With a bank and a
+    `cast`, each line is read by the voice cast to it, so a two-person
+    recording comes out as two people.
+    """
     length = max(1, int((total_seconds + 2.0) * rate))
     track = np.zeros(length, dtype=np.float32)
-    result = DubResult(samples=track, rate=rate)
+    result = DubResult(samples=track, rate=rate, cast=cast)
 
-    for cue in cues:
+    for index, cue in enumerate(cues):
         text = cue.flat_text.strip()
         if not text:
             continue
-        utterance = speaker.fit(text, cue.start, cue.duration)
+
+        voice = speaker
+        if isinstance(speaker, VoiceBank):
+            gender = ""
+            if cast is not None and index < len(cast.genders):
+                gender = cast.genders[index]
+            voice = speaker.for_gender(gender)
+
+        utterance = voice.fit(text, cue.start, cue.duration)
         if utterance.samples.size == 0:
             continue
 
-        voice = resample(utterance.samples, utterance.rate, rate)
+        samples = resample(utterance.samples, utterance.rate, rate)
         at = int(cue.start * rate)
-        end = min(at + len(voice), length)
+        end = min(at + len(samples), length)
         if end > at:
             # Added rather than assigned: a line that runs into the next slot
             # overlaps it instead of cutting it off, which is how a person
             # talking over the end of a sentence sounds.
-            track[at:end] += voice[: end - at]
+            track[at:end] += samples[: end - at]
 
         result.spoken += 1
         result.overran += int(utterance.overran)
@@ -114,18 +142,29 @@ def duck(original: np.ndarray, cues: tuple[Cue, ...], rate: int) -> np.ndarray:
 def mix(
     media_path: Path | str,
     cues: tuple[Cue, ...],
-    speaker: Speaker,
+    speaker: Speaker | VoiceBank,
     total_seconds: float,
     keep_original: bool = True,
     rate: int = TARGET_SAMPLE_RATE,
+    match_voices: bool = False,
 ) -> DubResult:
-    """Dub a recording: speak the cues, duck the original, mix the two."""
-    dub = synthesise_track(cues, speaker, total_seconds, rate=rate)
-    if not keep_original:
+    """Dub a recording: speak the cues, duck the original, mix the two.
+
+    With `match_voices`, the original is measured first and each line is read
+    by a voice of the same register. That needs the original audio whether or
+    not it is kept in the mix, which is why it is loaded before anything is
+    spoken.
+    """
+    original = _load(media_path, rate) if (keep_original or match_voices) else None
+
+    cast = None
+    if match_voices and original is not None and isinstance(speaker, VoiceBank):
+        cast = casting.analyse(cues, original, rate)
+
+    dub = synthesise_track(cues, speaker, total_seconds, rate=rate, cast=cast)
+    if not keep_original or original is None:
         return dub
 
-    blocks = [chunk.samples for chunk in FileSource(media_path).stream()]
-    original = np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)
     if original.size < dub.samples.size:
         original = np.pad(original, (0, dub.samples.size - original.size))
     else:
@@ -137,3 +176,8 @@ def mix(
         mixed *= 0.98 / peak
     dub.samples = mixed
     return dub
+
+
+def _load(media_path: Path | str, rate: int) -> np.ndarray:
+    blocks = [chunk.samples for chunk in FileSource(media_path).stream()]
+    return np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)

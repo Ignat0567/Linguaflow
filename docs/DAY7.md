@@ -1,0 +1,114 @@
+# Day 7 — voices that match the speaker, and a dubbed video (2026-09-17)
+
+Two things were asked for: a man should be read out in a male voice and a
+woman in a female one, and a translated video should be saved as a copy of
+the original with the new soundtrack against the picture.
+
+## Built
+
+`lt_core/audio/pitch.py` — fundamental frequency of a stretch of speech.
+`lt_core/tts/casting.py` — which voice reads which line, and the threshold.
+`lt_core/tts/speaker.py` — `VoiceBank`: two voices held at once, loaded lazily.
+`lt_core/video/mux.py` — a copy of the video with the translated track first,
+the original second and the translated subtitles third. Nothing re-encoded
+except audio.
+Wired through the pipeline, the CLI (`--one-voice`, `--no-video`) and the
+settings screen.
+
+293 tests.
+
+## The voices, measured
+
+Piper publishes no gender for its voices, so every candidate for the three
+offered languages was synthesised on the same sentence and measured.
+
+| language | male | Hz | female | Hz | apart |
+|---|---|---|---|---|---|
+| ru | ruslan-medium | 128 | irina-medium | 177 | 49 |
+| en | hfc_male-medium | 114 | lessac-medium | 198 | 84 |
+| de | thorsten-medium | 131 | ramona-low | 191 | 60 |
+
+Rejected on the measurement: `ru_RU-dmitri` (186 Hz), `en_US-ryan` (161 Hz),
+`de_DE-kerstin` (165 Hz), `de_DE-eva_k` (172 Hz).
+
+## Acceptance
+
+A 106-second video with two speakers in it, English to Russian, dubbed and
+assembled in **10.6 s** — recognition, translation, twenty spoken lines, two
+voices and the video copy.
+
+The result was then measured rather than listened to and trusted:
+
+| | original | dub |
+|---|---|---|
+| lines 1–11 | 88–99 Hz | 107–151 Hz (ruslan) |
+| lines 12–20 | 187–209 Hz | 170–193 Hz (irina) |
+
+Two speakers in, two voices out, 52 Hz apart, and not one line given to the
+wrong voice. The threshold the recording produced for itself was 143 Hz,
+which falls in the empty band between the two speakers (99 to 187 Hz).
+
+The assembled video: picture copied h264 640x360 25 fps unchanged, audio
+track 1 `rus` (default), track 2 `eng`, subtitle track `rus`, duration
+105.72 s against the source's 105.72 s. Muxing cost **0.81 s**.
+
+## Findings
+
+1. **Piper's voice names do not tell you the gender, and guessing gets it
+   backwards.** The Russian default `dmitri` measures **186 Hz** — inside the
+   female range — and `irina` measures **177 Hz**. Pairing those two, which
+   is what their names invite, would have produced a "two-voice" dub that
+   sounds like one person throughout. Measuring found `ruslan` at 128 Hz
+   instead.
+2. **The measurement was cross-checked before it was trusted.** Autocorrelation
+   and a harmonic product spectrum are independent methods with different
+   failure modes; they agreed to within 2 Hz on every voice (dmitri 182/180,
+   irina 173/172, ryan 156/151, lessac 195/194). Without that, the surprising
+   Russian result would have looked like my own octave error rather than a
+   property of the voices.
+3. **Pitch in a real recording is bimodal, and the gap is wide.** Measured on
+   four recordings: two-speaker files put one cluster at 88–120 Hz and the
+   other at 160–240 Hz, with the band between 120 and 160 Hz empty. So the
+   threshold is taken from the recording's own gap, and only falls back to a
+   fixed 155 Hz when a file holds one speaker — a fixed number would sit in
+   the wrong place for an unusually high or low pair.
+4. **`-shortest` truncated the video to the subtitle track.** Adding
+   subtitles — free, no re-encode, obviously harmless — silently cut **two
+   seconds of picture** off a 105.7 s video, because the last caption closed
+   at 103.7 s and `-shortest` ends the output when *any* input stream ends.
+   Nobody debugging a short video would look in the subtitle track for the
+   cause. The picture's own duration is asked for explicitly now, and there
+   is a regression test that builds a video whose captions stop at half its
+   length.
+5. **The picture is copied, never re-encoded.** 0.81 s for a 105-second
+   video, and the frames come out identical to the source. Re-encoding would
+   have cost minutes per file and quality that cannot be recovered.
+6. **The original soundtrack is kept as a second track.** At no cost, since it
+   is muxed rather than mixed, and it is what a reviewer switches to when the
+   numeric audit flags a line.
+7. **A slot-fitted voice is not the speaker's own voice.** The dubbed male
+   lines measure 124 Hz where the speaker was at 92. Register is matched;
+   identity is not, and no amount of voice choice would change that.
+
+## Limits, stated plainly
+
+- **Register, not sex.** A high-pitched man or a low-pitched woman will be
+  given the wrong voice. The decision is per line, so the cost is one line.
+- **Two voices, not speaker identification.** Three men in a meeting are one
+  voice. Proper diarisation is a different piece of work.
+- **German female is a `low`-quality model.** Piper publishes no `medium`
+  female German voice; `ramona-low` separates best of what exists.
+- **Live and conversation modes still read everything in one voice.** The
+  casting needs the original audio for a line, which in a live stream arrives
+  as the line is still being spoken. Conversation mode already knows which
+  side is talking, so the pair can be wired to the sides there — that is the
+  obvious next step and it is not done.
+- **A link asked for as a dubbed video downloads the video.** `--no-video`
+  keeps the old audio-only download for anyone on a metered connection.
+
+## Not done
+
+Packaging into an installer. Burning subtitles into the picture (they are
+embedded as a selectable track, not painted on). The five extra languages
+stay behind `LINGUAFLOW_LANGUAGES`, and none of them has a measured voice
+pair.

@@ -1,0 +1,490 @@
+"""The glass surface, and everything built on it.
+
+One recipe -- tint, blur beneath, hairline border, inset top highlight -- and
+every card, pill, chip and toggle in the app is that recipe at a different
+size. It is written once here so that a new screen cannot quietly invent its
+own shade of white.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from PySide6.QtCore import (
+    Property,
+    QEasingCurve,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import (
+    QBrush,
+    QConicalGradient,
+    QCursor,
+    QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QComboBox,
+    QLabel,
+    QSizePolicy,
+    QWidget,
+)
+
+from . import backdrop as backdrop_module
+from . import theme
+
+
+def paint_glass(
+    widget: QWidget,
+    painter: QPainter,
+    rect: QRect,
+    radius: int,
+    tint: float = theme.TINT,
+    accent_fill: bool = False,
+    border: float = theme.BORDER,
+) -> QPainterPath:
+    """Paint the handoff's glass recipe into `rect` of `widget`."""
+    if radius >= theme.RADIUS_PILL:
+        radius = rect.height() // 2
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(rect), radius, radius)
+
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.save()
+    painter.setClipPath(path)
+
+    backdrop = backdrop_module.current()
+    if backdrop is not None and not backdrop.blurred.isNull():
+        # Where this widget sits in the window is where it must sample from,
+        # otherwise the blur slides against the photograph as panels move.
+        origin = widget.mapTo(widget.window(), rect.topLeft())
+        painter.drawPixmap(rect, backdrop.blurred, QRect(origin, rect.size()))
+
+    if accent_fill:
+        gradient = QLinearGradient(QPointF(rect.topLeft()), QPointF(rect.bottomRight()))
+        gradient.setColorAt(0.0, theme.accent(0.55))
+        gradient.setColorAt(1.0, theme.white(0.10))
+        painter.fillPath(path, QBrush(gradient))
+    else:
+        painter.fillPath(path, theme.white(tint))
+
+    # The inset highlight along the top edge. Without it a panel reads as a
+    # flat wash; with it, as something with a lit edge.
+    highlight = QPainterPath()
+    highlight.addRoundedRect(
+        QRectF(rect.x(), rect.y(), rect.width(), 2.0), radius, radius
+    )
+    painter.fillPath(highlight, theme.white(theme.HIGHLIGHT))
+    painter.restore()
+
+    painter.setPen(QPen(theme.white(border), 1))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawPath(path)
+    return path
+
+
+class GlassPanel(QWidget):
+    """A container that paints itself as glass."""
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        radius: int = theme.RADIUS_PANEL,
+        tint: float = theme.TINT,
+        accent_fill: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self.radius = radius
+        self.tint = tint
+        self.accent_fill = accent_fill
+
+    def paintEvent(self, event) -> None:  # noqa: N802 -- Qt spells it this way
+        painter = QPainter(self)
+        paint_glass(
+            self,
+            painter,
+            self.rect().adjusted(0, 0, -1, -1),
+            self.radius,
+            self.tint,
+            self.accent_fill,
+        )
+
+
+class Hoverable(QAbstractButton):
+    """Shared hover bookkeeping.
+
+    The handoff draws no hover state and says so explicitly, leaving it to
+    implementation. A surface that does not answer the pointer feels broken,
+    so every control here brightens by the +4% white it suggests.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hover = False
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover = False
+        self.update()
+
+
+class GlassButton(Hoverable):
+    """A pill button: glass by default, filled with the accent when primary."""
+
+    def __init__(
+        self,
+        text: str,
+        parent: QWidget | None = None,
+        primary: bool = False,
+        size: int = 13,
+        height: int = 38,
+        padding: int = 22,
+    ) -> None:
+        super().__init__(parent)
+        self._size = size
+        self._padding = padding
+        self.primary = primary
+        self.setText(text)
+        self.setFixedHeight(height)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(text)
+        metrics = QFontMetrics(theme.font(self._size, 600))
+        self.setMinimumWidth(metrics.horizontalAdvance(text) + self._padding * 2)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        radius = rect.height() / 2
+        if self.primary:
+            painter.setRenderHint(QPainter.Antialiasing)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(rect), radius, radius)
+            painter.fillPath(path, theme.accent(0.88 if self._hover else 1.0))
+            painter.setPen(theme.INK)
+        else:
+            paint_glass(
+                self, painter, rect, theme.RADIUS_PILL,
+                theme.TINT + (0.04 if self._hover else 0.0),
+            )
+            painter.setPen(theme.white(theme.PRIMARY))
+        if self.hasFocus():
+            pen = painter.pen()
+            painter.setPen(QPen(theme.accent(0.9), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRectF(rect).adjusted(1, 1, -1, -1), radius, radius)
+            painter.setPen(pen)
+        painter.setFont(theme.font(self._size, 600))
+        painter.drawText(rect, Qt.AlignCenter, self.text())
+
+
+class TextLink(Hoverable):
+    """A bare text action: the handoff's arrows and reset links."""
+
+    def __init__(
+        self,
+        text: str,
+        parent: QWidget | None = None,
+        size: int = 13,
+        alpha: float = theme.SECONDARY,
+    ) -> None:
+        super().__init__(parent)
+        self.setText(text)
+        self._size = size
+        self._alpha = alpha
+        metrics = QFontMetrics(theme.font(size, 500))
+        self.setFixedSize(metrics.horizontalAdvance(text) + 10, metrics.height() + 8)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setFont(theme.font(self._size, 500))
+        painter.setPen(theme.white(1.0 if self._hover else self._alpha))
+        painter.drawText(self.rect(), Qt.AlignCenter, self.text())
+
+
+class Toggle(QAbstractButton):
+    """The 38x21 pill switch, knob sliding from 2px to 19px."""
+
+    def __init__(self, parent: QWidget | None = None, on: bool = False) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(on)
+        self.setFixedSize(38, 21)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self._position = 19.0 if on else 2.0
+        self._animation = QPropertyAnimation(self, b"knob", self)
+        self._animation.setDuration(140)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.toggled.connect(self._slide)
+
+    def _slide(self, on: bool) -> None:
+        self._animation.stop()
+        self._animation.setStartValue(self._position)
+        self._animation.setEndValue(19.0 if on else 2.0)
+        self._animation.start()
+
+    def get_knob(self) -> float:
+        return self._position
+
+    def set_knob(self, value: float) -> None:
+        self._position = value
+        self.update()
+
+    knob = Property(float, get_knob, set_knob)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        if self.isChecked():
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
+            painter.fillPath(path, theme.accent(0.95))
+        else:
+            paint_glass(self, painter, rect, theme.RADIUS_PILL)
+        painter.setBrush(theme.white(0.95))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(self._position + 8.5, rect.height() / 2), 8.5, 8.5)
+
+
+class Chip(Hoverable):
+    """One option in a segmented group: formats, voices, live modes."""
+
+    def __init__(
+        self,
+        text: str,
+        parent: QWidget | None = None,
+        size: int = 13,
+        height: int = 34,
+        padding: int = 17,
+    ) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setText(text)
+        self._size = size
+        self.setFixedHeight(height)
+        metrics = QFontMetrics(theme.font(size, 600))
+        self.setMinimumWidth(metrics.horizontalAdvance(text) + padding * 2)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        if self.isChecked():
+            painter.setRenderHint(QPainter.Antialiasing)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
+            painter.fillPath(path, theme.white(0.94))
+            painter.setPen(theme.INK)
+        else:
+            painter.setPen(theme.white(0.88 if self._hover else theme.SECONDARY))
+        painter.setFont(theme.font(self._size, 600))
+        painter.drawText(rect, Qt.AlignCenter, self.text())
+
+
+class GlassSelect(QComboBox):
+    """A picker that looks like the rest of the glass.
+
+    QComboBox draws through the style sheet rather than a paintEvent, so this
+    is the one surface expressed in Qt's dialect of CSS instead of the shared
+    recipe. Its popup is opaque, which is what the handoff specifies for a
+    dropdown (`#0d0f1a`) -- a translucent list over a translucent panel is
+    unreadable.
+    """
+
+    STYLE = """
+    QComboBox {
+        background: rgba(255,255,255,0.10);
+        border: 1px solid rgba(255,255,255,0.20);
+        border-radius: 19px;
+        padding: 0 34px 0 18px;
+        color: rgba(255,255,255,0.95);
+    }
+    QComboBox:hover { background: rgba(255,255,255,0.14); }
+    QComboBox:focus { border: 1px solid rgba(127,164,255,0.85); }
+    QComboBox::drop-down { border: none; width: 26px; }
+    QComboBox::down-arrow { image: none; }
+    QComboBox QAbstractItemView {
+        background: #0d0f1a;
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 12px;
+        color: rgba(255,255,255,0.92);
+        selection-background-color: rgba(127,164,255,0.35);
+        padding: 6px;
+        outline: none;
+    }
+    """
+
+    def __init__(self, parent: QWidget | None = None, width: int = 150) -> None:
+        super().__init__(parent)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.setFont(theme.font(14, 500))
+        self.setFixedHeight(38)
+        self.setMinimumWidth(width)
+        self.setStyleSheet(self.STYLE)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        # The style sheet removes the platform arrow, so the chevron is drawn
+        # here, in the flat shapes the handoff uses instead of an icon set.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(theme.white(0.55), 1.6))
+        x, y = self.width() - 24, self.height() // 2 - 2
+        painter.drawLine(x, y, x + 5, y + 5)
+        painter.drawLine(x + 5, y + 5, x + 10, y)
+
+
+class RecordButton(QAbstractButton):
+    """The 96px circle, with the handoff's two expanding rings while live."""
+
+    RING_PERIOD_MS = 1800
+    FRAME_MS = 33
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setFixedSize(150, 150)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self._advance)
+        self.toggled.connect(self._run_rings)
+
+    def _run_rings(self, on: bool) -> None:
+        if on:
+            self._phase = 0.0
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + self.FRAME_MS / self.RING_PERIOD_MS) % 1.0
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        centre = QPointF(self.width() / 2, self.height() / 2)
+
+        if self.isChecked():
+            # Two rings, the second a third of a period behind, each expanding
+            # from the button's edge and fading as it goes.
+            for offset in (0.0, 0.33):
+                progress = (self._phase + offset) % 1.0
+                radius = 48 + progress * 26
+                painter.setPen(QPen(theme.accent(0.45 * (1.0 - progress)), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(centre, radius, radius)
+
+        body = QRect(int(centre.x()) - 48, int(centre.y()) - 48, 96, 96)
+        if self.isChecked():
+            painter.setBrush(theme.accent(0.95))
+            painter.setPen(QPen(theme.white(0.35), 1))
+            painter.drawEllipse(body)
+            painter.setBrush(theme.INK)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(
+                QRect(body.center().x() - 10, body.center().y() - 10, 22, 22), 5, 5
+            )
+        else:
+            paint_glass(self, painter, body, body.height() // 2, theme.TINT_RAISED)
+            painter.setBrush(theme.white(0.92))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPointF(body.center()), 17, 17)
+
+
+class ProgressRing(QWidget):
+    """`conic-gradient(accent N%, rgba(255,255,255,0.15) 0)`, with a glass core."""
+
+    def __init__(self, parent: QWidget | None = None, diameter: int = 160) -> None:
+        super().__init__(parent)
+        self.setFixedSize(diameter, diameter)
+        self._value = 0.0
+
+    def set_value(self, fraction: float) -> None:
+        self._value = max(0.0, min(1.0, fraction))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+
+        stop = max(1e-4, min(1.0, self._value))
+        gradient = QConicalGradient(QPointF(rect.center()), 90.0)
+        gradient.setColorAt(0.0, theme.accent(0.95))
+        gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(0.95))
+        gradient.setColorAt(stop, theme.white(0.15))
+        gradient.setColorAt(1.0, theme.white(0.15))
+
+        # A conical gradient sweeps anticlockwise from its start angle, so the
+        # ring is mirrored to fill the way a clock face does.
+        painter.save()
+        painter.translate(rect.center())
+        painter.scale(-1, 1)
+        painter.translate(-rect.center().x(), -rect.center().y())
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(rect)
+        painter.restore()
+
+        inner = rect.adjusted(18, 18, -18, -18)
+        paint_glass(self, painter, inner, inner.width() // 2, theme.TINT_RAISED)
+        painter.setFont(theme.font(30, 700, tracking=-2))
+        painter.setPen(theme.white(theme.PRIMARY))
+        painter.drawText(inner, Qt.AlignCenter, f"{round(self._value * 100)}%")
+
+
+# -- text ----------------------------------------------------------------
+
+
+def label(
+    text: str,
+    size: int,
+    weight: int = 400,
+    alpha: float = theme.PRIMARY,
+    tracking: float = 0.0,
+    uppercase: bool = False,
+    wrap: bool = False,
+) -> QLabel:
+    widget = QLabel(text.upper() if uppercase else text)
+    widget.setFont(theme.font(size, weight, tracking))
+    widget.setStyleSheet(f"color: rgba(255,255,255,{alpha:.3f}); background: transparent;")
+    widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    widget.setWordWrap(wrap)
+    if not wrap:
+        widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+    return widget
+
+
+def eyebrow(text: str, alpha: float = theme.SECONDARY) -> QLabel:
+    """The 11px uppercase label with wide tracking, used as a section marker."""
+    return label(text, 11, 600, alpha, tracking=10, uppercase=True)
+
+
+def clickable(widget: QWidget, action: Callable[[], None]) -> QWidget:
+    """Make a panel behave like the card the handoff draws it as."""
+    widget.setCursor(QCursor(Qt.PointingHandCursor))
+
+    def press(event) -> None:
+        if event.button() == Qt.LeftButton:
+            action()
+
+    widget.mousePressEvent = press  # type: ignore[method-assign]
+    return widget

@@ -86,6 +86,13 @@ def main() -> int:
         "--voice-only", action="store_true",
         help="озвучка без оригинальной дорожки")
     translation.add_argument(
+        "--one-voice", action="store_true",
+        help="читать всех одним голосом; по умолчанию мужские реплики читает "
+             "мужской голос, женские — женский")
+    translation.add_argument(
+        "--no-video", action="store_true",
+        help="не собирать копию видео с переведённой дорожкой")
+    translation.add_argument(
         "--bilingual", action="store_true",
         help="дополнительный SRT с обоими языками")
     args = parser.parse_args()
@@ -170,6 +177,8 @@ def main() -> int:
             target_language=args.to,
             bilingual=args.bilingual,
             voice=args.voice or args.voice_only,
+            match_voices=not args.one_voice,
+            dub_video=not args.no_video,
             keep_original_audio=not args.voice_only,
         )
     except UnsupportedLanguage as error:

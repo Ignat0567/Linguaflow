@@ -33,6 +33,8 @@ class Language:
     english_name: str
     #: NLLB distinguishes script: rus_Cyrl, not rus_Latn.
     nllb: str
+    #: ISO 639-2, which is what a media container labels a track with.
+    iso3: str
     #: DeepL's own code. It rejects a plain "EN" as a target, hence the pair.
     deepl_source: str
     deepl_target: str
@@ -41,40 +43,58 @@ class Language:
     scriptio_continua: bool = False
     #: A Piper voice that exists for this language, for spoken output.
     piper_voice: str = ""
+    #: A pair of voices for dubbing a recording with more than one speaker in
+    #: it, so a man is not read out in a woman's voice.
+    #:
+    #: Chosen by measuring, not by the name in the file. Piper publishes no
+    #: gender for its voices, and the obvious guesses were wrong: the Russian
+    #: default `dmitri` measures at 186 Hz -- inside the female range -- and
+    #: `irina` at 177 Hz, so that pair would have sounded like one person.
+    #: Every candidate for these three languages was synthesised on the same
+    #: sentence and its fundamental frequency measured; the numbers are in
+    #: `docs/DAY7.md`.
+    piper_male: str = ""
+    piper_female: str = ""
 
 
 CATALOGUE: dict[str, Language] = {
     "ru": Language(
-        "ru", "русский", "Russian", "rus_Cyrl", "RU", "RU",
+        "ru", "русский", "Russian", "rus_Cyrl", "rus", "RU", "RU",
         piper_voice="ru_RU-dmitri-medium",
+        piper_male="ru_RU-ruslan-medium",      # 128 Hz
+        piper_female="ru_RU-irina-medium",     # 177 Hz
     ),
     "en": Language(
-        "en", "английский", "English", "eng_Latn", "EN", "EN-GB",
+        "en", "английский", "English", "eng_Latn", "eng", "EN", "EN-GB",
         piper_voice="en_US-lessac-medium",
+        piper_male="en_US-hfc_male-medium",    # 114 Hz
+        piper_female="en_US-lessac-medium",    # 198 Hz
     ),
     "de": Language(
-        "de", "немецкий", "German", "deu_Latn", "DE", "DE",
+        "de", "немецкий", "German", "deu_Latn", "deu", "DE", "DE",
         piper_voice="de_DE-thorsten-medium",
+        piper_male="de_DE-thorsten-medium",    # 131 Hz
+        piper_female="de_DE-ramona-low",       # 191 Hz
     ),
     # -- not offered yet; every path below is written and tested ----------
     "zh": Language(
-        "zh", "китайский", "Chinese", "zho_Hans", "ZH", "ZH",
+        "zh", "китайский", "Chinese", "zho_Hans", "zho", "ZH", "ZH",
         scriptio_continua=True, piper_voice="zh_CN-huayan-medium",
     ),
     "ja": Language(
-        "ja", "японский", "Japanese", "jpn_Jpan", "JA", "JA",
+        "ja", "японский", "Japanese", "jpn_Jpan", "jpn", "JA", "JA",
         scriptio_continua=True, piper_voice="ja_JA-hi_fi_captain-medium",
     ),
     "es": Language(
-        "es", "испанский", "Spanish", "spa_Latn", "ES", "ES",
+        "es", "испанский", "Spanish", "spa_Latn", "spa", "ES", "ES",
         piper_voice="es_ES-davefx-medium",
     ),
     "it": Language(
-        "it", "итальянский", "Italian", "ita_Latn", "IT", "IT",
+        "it", "итальянский", "Italian", "ita_Latn", "ita", "IT", "IT",
         piper_voice="it_IT-paola-medium",
     ),
     "fr": Language(
-        "fr", "французский", "French", "fra_Latn", "FR", "FR",
+        "fr", "французский", "French", "fra_Latn", "fra", "FR", "FR",
         piper_voice="fr_FR-siwis-medium",
     ),
 }
@@ -137,6 +157,41 @@ def joins_with_space(code: str) -> bool:
     """
     language = CATALOGUE.get(code)
     return not (language and language.scriptio_continua)
+
+
+def voice_for(code: str, gender: str = "") -> str:
+    """The Piper voice for a language, for a given gender where one exists.
+
+    Falls back to the language's single voice rather than to the other
+    gender's: reading a man in a woman's voice is the mistake this is here to
+    avoid, and a language with no pair should simply not pretend to have one.
+    """
+    language = CATALOGUE.get(code)
+    if language is None:
+        return ""
+    if gender == "male" and language.piper_male:
+        return language.piper_male
+    if gender == "female" and language.piper_female:
+        return language.piper_female
+    return language.piper_voice
+
+
+def has_voice_pair(code: str) -> bool:
+    """Whether this language can dub two speakers in different voices."""
+    language = CATALOGUE.get(code)
+    if language is None:
+        return False
+    return bool(
+        language.piper_male
+        and language.piper_female
+        and language.piper_male != language.piper_female
+    )
+
+
+def track_language(code: str) -> str:
+    """The code a media container labels an audio or subtitle track with."""
+    language = CATALOGUE.get(code)
+    return language.iso3 if language else "und"
 
 
 def offered_list() -> str:

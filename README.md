@@ -16,6 +16,8 @@
 | 3 | Перевод: офлайн и онлайн, аудит чисел, глоссарий | `e6fb428` |
 | 4 | Реальное время: LocalAgreement, темпы, «Разговор» | `4301d62` |
 | 5 | Озвучка перевода: дубляж файлов с подгонкой по таймингу | `0b1cf0a` |
+| 6 | Интерфейс: пять экранов поверх пайплайна | — |
+| 7 | Голоса по говорящему, видео с переведённой дорожкой | — |
 
 Подробности и найденные при разработке проблемы — в `docs/DAY*.md`.
 
@@ -41,8 +43,10 @@ LINGUAFLOW_LANGUAGES=ru,en,de,zh python tools/transcribe.py video.mp4 --to zh
 python tools/transcribe.py video.mp4                    # расшифровка
 python tools/transcribe.py video.mp4 --to de            # + перевод, офлайн
 python tools/transcribe.py video.mp4 --to de --bilingual
-python tools/transcribe.py video.mp4 --to ru --voice     # + озвучка
+python tools/transcribe.py video.mp4 --to ru --voice     # + озвучка и видео
+python tools/transcribe.py video.mp4 --to ru --voice --one-voice
 python tools/audio_check.py devices                     # проверка устройств
+python tools/app.py                                     # интерфейс
 ```
 
 ## Перевод: где выполняется

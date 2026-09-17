@@ -92,6 +92,8 @@ def transcribe_file(
     bilingual: bool = False,
     voice: bool = False,
     keep_original_audio: bool = True,
+    match_voices: bool = True,
+    dub_video: bool = True,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -109,7 +111,9 @@ def transcribe_file(
 
     scratch = Path(download_dir) if download_dir else Path.cwd() / "downloads"
     stage("Открываю источник")
-    media = resolve(str(target), scratch)
+    # A dubbed copy needs the picture, and for a link that means downloading
+    # it. Asked for, it is fetched; not asked for, only the audio comes down.
+    media = resolve(str(target), scratch, want_video=bool(voice and dub_video))
     if not media.has_audio:
         raise ValueError(f"В «{media.path.name}» нет звуковой дорожки.")
 
@@ -137,7 +141,13 @@ def transcribe_file(
 
     translated_cues = None
     report = None
-    if translator is not None and target_language:
+    sentence_groups: list[list[int]] = []
+    if translator is not None and target_language and transcript.language == target_language:
+        # Auto-detect can land on the language the user asked to translate
+        # into. Translating a language into itself is a hard error downstream,
+        # and the original subtitles are already the right file.
+        stage("Язык оригинала совпал с языком перевода")
+    elif translator is not None and target_language:
         stage(f"Перевожу на {languages.describe(target_language)}")
         # Whole sentences, not cues. A cue is cut for reading speed and is
         # often a fragment, and a fragment is what makes this model invent.
@@ -179,21 +189,49 @@ def transcribe_file(
                 destination / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
                 EXPORTERS["srt"](transcript, merged),
             )
+        sentence_groups = groups
 
     dub = None
     if voice and translated_cues:
         from ..tts.dub import mix
-        from ..tts.speaker import Speaker, write_wav
+        from ..tts.speaker import VoiceBank, write_wav
 
-        stage("Озвучиваю перевод")
-        speaker = Speaker(target_language,
-                          voices_dir=Path(__file__).resolve().parents[2] / "models" / "piper")
-        dub = mix(media.path, translated_cues, speaker, media.duration,
-                  keep_original=keep_original_audio)
+        voices_dir = Path(__file__).resolve().parents[2] / "models" / "piper"
+        pair = match_voices and languages.has_voice_pair(target_language)
+        stage("Озвучиваю перевод" + (" (голоса по говорящему)" if pair else ""))
+        bank = VoiceBank(target_language, voices_dir=voices_dir,
+                         single=languages.voice_for(target_language))
+        dub = mix(media.path, translated_cues, bank, media.duration,
+                  keep_original=keep_original_audio, match_voices=pair)
         outputs["audio"] = write_wav(
             destination / f"{media.path.stem}.{target_language}.wav",
             dub.samples, dub.rate,
         )
+        if dub.cast is not None:
+            stage(dub.cast.summary())
+
+        if dub_video and media.has_video:
+            from ..video.mux import MuxError, replace_audio
+
+            stage("Собираю видео с переводом")
+            try:
+                muxed = replace_audio(
+                    media.path,
+                    outputs["audio"],
+                    destination / f"{media.path.stem}.{target_language}",
+                    target_language=target_language,
+                    source_language=transcript.language,
+                    subtitles=outputs.get(f"srt.{target_language}"),
+                    keep_original=True,
+                    duration=media.duration,
+                )
+            except MuxError as exc:
+                # The soundtrack is already written and useful on its own; a
+                # container that would not take it is worth reporting, not
+                # worth losing the job over.
+                stage(f"Видео собрать не удалось: {exc}")
+            else:
+                outputs["video"] = muxed.path
 
     return BatchResult(
         media=media,
@@ -204,6 +242,6 @@ def transcribe_file(
         translated_cues=translated_cues,
         translation=report,
         target_language=target_language,
-        sentence_groups=groups if translator is not None and target_language else [],
+        sentence_groups=sentence_groups,
         dub=dub,
     )

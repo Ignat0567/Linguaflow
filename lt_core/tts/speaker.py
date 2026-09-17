@@ -65,6 +65,8 @@ class Utterance:
     wanted: float
     #: Piper's length scale used; below 1.0 means the line was compressed.
     length_scale: float
+    #: Which Piper voice read it, so a mixed-voice dub can be checked.
+    voice: str = ""
 
     @property
     def duration(self) -> float:
@@ -155,11 +157,11 @@ class Speaker:
         """
         samples, rate = self.say(text)
         if samples.size == 0 or seconds <= 0:
-            return Utterance(samples, rate, start, seconds, 1.0)
+            return Utterance(samples, rate, start, seconds, 1.0, self.voice_name)
 
         natural = len(samples) / rate
         if natural <= seconds * 1.02:
-            return Utterance(samples, rate, start, seconds, 1.0)
+            return Utterance(samples, rate, start, seconds, 1.0, self.voice_name)
 
         # Ask for the scale that LENGTH_RESPONSE says will land on the slot,
         # rather than the ratio itself -- which under-corrects by roughly half.
@@ -168,7 +170,48 @@ class Speaker:
         scale = max(MIN_LENGTH_SCALE, min(MAX_LENGTH_SCALE, scale))
 
         samples, rate = self.say(text, length_scale=scale)
-        return Utterance(samples, rate, start, seconds, scale)
+        return Utterance(samples, rate, start, seconds, scale, self.voice_name)
+
+
+class VoiceBank:
+    """The voices one dub needs, loaded on first use and then kept.
+
+    A recording with two speakers needs two Piper models in memory at once.
+    Each costs about a second to load and 60 MB on disk, so they are loaded
+    when a line actually calls for one -- a recording that turns out to have
+    one speaker never pays for the second.
+    """
+
+    def __init__(
+        self,
+        language: str,
+        voices_dir: Path | str | None = None,
+        single: str | None = None,
+    ) -> None:
+        self.language = language
+        self.voices_dir = voices_dir
+        #: Used when no gender is asked for, or when the language has no pair.
+        self.single = single
+        self._loaded: dict[str, Speaker] = {}
+
+    def available(self) -> bool:
+        return languages.has_voice_pair(self.language)
+
+    def for_gender(self, gender: str = "") -> Speaker:
+        name = self.single if not gender else languages.voice_for(
+            self.language, gender
+        )
+        if not name:
+            name = languages.voice_for(self.language)
+        if name not in self._loaded:
+            self._loaded[name] = Speaker(
+                self.language, voice=name, voices_dir=self.voices_dir
+            )
+        return self._loaded[name]
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(sorted(self._loaded))
 
 
 def resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:

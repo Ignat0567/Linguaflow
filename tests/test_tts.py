@@ -57,7 +57,7 @@ def test_a_missing_voice_says_how_to_get_it(tmp_path):
 def test_a_language_without_a_voice_is_refused(tmp_path, monkeypatch):
     monkeypatch.setitem(
         languages.CATALOGUE, "xx",
-        languages.Language("xx", "тест", "Test", "xxx_Latn", "XX", "XX"),
+        languages.Language("xx", "тест", "Test", "xxx_Latn", "xxx", "XX", "XX"),
     )
     with pytest.raises(VoiceError, match="не задан голос"):
         Speaker("xx", voices_dir=tmp_path)
