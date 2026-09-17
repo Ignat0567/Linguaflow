@@ -323,6 +323,30 @@ def test_permission_reports_denied_desktop_access(monkeypatch):
     assert result.remedy and "классическим" in result.remedy.lower()
 
 
+def test_permission_distinguishes_never_granted_from_denied(monkeypatch):
+    """An absent value is not the same claim as an explicit Deny."""
+    import lt_core.audio.permissions as permissions
+
+    monkeypatch.setattr(permissions.sys, "platform", "win32")
+
+    monkeypatch.setattr(
+        permissions, "_read_value",
+        lambda root, subkey: "Deny" if subkey.endswith("NonPackaged") else "Allow",
+    )
+    denied = permissions.check_microphone_permission()
+
+    monkeypatch.setattr(
+        permissions, "_read_value",
+        lambda root, subkey: None if subkey.endswith("NonPackaged") else "Allow",
+    )
+    unset = permissions.check_microphone_permission()
+
+    assert not denied.allowed and not unset.allowed
+    assert denied.reason != unset.reason
+    # The unset case must admit the other possibility rather than assert a cause.
+    assert "монопольн" in (unset.remedy or "")
+
+
 def test_permission_reports_global_denial(monkeypatch):
     import lt_core.audio.permissions as permissions
 

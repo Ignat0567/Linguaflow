@@ -72,16 +72,32 @@ def check_microphone_permission() -> MicrophonePermission:
                        "включите «Доступ к микрофону».",
             )
 
+    setting = (
+        "Параметры → Конфиденциальность и защита → Микрофон → «Разрешить "
+        "классическим приложениям доступ к микрофону»"
+    )
     desktop = _read_value(winreg.HKEY_LOCAL_MACHINE, _CONSENT_PATH + r"\NonPackaged")
-    if desktop == "Deny" or desktop is None:
+    if desktop == "Deny":
         return MicrophonePermission(
             False,
             "Классическим приложениям запрещён доступ к микрофону. Устройства "
             "при этом видны в списке и выглядят исправными — Windows скрывает "
             "запрет за ошибкой драйвера.",
-            remedy="Параметры → Конфиденциальность и защита → Микрофон → "
-                   "включите «Разрешить классическим приложениям доступ к "
-                   "микрофону».",
+            remedy=f"{setting} — включите.",
+        )
+    if desktop is None:
+        # Not "denied" so much as never granted. Observed on the Day 1 machine:
+        # the master toggle reads Allow, this value is absent, and every one of
+        # ten microphones fails to open in two independent PortAudio builds
+        # while loopback keeps working. Worth reporting, but not as a verdict --
+        # the same absence can mean the setting was simply never touched.
+        return MicrophonePermission(
+            False,
+            "Разрешение на микрофон для классических приложений не выдано "
+            "(Windows не хранит для него значения). Обычно это и есть причина, "
+            "когда устройства видны, но ни одно не открывается.",
+            remedy=f"Проверьте: {setting}. Если оно уже включено, микрофон "
+                   f"держит другая программа в монопольном режиме.",
         )
 
     return MicrophonePermission(True, "Доступ к микрофону разрешён.")

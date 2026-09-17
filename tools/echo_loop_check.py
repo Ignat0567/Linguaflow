@@ -11,11 +11,18 @@ translate its own voice. Runs it twice:
 does capture audio when the gate is open, so both halves are measured and
 compared rather than asserted.
 
-    python tools/echo_loop_check.py
+This check makes noise on the default output device, out loud, for about ten
+seconds. That is not a detail. Run blind while a call is in progress, the clip
+goes into the call and everyone on it hears it -- which is exactly what
+happened the first time this ran. Playback is therefore refused unless it is
+asked for explicitly.
+
+    python tools/echo_loop_check.py --play-out-loud
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import threading
 import time
@@ -128,11 +135,32 @@ def capture(label: str, gate: EchoGate | None) -> dict[str, float]:
 
 def main() -> int:
     bootstrap()
+    parser = argparse.ArgumentParser(
+        description="Проверка защиты от акустической петли")
+    parser.add_argument(
+        "--play-out-loud", action="store_true",
+        help="разрешить воспроизведение вслух — обязательный флаг")
+    args = parser.parse_args()
+
     if not CLIP.exists():
         print(f"Нет тестового клипа: {CLIP}")
         return 1
 
     device = default_device("system")
+    if device is None:
+        print("Нет loopback-устройства: WASAPI недоступен.")
+        return 1
+
+    if not args.play_out_loud:
+        print("Эта проверка ВОСПРОИЗВОДИТ РЕЧЬ ВСЛУХ около 10 секунд")
+        print(f"в устройство «{device.name}» — иначе захватывать нечего.")
+        print()
+        print("Если идёт звонок или запись, собеседники это услышат.")
+        print("Убедившись, что это безопасно, запустите:")
+        print()
+        print("    python tools/echo_loop_check.py --play-out-loud")
+        return 1
+
     print(f"Захват и воспроизведение на одном устройстве: {device.name}")
     print("Это та самая конфигурация, которая порождает петлю.\n")
 
