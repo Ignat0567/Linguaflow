@@ -1,0 +1,17 @@
+# ASR
+faster-whisper==1.2.1
+# CUDA runtime (no system CUDA Toolkit needed)
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.26.0.51
+# MT
+ctranslate2==4.8.2
+transformers==5.17.0
+sentencepiece==0.2.2
+# TTS
+piper-tts==1.8.0
+pyopenjtalk-plus==0.4.1.post9   # Japanese phonemizer; upstream pyopenjtalk has no win/py312 wheel
+# Audio I/O
+sounddevice==0.5.6
+PyAudioWPatch==0.2.12.8         # WASAPI loopback (system audio)
+imageio-ffmpeg==0.6.0           # bundled ffmpeg binary
+numpy==2.5.3
