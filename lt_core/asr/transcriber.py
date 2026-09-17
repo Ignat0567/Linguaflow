@@ -139,6 +139,32 @@ class Transcriber:
         _, info = self._model.transcribe(source, beam_size=1, vad_filter=True)
         return info.language, float(info.language_probability)
 
+    def detect_between(
+        self, audio: np.ndarray, candidates: list[str]
+    ) -> tuple[str, float, float]:
+        """Choose the likeliest of a known set of languages.
+
+        Asking "which of ninety-nine languages is this" from a two-second
+        window is a much harder question than "which of these two", and it
+        answers wrongly often enough to matter: in a conversation-mode run the
+        German turn was identified as Russian, transcribed as Russian, and the
+        translation of that came out as "The system." repeated five times.
+
+        Returns the winner, its probability, and the margin over the runner-up.
+        The margin is what a caller needs in order to require real evidence
+        before switching speakers.
+        """
+        _, _, all_probabilities = self._model.detect_language(audio=audio)
+        scores = {code: float(probability) for code, probability in all_probabilities}
+        ranked = sorted(
+            ((scores.get(code, 0.0), code) for code in candidates), reverse=True
+        )
+        if not ranked:
+            return "", 0.0, 0.0
+        best_score, best = ranked[0]
+        runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        return best, best_score, best_score - runner_up
+
     # -- internals --------------------------------------------------------
     def _collect(
         self,
