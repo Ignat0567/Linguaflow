@@ -80,6 +80,12 @@ def main() -> int:
     translation.add_argument("--api-key", help="ключ доступа для онлайн-режима")
     translation.add_argument("--glossary", help="CSV или JSON с терминами")
     translation.add_argument(
+        "--voice", action="store_true",
+        help="озвучить перевод и свести с приглушённым оригиналом")
+    translation.add_argument(
+        "--voice-only", action="store_true",
+        help="озвучка без оригинальной дорожки")
+    translation.add_argument(
         "--bilingual", action="store_true",
         help="дополнительный SRT с обоими языками")
     args = parser.parse_args()
@@ -163,6 +169,8 @@ def main() -> int:
             translator=translator,
             target_language=args.to,
             bilingual=args.bilingual,
+            voice=args.voice or args.voice_only,
+            keep_original_audio=not args.voice_only,
         )
     except UnsupportedLanguage as error:
         print(f"\n{error}")
@@ -222,6 +230,16 @@ def main() -> int:
                   f"локальная модель на таких ненадёжна")
             print(f"    (для реплик вроде «Да» или «Здравствуйте» "
                   f"проверьте перевод вручную)")
+
+    if result.dub is not None:
+        d = result.dub
+        print(f"Озвучка:    {d.spoken} реплик, {d.duration:.0f} с")
+        if d.overran:
+            print(f"            {d.overran} не уместились в свой слот "
+                  f"(перевод длиннее оригинала; речь не ускорялась сверх "
+                  f"человеческого предела)")
+        if d.rushed:
+            print(f"            {len(d.rushed)} произнесены у предела скорости")
 
     print()
     for name, path in result.outputs.items():

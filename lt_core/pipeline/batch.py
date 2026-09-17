@@ -39,6 +39,8 @@ class BatchResult:
     translated_cues: tuple[Cue, ...] | None = None
     translation: TranslationReport | None = None
     target_language: str | None = None
+    #: The dubbed track, when one was asked for.
+    dub: object | None = None
     # Which cues each translated sentence covered, so a flagged sentence can be
     # reported at the time it was spoken rather than as an index nobody can
     # locate in a subtitle file.
@@ -88,6 +90,8 @@ def transcribe_file(
     translator: Translator | None = None,
     target_language: str | None = None,
     bilingual: bool = False,
+    voice: bool = False,
+    keep_original_audio: bool = True,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -176,6 +180,21 @@ def transcribe_file(
                 EXPORTERS["srt"](transcript, merged),
             )
 
+    dub = None
+    if voice and translated_cues:
+        from ..tts.dub import mix
+        from ..tts.speaker import Speaker, write_wav
+
+        stage("Озвучиваю перевод")
+        speaker = Speaker(target_language,
+                          voices_dir=Path(__file__).resolve().parents[2] / "models" / "piper")
+        dub = mix(media.path, translated_cues, speaker, media.duration,
+                  keep_original=keep_original_audio)
+        outputs["audio"] = write_wav(
+            destination / f"{media.path.stem}.{target_language}.wav",
+            dub.samples, dub.rate,
+        )
+
     return BatchResult(
         media=media,
         transcript=transcript,
@@ -186,4 +205,5 @@ def transcribe_file(
         translation=report,
         target_language=target_language,
         sentence_groups=groups if translator is not None and target_language else [],
+        dub=dub,
     )
