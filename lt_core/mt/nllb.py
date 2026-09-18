@@ -47,8 +47,63 @@ _SENTENCE = re.compile(
 )
 
 
+#: Clause boundaries, used when a stretch of speech has no sentence ends in it
+#: at all. Weaker than a full stop and far better than nothing.
+_CLAUSE = re.compile(r"(?<=[,;:—–])\s+")
+
+#: The longest piece handed to the model, in words.
+#:
+#: Not a style preference -- a hard limit measured against the model. NLLB
+#: distilled reads at most 1024 tokens and writes at most 256, and the writing
+#: limit binds first: a 1331-word block came back as 160 words, the other 85%
+#: silently gone and the translation cut off mid-clause. Forty words of English
+#: become roughly fifty of Russian, near a hundred tokens, which leaves the
+#: decoder most of its room spare.
+MAX_WORDS = 40
+
+
+def _break_up(part: str) -> list[str]:
+    """Cut an over-long stretch at the best boundary available.
+
+    Commas first, because a clause boundary is a real boundary and the model
+    translates a clause well. Only when a single clause is still too long is
+    the text cut between words, which is a poor place to cut and still far
+    better than the alternative, which is losing it.
+    """
+    if len(part.split()) <= MAX_WORDS:
+        return [part]
+
+    pieces: list[str] = []
+    current: list[str] = []
+    length = 0
+    for clause in _CLAUSE.split(part):
+        words = clause.split()
+        if not words:
+            continue
+        if current and length + len(words) > MAX_WORDS:
+            pieces.append(" ".join(current))
+            current, length = [], 0
+        if len(words) > MAX_WORDS:
+            if current:
+                pieces.append(" ".join(current))
+                current, length = [], 0
+            for start in range(0, len(words), MAX_WORDS):
+                pieces.append(" ".join(words[start:start + MAX_WORDS]))
+            continue
+        current.extend(words)
+        length += len(words)
+    if current:
+        pieces.append(" ".join(current))
+    return pieces or [part]
+
+
 def split_sentences(text: str) -> list[str]:
-    """Divide text into sentences, keeping every character.
+    """Divide text into pieces the model can translate whole.
+
+    Sentences where there are sentences. Where there are none -- and there are
+    none whenever the recogniser stops punctuating, which it does -- the run is
+    cut at clause boundaries instead, because handing the model more than it
+    can read means it answers with part of the text and no warning.
 
     Rejoining the pieces must reproduce the input apart from the whitespace at
     the seams, so nothing can be lost here before the model has even seen it.
@@ -56,8 +111,12 @@ def split_sentences(text: str) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
-    parts = [part.strip() for part in _SENTENCE.split(stripped)]
-    return [part for part in parts if part]
+    pieces: list[str] = []
+    for part in _SENTENCE.split(stripped):
+        part = part.strip()
+        if part:
+            pieces.extend(_break_up(part))
+    return pieces
 
 
 class NllbTranslator:
@@ -171,6 +230,11 @@ class NllbTranslator:
                 target_prefix=[[target_code]] * len(batch),
                 beam_size=self.beam_size,
                 max_batch_size=32,
+                # The default of 256 is what truncated a long run before the
+                # pieces were capped. Pieces are small now, so this ceiling
+                # should never be reached -- it is raised anyway, because
+                # reaching it costs the rest of the sentence.
+                max_decoding_length=512,
             )
         except Exception as exc:
             raise TranslationError("Сбой локального перевода.", str(exc)) from exc

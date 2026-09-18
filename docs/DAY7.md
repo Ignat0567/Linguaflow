@@ -175,6 +175,55 @@ still Russian in all three interfaces, because those strings are formatted
 where they are raised rather than where they are shown. Routing them
 through the same catalogue is the next step and is not done.
 
+## The translation broke off, and why
+
+Reported from a real 12-minute recording: the translation started correctly
+and then fell apart. Measured rather than watched -- translated characters
+against original characters, minute by minute:
+
+| minute | 0 | 1–6 | 7 | 8 | 11 |
+|---|---|---|---|---|---|
+| sentence ends in the transcript | 8 | **0** | 2 | 4 | 4 |
+| translated length / original | 0.61 | **0.07–0.16** | 0.14 | 0.53 | 1.03 |
+
+The two rows are the same fact. Whisper punctuated the first minute and then
+stopped, and where there are no full stops the sentence splitter had nothing
+to split on, so an entire unpunctuated run reached NLLB as one piece.
+
+Measured directly: **6752 characters in, 1025 out**, cut off mid-clause. The
+model had written to its own ceiling -- 256 tokens by default -- and stopped.
+The tokenizer even printed a warning (1495 > 1024) and nothing in the pipeline
+was listening. What the viewer saw was worse than missing text: the surviving
+translation was spread thinly across the following three minutes of cues, so
+each line carried two or three words about something said minutes earlier.
+
+### The fix, in two parts
+
+17. **A run with no punctuation is cut at clause boundaries.** Commas first,
+    since a clause is a real boundary and translates as one; only a clause
+    that is itself too long is cut between words, which is a bad place to cut
+    and better than losing the rest. `MAX_WORDS = 40` is measured against the
+    model's writing ceiling, not chosen for style.
+18. **A translation far shorter than its original is reported.** `SHORT_RATIO
+    = 0.5`: among these languages a translation is never much shorter than
+    what it came from -- Russian runs longer than English, German longer
+    still. Half is nowhere near any working pair and is exactly what a cut-off
+    one looks like. Applied only above a dozen words, where the ratio means
+    something.
+
+Re-run over the same recording, every minute now lands between 0.89 and 1.11
+against 0.07–0.16 before. With the splitting disabled again, the new check
+reports «ПЕРЕВОД ОБОРВАН в 1» instead of saying nothing.
+
+337 tests.
+
+### Still open
+
+Why Whisper stopped punctuating after the first minute is not answered here.
+The pipeline no longer depends on the answer, which is the right order to fix
+these in, but a transcript without sentence ends is worse in other ways --
+it reads badly, and the subtitle splitter has less to work with.
+
 ## Not done
 
 Packaging into an installer. Burning subtitles into the picture (they are
