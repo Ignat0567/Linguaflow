@@ -6,9 +6,13 @@ mode is a deliberate choice rather than a fallback.
 
 DeepL is the better translator for the European languages in scope. The rest
 speak the OpenAI chat-completions protocol, which is what makes them
-interchangeable: Groq for speed, OpenAI for quality, and a local server for
-anyone who wants the protocol without the third party -- "online" and "leaves
-the building" are not the same thing, and this is where they separate.
+interchangeable: Groq for speed, OpenAI for quality, NVIDIA for a catalogue of
+open models on free credits, and a local server for anyone who wants the
+protocol without the third party -- "online" and "leaves the building" are not
+the same thing, and this is where they separate.
+
+They are also what shortens a translation that will not fit its slot, which
+the offline path cannot do; see `shorten` below.
 """
 
 from __future__ import annotations
@@ -152,6 +156,25 @@ LLM_SERVICES: dict[str, LlmService] = {
         default_model="llama-3.3-70b-versatile",
         env_var="GROQ_API_KEY",
         where_to_get_a_key="console.groq.com/keys",
+    ),
+    "nvidia": LlmService(
+        key="nvidia",
+        label="NVIDIA",
+        # NVIDIA's model catalogue speaks the same chat-completions shape, so
+        # it needed no new code -- only an entry. Verified without a key: the
+        # endpoint parses a request and answers with a structured error, the
+        # model list is public, and a bad key comes back 403, which is already
+        # mapped to "the service rejected your key".
+        base_url="https://integrate.api.nvidia.com/v1",
+        # Chosen for Russian rather than for speed: this task sends a handful
+        # of requests, so a large model costs little here. The catalogue moves
+        # -- `meta/llama-3.3-70b-instruct` was retired in August 2026 and the
+        # obvious default was already dead -- so `--llm-model` takes any id
+        # from integrate.api.nvidia.com/v1/models. Faster alternatives that
+        # exist today: z-ai/glm-5.3-flash, deepseek-ai/deepseek-v4-flash-0731.
+        default_model="mistralai/mistral-large-2-instruct",
+        env_var="NVIDIA_API_KEY",
+        where_to_get_a_key="build.nvidia.com — бесплатные кредиты при регистрации",
     ),
     "local": LlmService(
         key="local",
@@ -357,7 +380,9 @@ def _parse_numbered(content: str, expected: int) -> list[str]:
 
 
 #: Every online service the user can pick, in the order they are offered.
-ONLINE_SERVICES: tuple[str, ...] = ("deepl", "groq", "openai", "local")
+ONLINE_SERVICES: tuple[str, ...] = (
+    "deepl", "groq", "openai", "nvidia", "local",
+)
 
 
 def build_cloud_provider(service: str = "deepl", **options):

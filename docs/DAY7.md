@@ -333,7 +333,21 @@ their words rewritten away, which the model path does and which needs a key
 and online mode turned on. It has been tested against a stand-in provider, not
 against a live service.
 
-381 tests.
+### Where the rewriting can be done
+
+NVIDIA's catalogue speaks the same chat-completions protocol, so it is one
+entry in the table rather than any new code, and it comes with free credits.
+
+Checked as far as it can be without a key: the endpoint parses a request and
+answers with a structured error, the model list is public and returns 82
+models, and a bad key comes back 403 -- which the existing code already
+reports as «сервис отклонил ключ». The generation itself is not verified.
+
+The obvious default was already dead: `meta/llama-3.3-70b-instruct` reached
+end of life on 2026-08-26 and the endpoint said so. The catalogue moves, so
+`--llm-model` takes any id from `integrate.api.nvidia.com/v1/models`.
+
+384 tests.
 
 ## Not done
 

@@ -238,3 +238,37 @@ def test_lines_that_already_fit_are_not_sent_anywhere():
     _out, _records, report = shorten_cues(cues, "ru", 17.8, provider)
     assert not report.used
     assert provider.asked == []
+
+
+# -- the services that can do the rewriting -----------------------------
+
+def test_every_llm_service_is_offered_and_described():
+    """A service in the table but not in the list cannot be chosen; one in the
+    list but not the table crashes when it is."""
+    from lt_core.mt.cloud import LLM_SERVICES, ONLINE_SERVICES
+
+    for key, service in LLM_SERVICES.items():
+        assert key in ONLINE_SERVICES, key
+        assert service.base_url.startswith("http"), key
+        assert service.default_model, key
+        assert service.where_to_get_a_key, key
+
+
+def test_nvidia_is_reachable_over_the_same_protocol():
+    """It needed no new code, only an entry: same chat-completions shape."""
+    from lt_core.mt.cloud import LLM_SERVICES, build_cloud_provider
+
+    service = LLM_SERVICES["nvidia"]
+    assert service.base_url == "https://integrate.api.nvidia.com/v1"
+    provider = build_cloud_provider(service="nvidia", api_key="nvapi-test")
+    assert not provider.is_offline
+    assert can_shorten(provider)
+
+
+def test_a_hosted_service_is_never_reported_as_offline():
+    """«Offline» is a promise about where the words go, not a preference."""
+    from lt_core.mt.cloud import build_cloud_provider
+
+    for service in ("openai", "groq", "nvidia"):
+        provider = build_cloud_provider(service=service, api_key="test")
+        assert not provider.is_offline, service

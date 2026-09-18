@@ -44,6 +44,7 @@ def _service_labels() -> dict[str, str]:
         "deepl": "DeepL",
         "groq": "Groq",
         "openai": "OpenAI",
+        "nvidia": "NVIDIA",
         "local": _("Свой сервер"),
     }
 
