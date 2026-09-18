@@ -15,13 +15,22 @@ from pathlib import Path
 
 import numpy as np
 
-from ..audio.capture import FileSource
-from ..audio.types import TARGET_SAMPLE_RATE
+from ..audio.resample import pcm16_to_float32
 from ..subtitles.cues import Cue
 from ..mt.condense import slot_seconds
 from . import casting
 from .casting import Cast
-from .speaker import Speaker, Utterance, VoiceBank, resample
+from .speaker import NATIVE_RATE, Speaker, Utterance, VoiceBank, resample
+
+#: The rate a dubbed soundtrack is built and written at.
+#:
+#: Piper speaks at 22050, and the rest of the program works at 16000 because
+#: that is what the recogniser wants. Building the dub at the recogniser's rate
+#: meant every spoken word was resampled down on its way out, throwing away
+#: everything above 8 kHz -- the air in a voice, and most of what distinguishes
+#: an "s" from an "f". Nothing downstream needed that: the soundtrack is for a
+#: person to listen to, not for a model to read.
+DUB_SAMPLE_RATE = NATIVE_RATE
 
 #: How far the original is turned down while the dub is speaking.
 #:
@@ -92,7 +101,7 @@ def synthesise_track(
     cues: tuple[Cue, ...],
     speaker: Speaker | VoiceBank,
     total_seconds: float,
-    rate: int = TARGET_SAMPLE_RATE,
+    rate: int = DUB_SAMPLE_RATE,
     cast: Cast | None = None,
 ) -> DubResult:
     """Speak every cue into its own slot on one timeline.
@@ -208,7 +217,7 @@ def mix(
     speaker: Speaker | VoiceBank,
     total_seconds: float,
     keep_original: bool = True,
-    rate: int = TARGET_SAMPLE_RATE,
+    rate: int = DUB_SAMPLE_RATE,
     match_voices: bool = False,
 ) -> DubResult:
     """Dub a recording: speak the cues, duck the original, mix the two.
@@ -242,5 +251,28 @@ def mix(
 
 
 def _load(media_path: Path | str, rate: int) -> np.ndarray:
-    blocks = [chunk.samples for chunk in FileSource(media_path).stream()]
-    return np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)
+    """The whole recording as one array, at the rate the dub is built at.
+
+    Decoded here rather than through `FileSource`, which exists to feed the
+    recogniser and is fixed at its rate. A dub is not being recognised.
+    """
+    import subprocess
+
+    import imageio_ffmpeg
+
+    # Store-Python virtualises paths given to subprocesses; resolve first.
+    exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
+    done = subprocess.run(
+        [exe, "-nostdin", "-loglevel", "error",
+         "-i", str(Path(media_path).resolve()),
+         "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(rate), "-"],
+        capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    raw = done.stdout[: len(done.stdout) // 2 * 2]
+    if not raw:
+        # The file was already probed and read once by now, so this is not the
+        # place to fail a job: a dub without the original under it is still a
+        # dub, and the caller pads what is missing.
+        return np.zeros(0, dtype=np.float32)
+    return pcm16_to_float32(raw)
