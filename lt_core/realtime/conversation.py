@@ -23,12 +23,56 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .. import languages
 from ..asr.transcriber import Transcriber
 from ..audio.types import AudioChunk
 from ..mt.translator import Translator
 from .session import BALANCED, LiveSession, LiveUpdate, Pace
 
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]]*\s*$")
+#: The same marks, found anywhere rather than only at the end, so a sentence
+#: that finished in the middle of a commit is read out now instead of waiting
+#: for a later commit to land exactly on a full stop.
+_SENTENCE_BREAK = re.compile(r"[.!?…。！？]['\"»”’)\]]*(?=\s|$)")
+_CLAUSE_BREAK = re.compile(r"[,;:—–、，；：](?=\s|$)")
+
+#: How many words one side may run on for without finishing a sentence before
+#: part of it is translated anyway. A turn normally ends at a handover, which
+#: releases it; this is for somebody who holds the floor and never stops.
+MAX_HELD_WORDS = 60
+
+def _last_break(text: str, pattern: re.Pattern[str] = _SENTENCE_BREAK) -> int:
+    """Where the last complete sentence in `text` ends, or 0 if none does."""
+    last = None
+    for match in pattern.finditer(text):
+        last = match
+    return last.end() if last else 0
+
+
+_SCRIPTS = {
+    "cyrillic": re.compile(r"[Ѐ-ӿ]"),
+    "latin": re.compile(r"[A-Za-zÀ-ÿ]"),
+    "han": re.compile(r"[぀-ヿ一-鿿]"),
+}
+
+#: How far one alphabet must outnumber the other before the text is called for
+#: it. Russian carries "31%", "API" and "$12,000" without becoming English.
+SCRIPT_MAJORITY = 3
+
+
+def _script_of(text: str) -> str | None:
+    """Which alphabet this text is written in, if one of them clearly wins."""
+    counts = {name: len(pattern.findall(text)) for name, pattern in _SCRIPTS.items()}
+    best = max(counts, key=lambda name: counts[name])
+    if not counts[best]:
+        return None
+    rest = sum(count for name, count in counts.items() if name != best)
+    return best if counts[best] >= max(1, SCRIPT_MAJORITY * rest) else None
+
+
+def _script_for_language(code: str) -> str | None:
+    """The alphabet a language is written in, read off its own sample text."""
+    return _script_of(languages.punctuation_sample(code))
 
 
 @dataclass
@@ -91,6 +135,11 @@ class ConversationSession:
         self._recent: np.ndarray | None = None
         self._previous_speaker: str | None = None
         self._unclear = 0
+        #: The last provisional translation and the text it was made from, so
+        #: a sentence that has not grown is not translated again.
+        self._preview: tuple[str, str] = ("", "")
+        self._left_script = _script_for_language(left.language)
+        self._right_script = _script_for_language(right.language)
 
     @property
     def stats(self):
@@ -148,7 +197,8 @@ class ConversationSession:
                 latency=update.latency,
             )]
 
-        route = self._route(heard) if heard else None
+        spoken = self._by_script(update.committed) or heard
+        route = self._route(spoken) if spoken else None
         if route is None:
             # A language neither participant speaks. Show it untranslated
             # rather than guessing a direction and translating into the wrong
@@ -164,7 +214,7 @@ class ConversationSession:
             return [resolved]
 
         speaker, listener = route
-        released, translation = self._hold(
+        released, translation, provisional = self._hold(
             update.committed, speaker.language, listener.language
         )
 
@@ -184,6 +234,7 @@ class ConversationSession:
             committed=update.committed,
             partial=update.partial,
             translation=translation,
+            partial_translation=provisional,
             speaker=speaker.label,
             audio_time=update.audio_time,
             latency=update.latency,
@@ -192,6 +243,31 @@ class ConversationSession:
         produced.append(resolved)
         self._history.extend(produced)
         return produced
+
+    def _by_script(self, text: str) -> str | None:
+        """Whose language this text is written in, when the two sides do not
+        share an alphabet.
+
+        Which window the audio fell in is a guess about who was speaking. Which
+        alphabet the words came out in is not a guess. Committed text trails
+        the audio by a few seconds, so at a handover the window has already
+        changed hands while the text still belongs to whoever was talking --
+        measured on a two-language dialogue, "four major features." was handed
+        to the Russian side and "За последние три месяца." to the English one,
+        and both came back from the translator unchanged, because asking it to
+        put English into English is asking for nothing.
+
+        Silent where the two sides share an alphabet, which is where the
+        question is genuinely hard and the audio is all there is.
+        """
+        if self._left_script is None or self._left_script == self._right_script:
+            return None
+        found = _script_of(text)
+        if found == self._left_script:
+            return self.left.language
+        if found == self._right_script:
+            return self.right.language
+        return None
 
     #: How much better the other language must score before the turn switches.
     #: Detection is decisive on clean speech -- measured at 0.99 and above on
@@ -240,12 +316,18 @@ class ConversationSession:
 
     def _hold(
         self, text: str, source: str, target: str
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str]:
         """Accumulate committed text; translate once a sentence is complete.
 
         A turn change also releases it: whatever the previous speaker left
         unfinished will never be finished, and holding it back would mean
         translating it into the wrong direction on the next turn.
+
+        Returns what the previous turn left, what has settled now, and a
+        provisional reading of the sentence still being spoken. The last of
+        those is what keeps the other person able to follow: asking only
+        whether the accumulation ends on a full stop made one measured turn
+        wait sixteen seconds to be translated at all.
         """
         pair = (source, target)
         released = ""
@@ -255,9 +337,44 @@ class ConversationSession:
         self._holding.append(text)
         self._holding_for = pair
         combined = " ".join(self._holding).strip()
-        if not _SENTENCE_END.search(combined):
-            return released, ""
-        return released, self._flush_holding()
+
+        cut = _last_break(combined)
+        if cut <= 0 and len(combined.split()) > MAX_HELD_WORDS:
+            cut = _last_break(combined, _CLAUSE_BREAK)
+        settled = ""
+        if cut > 0:
+            settled = self._say(combined[:cut].strip(), source, target)
+            combined = combined[cut:].strip()
+            self._holding = [combined] if combined else []
+            if not combined:
+                self._holding_for = None
+
+        return released, settled, self._provisional(combined, source, target)
+
+    def _provisional(self, text: str, source: str, target: str) -> str:
+        """The sentence still being spoken, translated as it stands.
+
+        Replaced on the next tick and superseded by the settled translation,
+        which is the same contract the original text already has. Held back
+        from the history, because provisional text is not a record of anything.
+        """
+        if not text:
+            self._preview = ("", "")
+            return ""
+        if text == self._preview[0]:
+            return self._preview[1]
+        answer = self._say(text, source, target)
+        self._preview = (text, answer)
+        return answer
+
+    def _say(self, text: str, source: str, target: str) -> str:
+        if not text:
+            return ""
+        try:
+            results, _ = self.translator.translate([text], source, target)
+        except Exception:  # noqa: BLE001 -- one turn, not the conversation
+            return ""
+        return results[0] if results else ""
 
     def _flush_holding(self) -> str:
         if not self._holding or self._holding_for is None:
@@ -266,15 +383,8 @@ class ConversationSession:
         source, target = self._holding_for
         self._holding = []
         self._holding_for = None
-        if not text:
-            return ""
-        try:
-            results, _ = self.translator.translate([text], source, target)
-        except Exception:
-            # One failed turn must not end the conversation; the original is
-            # on screen either way.
-            return ""
-        return results[0] if results else ""
+        self._preview = ("", "")
+        return self._say(text, source, target)
 
     def run(self, chunks: Iterator[AudioChunk]) -> Iterator[LiveUpdate]:
         for chunk in chunks:

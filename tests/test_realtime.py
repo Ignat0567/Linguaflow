@@ -394,30 +394,95 @@ def test_conversation_routes_each_side_to_the_other():
     assert session._route("de") is None
 
 
-def test_held_text_waits_for_a_finished_sentence():
-    """A fragment is what makes the model invent: "shipped" came back as
-    "отгруженные"."""
+def test_a_turn_is_routed_by_the_alphabet_it_came_out_in():
+    """Committed text trails the audio by seconds, so at a handover the window
+    has already changed hands while the words still belong to whoever was
+    talking. Measured on a two-language dialogue: "four major features." was
+    handed to the Russian side and "За последние три месяца." to the English
+    one, and the translator returned both unchanged -- asking it to put English
+    into English is asking for nothing."""
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("ru", "B")
+    session._left_script, session._right_script = "latin", "cyrillic"
+
+    assert session._by_script("four major features.") == "en"
+    assert session._by_script("За последние три месяца.") == "ru"
+
+
+def test_figures_and_borrowed_words_do_not_change_whose_turn_it_is():
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("ru", "B")
+    session._left_script, session._right_script = "latin", "cyrillic"
+
+    assert session._by_script("Снижение задержки на 31% через API") == "ru"
+    assert session._by_script("Reduced latency by 31%") == "en"
+
+
+def test_two_sides_sharing_an_alphabet_are_left_to_the_audio():
+    """English and German look alike on the page. There the window is all
+    there is, and guessing from the letters would be worse than not."""
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("de", "B")
+    session._left_script, session._right_script = "latin", "latin"
+
+    assert session._by_script("Guten Morgen") is None
+
+
+def test_a_sentence_finishing_mid_turn_is_translated_at_once():
+    """It used to ask whether everything held ended on a full stop, so a turn
+    that finished one and started another waited for the speaker to stop."""
+    session = _holding_session()
+    _released, settled, provisional = session._hold(
+        "We cut spending. Then we", "en", "ru"
+    )
+    assert settled == "[ru] We cut spending."
+    assert provisional == "[ru] Then we"
+
+
+def test_somebody_who_never_finishes_a_sentence_is_still_translated():
+    """A turn normally ends at a handover, which releases it. This is for
+    somebody who holds the floor and never stops."""
+    session = _holding_session()
+    settled = ""
+    for _ in range(20):
+        _released, settled, _provisional = session._hold(
+            "and then we did another thing, ", "en", "ru"
+        )
+        if settled:
+            break
+    assert settled.rstrip().endswith(","), settled
+
+
+def _holding_session():
+    """Just enough of a conversation to exercise how text is held."""
     session = ConversationSession.__new__(ConversationSession)
     session._holding = []
     session._holding_for = None
+    session._preview = ("", "")
     session.translator = _EchoTranslator()
+    return session
 
-    released, translation = session._hold("We cut", "en", "ru")
-    assert released == "" and translation == ""
-    released, translation = session._hold("spending sharply.", "en", "ru")
-    assert translation == "[ru] We cut spending sharply."
+
+def test_held_text_waits_for_a_finished_sentence():
+    """A fragment is what makes the model invent: "shipped" came back as
+    "отгруженные"."""
+    session = _holding_session()
+
+    released, settled, provisional = session._hold("We cut", "en", "ru")
+    assert released == "" and settled == ""
+    assert provisional == "[ru] We cut", "nothing was offered meanwhile"
+    released, settled, provisional = session._hold("spending sharply.", "en", "ru")
+    assert settled == "[ru] We cut spending sharply."
+    assert provisional == "", "the draft outlived the real thing"
 
 
 def test_a_turn_change_releases_the_unfinished_sentence():
     """It will never be finished, and holding it would translate it into the
     next speaker's direction."""
-    session = ConversationSession.__new__(ConversationSession)
-    session._holding = []
-    session._holding_for = None
-    session.translator = _EchoTranslator()
+    session = _holding_session()
 
     session._hold("An unfinished thought", "en", "ru")
-    released, _ = session._hold("Ответ.", "ru", "en")
+    released, _settled, _provisional = session._hold("Ответ.", "ru", "en")
     assert released == "[ru] An unfinished thought"
 
 
