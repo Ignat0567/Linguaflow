@@ -7,10 +7,12 @@ actually place: a language pair, a chip group, a clickable card, the nav.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QPixmap,
     QLinearGradient,
     QCursor,
     QFontMetrics,
@@ -262,32 +264,29 @@ class NavItem(glass.Hoverable):
 
 
 class Wordmark(QWidget):
-    """The name, top left, struck in gold.
+    """The name, top left: the supplied logotype where there is one.
 
-    No panel behind it: a surface would make it one more control on a screen
-    that already has six, and the name is not a control.
+    The lettering used to be drawn here -- a script face filled with a
+    metallic ramp, extruded and bevelled. That was an approximation of a
+    thing the designer had already made, so the made thing wins and the
+    drawing stays behind it as a fallback: a missing or unreadable file
+    leaves a wordmark rather than a gap.
 
-    What makes letters read as metal is not the colour but the ramp across
-    them -- a dark base, a bright band where the light catches, a shadowed
-    middle -- plus a body they are cut from. So the text is built once as a
-    path and then painted in layers, back to front: a soft shadow, the
-    extruded side of the letters, the polished face, a lit top edge, and the
-    dark line that separates the face from its own side.
+    The image is trimmed of its transparent margins before it ships, so its
+    height on screen is the height of the letters and not of whatever canvas
+    they were exported on.
     """
 
-    #: A script sits lower and smaller than a sans at the same pixel size --
-    #: most of its height is in the ascenders and the swashes -- so the number
-    #: is larger to arrive at the same presence on the screen.
+    #: How tall the logotype stands. The bar beside it is 60, and the name is
+    #: allowed to be the larger of the two.
+    HEIGHT = 74
+
+    #: The drawn fallback, in pixels of font size.
     SIZE = 58
-
-    #: How far the letters stand off the surface, in pixels of offset. Small:
-    #: past about four the lettering starts to read as a logo from 2004.
     DEPTH = 3
-
-    #: The shadow is drawn as a handful of offset copies rather than blurred.
-    #: A real blur of a 250-pixel strip costs more per repaint than the
-    #: difference is worth, and repaints happen on every theme change.
     SHADOW_STEPS = 5
+
+    SOURCE = Path(__file__).resolve().parent.parent / "assets" / "wordmark.png"
 
     def __init__(self, parent: QWidget | None = None, size: int = SIZE) -> None:
         super().__init__(parent)
@@ -296,16 +295,38 @@ class Wordmark(QWidget):
         self._font = theme.mark_font(size)
         metrics = QFontMetrics(self._font)
         self._baseline = metrics.ascent() + 4
-        # A slanted face overhangs its own advance width on both sides; the
-        # tail of the w and the swash of the L fall outside it.
         self._lead = 10.0
-        # Room for the descender of the g, for the extrusion and for the
-        # shadow under it: a band cut to the letters clips all three.
-        self.setFixedSize(
-            int(metrics.horizontalAdvance(self._text) + self._lead * 2 + self.DEPTH),
-            metrics.height() + self.DEPTH + 10,
-        )
+
+        self._logo = self._load()
+        if self._logo is not None:
+            self.setFixedSize(self._logo.width(), self._logo.height())
+        else:
+            self.setFixedSize(
+                int(metrics.horizontalAdvance(self._text) + self._lead * 2
+                    + self.DEPTH),
+                metrics.height() + self.DEPTH + 10,
+            )
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    def _load(self) -> QPixmap | None:
+        """The logotype at the height it will be drawn, or nothing.
+
+        Scaled once here rather than on every repaint: a 840-pixel image
+        resampled smoothly on each paint is work repeated for no gain, since
+        the size never changes.
+        """
+        if not self.SOURCE.exists():
+            return None
+        image = QPixmap(str(self.SOURCE))
+        if image.isNull():
+            return None
+        return image.scaledToHeight(
+            self.HEIGHT, Qt.SmoothTransformation
+        )
+
+    @property
+    def uses_logo(self) -> bool:
+        return self._logo is not None
 
     def sizeHint(self) -> QSize:  # noqa: N802
         """A widget that paints itself has to report its own size.
@@ -316,39 +337,43 @@ class Wordmark(QWidget):
         """
         return self.size()
 
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        if self._logo is not None:
+            painter.drawPixmap(0, 0, self._logo)
+            return
+        self._paint_lettering(painter)
+
+    # -- the fallback ----------------------------------------------------
     def _path(self) -> QPainterPath:
         path = QPainterPath()
         path.addText(self._lead, float(self._baseline), self._font, self._text)
         return path
 
-    def paintEvent(self, event) -> None:  # noqa: N802
-        painter = QPainter(self)
+    def _paint_lettering(self, painter: QPainter) -> None:
+        """Struck in gold by hand, for when the logotype is not there."""
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
         letters = self._path()
         top = letters.boundingRect().top()
         height = max(1.0, letters.boundingRect().height())
 
-        # 1. The shadow it casts, softened by stacking rather than blurring.
         painter.setPen(Qt.NoPen)
         for step in range(self.SHADOW_STEPS, 0, -1):
-            shade = QColor(0, 0, 0, 16)
-            painter.setBrush(shade)
+            painter.setBrush(QColor(0, 0, 0, 16))
             painter.drawPath(letters.translated(step * 0.7, step * 0.9))
 
-        # 2. The side of the letters, where they stand off the surface.
         painter.setBrush(theme.GOLD_EDGE)
         for step in range(self.DEPTH, 0, -1):
             painter.drawPath(letters.translated(step * 0.8, step * 0.8))
 
-        # 3. The polished face.
         ramp = QLinearGradient(0.0, top, 0.0, top + height)
         for position, colour in theme.gold_ramp():
             ramp.setColorAt(position, QColor(colour))
         painter.setBrush(ramp)
         painter.drawPath(letters)
 
-        # 4. The lit edge along the top, which is what a bevel actually is.
         painter.save()
         painter.setClipPath(letters)
         lit = QLinearGradient(0.0, top, 0.0, top + height * 0.22)
@@ -358,10 +383,7 @@ class Wordmark(QWidget):
         painter.drawPath(letters)
         painter.restore()
 
-        # 5. The line between the face and its own side.
         painter.setBrush(Qt.NoBrush)
-        # 0.8 rather than 1: a full pixel of outline swallows the hairline
-        # strokes a script is half made of.
         painter.setPen(QPen(theme.GOLD_EDGE, 0.8))
         painter.drawPath(letters)
 

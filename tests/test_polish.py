@@ -299,12 +299,15 @@ def test_the_light_theme_deepens_the_same_metal():
     assert sum(light) < sum(dark)
 
 
-def test_the_name_still_fits_its_own_shadow(window):
-    """The extrusion and the shadow fall outside the letters; a band cut to
-    the text clips both."""
+def test_the_drawn_name_fits_its_own_shadow(monkeypatch, tmp_path, app):
+    """Of the fallback, which is what draws: the extrusion and the shadow fall
+    outside the letters, so a band cut to the text clips both."""
     from PySide6.QtGui import QFontMetrics
 
-    mark = window._mark
+    from lt_ui.widgets import Wordmark
+
+    monkeypatch.setattr(Wordmark, "SOURCE", tmp_path / "absent.png")
+    mark = Wordmark()
     metrics = QFontMetrics(mark._font)
     assert mark.width() > metrics.horizontalAdvance(mark._text)
     assert mark.height() > metrics.height()
@@ -332,10 +335,45 @@ def test_the_fallback_chain_ends_somewhere_guaranteed():
 
 
 def test_the_wordmark_is_not_set_in_the_interface_face(window):
-    """It is the product's name, not a label."""
+    """The drawn fallback is the product's name, not a label."""
     from lt_ui import theme
 
     assert window._mark._font.family() != theme.FAMILY
+
+
+def test_the_supplied_logotype_is_used(window):
+    """It was drawn by hand here until the designer's own file arrived. The
+    made thing wins over the approximation of it."""
+    from lt_ui.widgets import Wordmark
+
+    assert Wordmark.SOURCE.exists(), "логотип должен лежать в assets"
+    assert window._mark.uses_logo
+
+
+def test_the_logotype_is_trimmed_to_its_letters():
+    """Its height on screen must be the height of the lettering, not of the
+    canvas it was exported on."""
+    import numpy as np
+    from PySide6.QtGui import QImage
+
+    from lt_ui.widgets import Wordmark
+
+    image = QImage(str(Wordmark.SOURCE)).convertToFormat(QImage.Format_ARGB32)
+    height, width = image.height(), image.width()
+    raw = np.frombuffer(image.constBits(), dtype=np.uint8)
+    alpha = raw.reshape(height, image.bytesPerLine() // 4, 4)[:, :width, 3]
+    assert alpha[0].max() > 12 or alpha[-1].max() > 12, "сверху или снизу пусто"
+    assert alpha[:, 0].max() > 12 or alpha[:, -1].max() > 12, "по бокам пусто"
+
+
+def test_a_missing_logotype_leaves_a_wordmark_not_a_gap(window, monkeypatch, tmp_path):
+    """A file that is absent or unreadable must not cost the name."""
+    from lt_ui.widgets import Wordmark
+
+    monkeypatch.setattr(Wordmark, "SOURCE", tmp_path / "absent.png")
+    mark = Wordmark()
+    assert not mark.uses_logo
+    assert mark.width() > 0 and mark.height() > 0
 
 
 # -- the busy screen is not a dead end ----------------------------------
