@@ -209,6 +209,14 @@ LLM_SERVICES: dict[str, LlmService] = {
 # limits that Groq's free tier enforces strictly.
 DEFAULT_LINES_PER_REQUEST = 40
 
+#: Shortening asks for fewer lines at a time than translating does.
+#:
+#: A rewrite is a longer answer than a translation -- the model restates the
+#: sentence -- and a large model on a free tier takes seconds per line. Forty
+#: at once ran past a five-minute timeout on a real recording and the batch
+#: was lost. Twenty keeps a request inside it.
+SHORTEN_LINES_PER_REQUEST = 20
+
 
 class OpenAICompatibleTranslator:
     """Translation through a chat model, over the OpenAI protocol.
@@ -315,7 +323,11 @@ class OpenAICompatibleTranslator:
 
     # -- shortening ------------------------------------------------------
     def shorten(self, lines: list[tuple[str, int]], language: str) -> list[str]:
-        """Rewrite each line to fit its character budget.
+        """Rewrite the given lines to fit their character budgets.
+
+        One request for whatever it is handed: the caller decides how much to
+        send at a time, because the caller is the one that has to survive a
+        request that does not come back.
 
         The rule-based shortener removes filler, and machine-translated prose
         has almost none: measured on a real recording it could touch 19 lines
@@ -329,11 +341,7 @@ class OpenAICompatibleTranslator:
         """
         if not lines:
             return []
-        results: list[str] = []
-        for start in range(0, len(lines), self.lines_per_request):
-            chunk = lines[start:start + self.lines_per_request]
-            results.extend(self._shorten_chunk(chunk, language))
-        return results
+        return self._shorten_chunk(list(lines), language)
 
     def _shorten_chunk(self, lines: list[tuple[str, int]], language: str) -> list[str]:
         numbered = "\n".join(

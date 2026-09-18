@@ -272,3 +272,80 @@ def test_a_hosted_service_is_never_reported_as_offline():
     for service in ("openai", "groq", "nvidia"):
         provider = build_cloud_provider(service=service, api_key="test")
         assert not provider.is_offline, service
+
+
+# -- a slow service costs its own batch, not the recording ---------------
+
+class FlakyProvider:
+    """Answers the first request and times out on the rest."""
+
+    shorten_lines_per_request = 2
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def shorten(self, lines, language):
+        self.calls += 1
+        if self.calls > 1:
+            raise TimeoutError("the read operation timed out")
+        return ["Коротко." for _ in lines]
+
+
+def many_long_cues(count: int = 6):
+    """Without a negation in it: the safety check would reject a rewrite that
+    dropped one, and this is about what happens to a batch, not to a line."""
+    return tuple(
+        cue(i + 1, i * 2.0, i * 2.0 + 1.2,
+            "Этот довольно длинный текст занимает гораздо больше времени")
+        for i in range(count)
+    )
+
+
+def test_a_failed_batch_does_not_discard_the_others():
+    """One request timing out used to throw away the whole pass: a recording
+    whose 200 over-long lines had been rewritten came out with none of them,
+    because the fifth request was slow."""
+    provider = FlakyProvider()
+    cues = many_long_cues()
+    out, _records, report = shorten_cues(
+        cues, "ru", 17.8, provider, headroom=1.18
+    )
+    assert report.accepted == 2, "первая пачка должна была уцелеть"
+    assert report.lost == 4
+    assert out[0].flat_text == "Коротко."
+    assert out[-1].flat_text == cues[-1].flat_text
+
+
+def test_the_report_says_how_many_were_lost():
+    provider = FlakyProvider()
+    _out, _records, report = shorten_cues(
+        many_long_cues(), "ru", 17.8, provider, headroom=1.18
+    )
+    summary = report.summary()
+    assert "сократила 2" in summary
+    assert "без ответа" in summary
+
+
+def test_everything_failing_still_reads_as_a_failure():
+    class Broken:
+        shorten_lines_per_request = 2
+
+        def shorten(self, lines, language):
+            raise RuntimeError("сервис недоступен")
+
+    _out, _records, report = shorten_cues(
+        many_long_cues(), "ru", 17.8, Broken(), headroom=1.18
+    )
+    assert report.accepted == 0
+    assert "не выполнено" in report.summary()
+
+
+def test_shortening_asks_for_fewer_lines_than_translating():
+    """A rewrite is a longer answer than a translation, and a large model on a
+    free tier takes seconds a line."""
+    from lt_core.mt.cloud import (
+        DEFAULT_LINES_PER_REQUEST,
+        SHORTEN_LINES_PER_REQUEST,
+    )
+
+    assert SHORTEN_LINES_PER_REQUEST < DEFAULT_LINES_PER_REQUEST

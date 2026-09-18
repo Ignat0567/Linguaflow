@@ -33,6 +33,8 @@ class ShortenReport:
     accepted: int = 0
     rejected_unsafe: int = 0
     rejected_longer: int = 0
+    #: Lines in requests that never came back. They keep their original text.
+    lost: int = 0
     failed: str = ""
 
     @property
@@ -40,7 +42,7 @@ class ShortenReport:
         return self.asked > 0
 
     def summary(self) -> str:
-        if self.failed:
+        if self.failed and not self.accepted:
             return f"Сокращение моделью не выполнено: {self.failed}"
         if not self.asked:
             return ""
@@ -48,6 +50,8 @@ class ShortenReport:
         refused = self.rejected_unsafe + self.rejected_longer
         if refused:
             text += f", {refused} отклонено проверкой"
+        if self.lost:
+            text += f", {self.lost} осталось без ответа сервиса"
         return text
 
 
@@ -93,12 +97,30 @@ def shorten_cues(
         return cues, records, report
 
     report.asked = len(pending)
-    try:
-        answers = provider.shorten([(text, budget) for _, text, budget in pending],
-                                   language)
-    except Exception as error:  # noqa: BLE001 -- the dub proceeds unshortened
-        report.failed = str(error)
-        return cues, records, report
+
+    # Asked for in batches, and a batch that fails costs only itself.
+    #
+    # It used to cost everything: one request timing out threw away the whole
+    # pass, and a recording whose 200 over-long lines had been rewritten came
+    # out with none of them, because the fifth request was slow. Partial work
+    # is worth keeping -- the lines that came back are shortened, the rest
+    # stay as they were, and the report says how many.
+    from .cloud import SHORTEN_LINES_PER_REQUEST
+
+    size = max(1, int(getattr(provider, "shorten_lines_per_request",
+                              SHORTEN_LINES_PER_REQUEST)))
+    answers: list[str] = []
+    for start in range(0, len(pending), size):
+        chunk = pending[start:start + size]
+        try:
+            answers.extend(
+                provider.shorten([(text, budget) for _, text, budget in chunk],
+                                 language)
+            )
+        except Exception as error:  # noqa: BLE001 -- this batch, not the run
+            report.failed = str(error)
+            report.lost += len(chunk)
+            answers.extend(text for _index, text, _budget in chunk)
 
     for (index, original, budget), answer in zip(pending, answers):
         candidate = (answer or "").strip()
