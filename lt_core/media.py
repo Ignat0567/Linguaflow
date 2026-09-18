@@ -12,6 +12,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .messages import say
+
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _URL = re.compile(r"^https?://", re.IGNORECASE)
 
@@ -55,7 +57,7 @@ def probe(path: Path | str) -> MediaInfo:
     """Read duration and stream layout without decoding the whole file."""
     target = Path(path).resolve()
     if not target.exists():
-        raise MediaError(f"Файл не найден: {target}")
+        raise MediaError(say("Файл не найден: {path}", path=str(target)))
 
     probe_exe = _ffprobe_exe()
     if probe_exe:
@@ -120,7 +122,8 @@ def _probe_with_ffmpeg(target: Path) -> MediaInfo:
 
     if duration == 0.0 and not has_audio:
         raise MediaError(
-            f"Не удалось прочитать «{target.name}» — формат не распознан.",
+            say("Не удалось прочитать «{name}» — формат не распознан.",
+                name=target.name),
             detail=output.strip()[-500:],
         )
     return MediaInfo(path=target, duration=duration, title=target.stem,

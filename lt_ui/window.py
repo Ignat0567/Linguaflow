@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
+from lt_core import messages
+
 from . import i18n
 from . import theme
 from .backdrop import Backdrop
@@ -69,6 +71,9 @@ class Window(QWidget):
         theme.set_accent(self.store.settings.accent)
         theme.set_mode(self.store.settings.appearance)
         i18n.set_language(self.store.settings.ui_language)
+        # The core speaks its own Russian unless something tells it otherwise.
+        # This is that something; see lt_core.messages for why it is a seam.
+        messages.install(i18n.t)
 
         self._backdrop = Backdrop()
         backdrop_module.install(self._backdrop)
@@ -139,6 +144,7 @@ class Window(QWidget):
 
     def apply_language(self) -> None:
         i18n.set_language(self.store.settings.ui_language)
+        messages.install(i18n.t)
         current = self.current_screen
         if self._shell is not None:
             self._frame.removeWidget(self._shell)

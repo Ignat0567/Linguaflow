@@ -291,6 +291,70 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Ordner für fertige Dateien wählen",
     ),
 
+    # -- what the core reports while a job runs ------------------------
+    "Открываю источник": ("Opening the source", "Quelle wird geöffnet"),
+    "Распознаю ({minutes} мин)": (
+        "Recognising ({minutes} min)", "Erkennung läuft ({minutes} Min.)",
+    ),
+    "Собираю субтитры": ("Building subtitles", "Untertitel werden gebaut"),
+    "Язык оригинала совпал с языком перевода": (
+        "The source language is the target language",
+        "Ausgangs- und Zielsprache sind gleich",
+    ),
+    "Перевожу на {language}": (
+        "Translating into {language}", "Übersetzung nach {language}",
+    ),
+    "Сокращаю перевод под тайминг": (
+        "Shortening the translation to fit",
+        "Übersetzung wird auf die Zeit gekürzt",
+    ),
+    "Сокращаю остальное моделью": (
+        "The model shortens the rest", "Den Rest kürzt das Modell",
+    ),
+    "Озвучиваю перевод": (
+        "Speaking the translation", "Übersetzung wird gesprochen",
+    ),
+    "Озвучиваю перевод, голоса по говорящему": (
+        "Speaking the translation, a voice per speaker",
+        "Übersetzung wird gesprochen, eine Stimme je Sprecher",
+    ),
+    "Собираю видео с переводом": (
+        "Assembling the translated video",
+        "Video mit Übersetzung wird erstellt",
+    ),
+    "Видео собрать не удалось: {reason}": (
+        "The video could not be assembled: {reason}",
+        "Das Video konnte nicht erstellt werden: {reason}",
+    ),
+
+    # -- what the core reports when a job cannot go on ------------------
+    "Файл не найден: {path}": (
+        "File not found: {path}", "Datei nicht gefunden: {path}",
+    ),
+    "Не удалось прочитать «{name}» — формат не распознан.": (
+        "Could not read “{name}” — the format was not recognised.",
+        "„{name}“ konnte nicht gelesen werden — Format nicht erkannt.",
+    ),
+    "Сервис отклонил ключ доступа. Проверьте его в настройках.": (
+        "The service rejected the key. Check it in Settings.",
+        "Der Dienst hat den Schlüssel abgelehnt. Prüfen Sie ihn in den "
+        "Einstellungen.",
+    ),
+    "Превышен лимит запросов к сервису перевода. Подождите или переключитесь "
+    "в офлайн-режим.": (
+        "The translation service's rate limit was reached. Wait, or switch to "
+        "offline mode.",
+        "Das Anfragelimit des Übersetzungsdienstes ist erreicht. Warten Sie "
+        "oder wechseln Sie in den Offline-Modus.",
+    ),
+    "Не удалось связаться с сервисом перевода. Проверьте интернет или "
+    "переключитесь в офлайн-режим.": (
+        "Could not reach the translation service. Check the connection, or "
+        "switch to offline mode.",
+        "Der Übersetzungsdienst ist nicht erreichbar. Prüfen Sie die "
+        "Verbindung oder wechseln Sie in den Offline-Modus.",
+    ),
+
     # -- overlay -------------------------------------------------------
     "Linguaflow — субтитры": ("Linguaflow — subtitles", "Linguaflow — Untertitel"),
     "Скрыто с демонстрации": ("Hidden from sharing", "Vor Freigabe verborgen"),

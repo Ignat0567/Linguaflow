@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from .. import languages
 from .types import TranslationError
+from ..messages import say
 
 # DeepL's own codes, and the English names an LLM prompt needs. Both are
 # properties of a language, so both live with it.
@@ -53,20 +54,20 @@ def _post(url: str, payload: dict, headers: dict, timeout: float) -> dict:
         body = exc.read().decode("utf-8", "replace")[:400]
         if exc.code in (401, 403):
             raise TranslationError(
-                "Сервис отклонил ключ доступа. Проверьте его в настройках.", body
+                say("Сервис отклонил ключ доступа. Проверьте его в настройках."), body
             ) from exc
         if exc.code == 429:
             raise TranslationError(
-                "Превышен лимит запросов к сервису перевода. "
-                "Подождите или переключитесь в офлайн-режим.", body
+                say("Превышен лимит запросов к сервису перевода. "
+                    "Подождите или переключитесь в офлайн-режим."), body
             ) from exc
         raise TranslationError(
             f"Сервис перевода ответил ошибкой {exc.code}.", body
         ) from exc
     except urllib.error.URLError as exc:
         raise TranslationError(
-            "Не удалось связаться с сервисом перевода. "
-            "Проверьте интернет или переключитесь в офлайн-режим.", str(exc)
+            say("Не удалось связаться с сервисом перевода. "
+                "Проверьте интернет или переключитесь в офлайн-режим."), str(exc)
         ) from exc
 
 

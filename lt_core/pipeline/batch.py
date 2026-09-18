@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import languages
+from ..messages import say as tell
 from ..asr.transcriber import Transcriber, TranscribeOptions
 from ..asr.types import Transcript
 from ..media import MediaInfo, resolve
@@ -126,14 +127,14 @@ def transcribe_file(
         )
 
     scratch = Path(download_dir) if download_dir else Path.cwd() / "downloads"
-    stage("Открываю источник")
+    stage(tell("Открываю источник"))
     # A dubbed copy needs the picture, and for a link that means downloading
     # it. Asked for, it is fetched; not asked for, only the audio comes down.
     media = resolve(str(target), scratch, want_video=bool(voice and dub_video))
     if not media.has_audio:
         raise ValueError(f"В «{media.path.name}» нет звуковой дорожки.")
 
-    stage(f"Распознаю ({media.duration / 60:.1f} мин)")
+    stage(tell("Распознаю ({minutes} мин)", minutes=f"{media.duration / 60:.1f}"))
     transcript = transcriber.transcribe(
         media.path,
         options=options,
@@ -146,7 +147,7 @@ def transcribe_file(
     if on_progress is not None and media.duration:
         on_progress(media.duration, media.duration)
 
-    stage("Собираю субтитры")
+    stage(tell("Собираю субтитры"))
     cues = build_cues(transcript, style)
 
     destination = Path(output_dir) if output_dir else media.path.parent
@@ -162,9 +163,9 @@ def transcribe_file(
         # Auto-detect can land on the language the user asked to translate
         # into. Translating a language into itself is a hard error downstream,
         # and the original subtitles are already the right file.
-        stage("Язык оригинала совпал с языком перевода")
+        stage(tell("Язык оригинала совпал с языком перевода"))
     elif translator is not None and target_language:
-        stage(f"Перевожу на {languages.describe(target_language)}")
+        stage(tell("Перевожу на {language}", language=languages.describe(target_language)))
         # Whole sentences, not cues. A cue is cut for reading speed and is
         # often a fragment, and a fragment is what makes this model invent.
         groups = group_into_sentences(cues)
@@ -212,7 +213,7 @@ def transcribe_file(
             # what is on screen are the same sentence. The budget comes from
             # the voice that will actually speak, whose pace is measured
             # rather than assumed.
-            stage("Сокращаю перевод под тайминг")
+            stage(tell("Сокращаю перевод под тайминг"))
             pace, overhead = bank.for_gender().pace()
 
             def measure(text: str, _bank=bank) -> float:
@@ -238,7 +239,7 @@ def transcribe_file(
                 if can_shorten(translator.provider):
                     rewriter = translator.provider
             if rewriter is not None and can_shorten(rewriter):
-                stage("Сокращаю остальное моделью")
+                stage(tell("Сокращаю остальное моделью"))
                 translated_cues, condensed, shorten_report = shorten_cues(
                     translated_cues, target_language, pace, rewriter,
                     headroom=SPEED_HEADROOM, overhead=overhead,
@@ -247,7 +248,8 @@ def transcribe_file(
                 if shorten_report.summary():
                     stage(shorten_report.summary())
 
-        stage("Озвучиваю перевод" + (" (голоса по говорящему)" if pair else ""))
+        stage(tell("Озвучиваю перевод, голоса по говорящему") if pair
+              else tell("Озвучиваю перевод"))
         dub = mix(media.path, translated_cues, bank, media.duration,
                   keep_original=keep_original_audio, match_voices=pair)
         outputs["audio"] = write_wav(
@@ -260,7 +262,7 @@ def transcribe_file(
         if dub_video and media.has_video:
             from ..video.mux import MuxError, replace_audio
 
-            stage("Собираю видео с переводом")
+            stage(tell("Собираю видео с переводом"))
             try:
                 muxed = replace_audio(
                     media.path,
@@ -276,7 +278,7 @@ def transcribe_file(
                 # The soundtrack is already written and useful on its own; a
                 # container that would not take it is worth reporting, not
                 # worth losing the job over.
-                stage(f"Видео собрать не удалось: {exc}")
+                stage(tell("Видео собрать не удалось: {reason}", reason=str(exc)))
             else:
                 outputs["video"] = muxed.path
 
