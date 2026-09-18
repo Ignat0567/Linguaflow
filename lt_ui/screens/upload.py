@@ -51,9 +51,10 @@ class UploadScreen(QWidget):
         self._stack = QStackedWidget(self)
         self._stack.setStyleSheet("background: transparent;")
         self._idle = _Idle(self)
+        self._ready = _Ready(self)
         self._busy = _Busy(self)
         self._done = _Done(self)
-        for page in (self._idle, self._busy, self._done):
+        for page in (self._idle, self._ready, self._busy, self._done):
             self._stack.addWidget(page)
 
         root = QVBoxLayout(self)
@@ -71,9 +72,15 @@ class UploadScreen(QWidget):
 
     def refresh(self) -> None:
         self._idle.sync()
+        self._ready.sync()
 
     def _sync_pair(self) -> None:
-        source, target = self._idle.pair.pair()
+        # Two pages carry a language pair, and the one that changed is the one
+        # to read. Reading `_idle` from both meant a change made on the
+        # confirmation screen was thrown away without a sign.
+        page = self._stack.currentWidget()
+        pair = getattr(page, "pair", None) or self._idle.pair
+        source, target = pair.pair()
         settings = self.app.store.settings
         settings.detect_language = source == "auto"
         if source != "auto":
@@ -87,10 +94,18 @@ class UploadScreen(QWidget):
             self._busy.set_stage(_("Файл не найден: {name}", name=target.name))
             self._stack.setCurrentWidget(self._busy)
             return
+        # Chosen, not started. `start` is what begins the work.
         self._path = target
+        self._ready.show_file(target)
+        self._stack.setCurrentWidget(self._ready)
+
+    def start(self) -> None:
+        """Begin the run the user has now asked for."""
+        if self._path is None:
+            return
         self._pending = True
         self._job_id = new_id()
-        self._busy.reset(target.name)
+        self._busy.reset(self._path.name)
         self._stack.setCurrentWidget(self._busy)
         self.app.engine.prepare(self.app.store.settings)
 
@@ -237,6 +252,100 @@ class _Dropzone(glass.GlassPanel):
         )
         if path:
             self.screen.open_path(path)
+
+
+class _Ready(QWidget):
+    """The file is chosen; nothing has started yet.
+
+    Starting the moment a file is dropped takes the decision away from the
+    person who dropped it -- and the run is minutes long, loads models and
+    may send lines to a service. The pair and the settings can still be
+    changed on this screen, which is the point of stopping here.
+    """
+
+    def __init__(self, screen: UploadScreen) -> None:
+        super().__init__()
+        self.screen = screen
+        clear_fill(self)
+
+        self.pair = LanguagePair(self, allow_auto=True)
+        self.pair.changed.connect(screen._sync_pair)
+        captions = QHBoxLayout()
+        captions.setContentsMargins(4, 0, 4, 0)
+        captions.addWidget(glass.eyebrow(_("Исходный язык")))
+        captions.addStretch()
+        captions.addWidget(glass.eyebrow(_("Перевод на")))
+
+        panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
+        panel.setFixedWidth(560)
+        inner = QVBoxLayout(panel)
+        inner.setContentsMargins(36, 32, 36, 32)
+        inner.setSpacing(0)
+        inner.setAlignment(Qt.AlignCenter)
+
+        self._name = glass.label("", 22, 700, tracking=-1, wrap=True)
+        self._name.setAlignment(Qt.AlignCenter)
+        self._meta = glass.label("", 13, 400, theme.TERTIARY)
+        self._meta.setAlignment(Qt.AlignCenter)
+        start = glass.GlassButton(_("Начать перевод"), panel, primary=True,
+                                  height=42, size=14)
+        start.clicked.connect(screen.start)
+        another = glass.TextLink(_("Другой файл"), panel, size=13)
+        another.clicked.connect(screen.reset)
+
+        inner.addWidget(self._name)
+        inner.addSpacing(8)
+        inner.addWidget(self._meta)
+        inner.addSpacing(26)
+        inner.addWidget(start, 0, Qt.AlignHCenter)
+        inner.addSpacing(14)
+        inner.addWidget(another, 0, Qt.AlignHCenter)
+
+        column = QVBoxLayout(self)
+        column.setAlignment(Qt.AlignCenter)
+        column.setSpacing(0)
+        pair_wrap = QWidget()
+        clear_fill(pair_wrap)
+        pair_wrap.setFixedWidth(560)
+        pair_layout = QVBoxLayout(pair_wrap)
+        pair_layout.setContentsMargins(0, 0, 0, 0)
+        pair_layout.setSpacing(8)
+        pair_layout.addLayout(captions)
+        pair_layout.addWidget(self.pair)
+        column.addWidget(pair_wrap)
+        column.addSpacing(18)
+        column.addWidget(panel, 0, Qt.AlignHCenter)
+
+    def show_file(self, path: Path) -> None:
+        self._name.setText(path.name)
+        self._meta.setText(self._describe(path))
+        self.sync()
+
+    @staticmethod
+    def _describe(path: Path) -> str:
+        """Length where it can be read cheaply, size where it cannot.
+
+        A link has nothing to read until it has been fetched, and fetching it
+        to fill in a caption before the user has pressed anything would be
+        exactly the eagerness this screen exists to stop.
+        """
+        try:
+            from lt_core.media import probe
+
+            info = probe(path)
+            if info.duration:
+                return format_clock(info.duration)
+        except Exception:  # noqa: BLE001 -- a caption is not worth an error
+            pass
+        try:
+            return f"{path.stat().st_size / (1024 * 1024):.1f} МБ"
+        except OSError:
+            return ""
+
+    def sync(self) -> None:
+        settings = self.screen.app.store.settings
+        source = "auto" if settings.detect_language else settings.from_lang
+        self.pair.set_pair(source, settings.to_lang)
 
 
 class _Busy(QWidget):

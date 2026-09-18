@@ -272,6 +272,18 @@ class Store:
         self.save_history()
         return entry
 
+    def clear_history(self) -> int:
+        """Forget the list of past jobs; the files themselves are untouched.
+
+        Deliberately: the entries name folders the user may still want, and a
+        button in a list is not where someone expects gigabytes to be deleted
+        from disk.
+        """
+        removed = len(self.entries)
+        self.entries = []
+        self.save_history()
+        return removed
+
     def recent(self, limit: int = 3) -> list[HistoryEntry]:
         return self.entries[:limit]
 

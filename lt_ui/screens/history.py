@@ -26,8 +26,24 @@ class HistoryScreen(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(8, 0, 8, 8)
         column.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        self._clear = glass.TextLink(_("Очистить историю"), self, size=13)
+        self._clear.clicked.connect(self._on_clear)
+        self._confirming = False
+        header = QHBoxLayout()
+        header.setContentsMargins(4, 0, 4, 0)
+        header.addStretch()
+        header.addWidget(self._clear)
+        self._header = QWidget()
+        clear_fill(self._header)
+        # The stretch beside it only pushes if the row is as wide as the
+        # list it sits over.
+        self._header.setFixedWidth(700)
+        self._header.setLayout(header)
+
         column.addWidget(title)
-        column.addSpacing(28)
+        column.addSpacing(20)
+        column.addWidget(self._header, 0, Qt.AlignHCenter)
+        column.addSpacing(8)
         wrap = QWidget()
         clear_fill(wrap)
         wrap.setMaximumWidth(700)
@@ -42,6 +58,8 @@ class HistoryScreen(QWidget):
             if widget is not None:
                 widget.deleteLater()
         entries = self.app.store.entries
+        self._reset_clear()
+        self._header.setVisible(bool(entries))
         if not entries:
             empty = glass.label(_("Пока нет переводов."), 14, 400, theme.MUTED)
             empty.setAlignment(Qt.AlignCenter)
@@ -49,6 +67,32 @@ class HistoryScreen(QWidget):
             return
         for entry in entries:
             self._list.addWidget(_Row(entry))
+
+
+    # -- clearing the list -----------------------------------------------
+    def _reset_clear(self) -> None:
+        self._confirming = False
+        self._clear.setText(_("Очистить историю"))
+
+    def _on_clear(self) -> None:
+        """Asks once, in place, rather than opening a dialog.
+
+        A confirmation box in this window would be the one unstyled thing in
+        it, and the action is small: the list goes, the files stay.
+        """
+        if not self._confirming:
+            self._confirming = True
+            self._clear.setText(_("Очистить? Файлы останутся — нажмите ещё раз"))
+            return
+        self.app.store.clear_history()
+        self._reset_clear()
+        self.app.history_changed()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Leaving the screen half-way through a confirmation and coming back
+        # to a primed button would be a trap.
+        self._reset_clear()
+        super().hideEvent(event)
 
 
 class _Row(glass.GlassPanel):
@@ -71,7 +115,9 @@ class _Row(glass.GlassPanel):
         texts.addWidget(meta)
         row.addLayout(texts, 1)
         if entry.folder and Path(entry.folder).exists():
-            link = glass.TextLink(_("Скачать  ↓"), self, size=12)
+            # It opens the folder; it never downloaded anything. A label that
+            # describes a different action is worse than no label.
+            link = glass.TextLink(_("Открыть папку"), self, size=12)
             link.clicked.connect(
                 lambda: QDesktopServices.openUrl(
                     QUrl.fromLocalFile(entry.folder)

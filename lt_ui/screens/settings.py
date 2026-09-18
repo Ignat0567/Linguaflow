@@ -131,7 +131,9 @@ class SettingsScreen(QWidget):
         key_row.addWidget(self._check)
         self._key_wrap = QWidget()
         clear_fill(self._key_wrap)
-        self._key_wrap.setMinimumHeight(_ROW_HEIGHT)
+        # The field is 34 high and its border is drawn on the edge; a row
+        # of exactly 34 clips the bottom line off. The slack is the fix.
+        self._key_wrap.setMinimumHeight(_ROW_HEIGHT + 8)
         self._key_wrap.setLayout(key_row)
         voice.body.addWidget(self._key_wrap)
         self._key_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
@@ -146,6 +148,8 @@ class SettingsScreen(QWidget):
         ), fmt)
         self._format.changed.connect(self._sync_format)
         fmt.body.addWidget(self._format)
+        self._format_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
+        fmt.body.addWidget(self._format_note)
 
         where = SettingsGroup(_("Где выполняется перевод"))
         self._mode = ChipGroup((
@@ -316,6 +320,7 @@ class SettingsScreen(QWidget):
         self._show_key()
         self._show_folder()
         self._format.set_value(settings.sub_format)
+        self._show_format()
         self._mode.set_value(settings.translation_mode)
         self._service.set_value(settings.online_service)
         self._service.setVisible(settings.translation_mode == TranslationMode.ONLINE)
@@ -353,6 +358,7 @@ class SettingsScreen(QWidget):
     def _sync_format(self, value: str) -> None:
         self.app.store.settings.sub_format = value
         self._save()
+        self._show_format()
 
     def _sync_mode(self, value: str) -> None:
         self.app.store.settings.translation_mode = value
@@ -435,6 +441,7 @@ class SettingsScreen(QWidget):
             return
         self.app.store.settings.output_dir = chosen
         self.app.store.save_settings()
+        self._show_format()
         self._show_folder()
 
     def _reset_folder(self) -> None:
@@ -456,6 +463,22 @@ class SettingsScreen(QWidget):
         self.app.store.settings.match_voices = on
         self.app.store.save_settings()
         self._update_voice_note()
+
+    def _show_format(self) -> None:
+        """Say what the chosen format is for.
+
+        Three acronyms with nothing to distinguish them is a guess, and the
+        choice decides whether the file opens in a player, in a browser or in
+        a text editor.
+        """
+        self._format_note.setText({
+            "srt": _("SRT — субтитры с таймингом. Понимают плееры, YouTube и "
+                     "монтажные программы. Обычный выбор."),
+            "vtt": _("VTT — то же самое для веба: HTML5-видео и браузерные "
+                     "плееры."),
+            "txt": _("TXT — только текст, без времени. Для чтения и "
+                     "копирования, не для показа поверх видео."),
+        }.get(self.app.store.settings.sub_format, ""))
 
     def _sync_shortener(self, service: str) -> None:
         self.app.store.settings.shorten_with = service

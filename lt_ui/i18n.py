@@ -94,7 +94,12 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     # -- history -------------------------------------------------------
     "История переводов": ("Translation history", "Übersetzungsverlauf"),
     "Пока нет переводов.": ("No translations yet.", "Noch keine Übersetzungen."),
-    "Скачать  ↓": ("Open  ↓", "Öffnen  ↓"),
+    "Открыть папку": ("Open the folder", "Ordner öffnen"),
+    "Очистить историю": ("Clear the history", "Verlauf leeren"),
+    "Очистить? Файлы останутся — нажмите ещё раз": (
+        "Clear it? The files stay — press again",
+        "Wirklich leeren? Die Dateien bleiben — nochmal drücken",
+    ),
 
     # -- realtime ------------------------------------------------------
     "Субтитры": ("Subtitles", "Untertitel"),
@@ -134,6 +139,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Начать перевод": ("Start translating", "Übersetzung starten"),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",
         "… und {count} weitere Untertitel in den gespeicherten Dateien",
@@ -199,6 +205,24 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Получить: {where}": ("Get one: {where}", "Erhalten: {where}"),
     "Формат субтитров": ("Subtitle format", "Untertitelformat"),
+    "SRT — субтитры с таймингом. Понимают плееры, YouTube и монтажные "
+    "программы. Обычный выбор.": (
+        "SRT — subtitles with timings. Players, YouTube and editing software "
+        "all read it. The usual choice.",
+        "SRT — Untertitel mit Zeiten. Player, YouTube und Schnittprogramme "
+        "lesen es. Die übliche Wahl.",
+    ),
+    "VTT — то же самое для веба: HTML5-видео и браузерные плееры.": (
+        "VTT — the same thing for the web: HTML5 video and browser players.",
+        "VTT — dasselbe fürs Web: HTML5-Video und Browser-Player.",
+    ),
+    "TXT — только текст, без времени. Для чтения и копирования, не для показа "
+    "поверх видео.": (
+        "TXT — text only, no timings. For reading and copying, not for showing "
+        "over a video.",
+        "TXT — nur Text, ohne Zeiten. Zum Lesen und Kopieren, nicht zum "
+        "Einblenden über einem Video.",
+    ),
     "Где выполняется перевод": (
         "Where translating happens", "Wo übersetzt wird",
     ),
