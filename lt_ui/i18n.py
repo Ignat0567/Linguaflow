@@ -139,6 +139,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "ОК": ("OK", "OK"),
     "Начать перевод": ("Start translating", "Übersetzung starten"),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",

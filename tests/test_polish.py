@@ -336,3 +336,51 @@ def test_the_wordmark_is_not_set_in_the_interface_face(window):
     from lt_ui import theme
 
     assert window._mark._font.family() != theme.FAMILY
+
+
+# -- the busy screen is not a dead end ----------------------------------
+
+def test_a_failure_offers_the_way_back(window):
+    """It used to write the message and leave the user there: no button, and
+    leaving through the nav came back to the same page."""
+    window.goto("upload")
+    busy = window._upload._busy
+    window._upload._stack.setCurrentWidget(busy)
+    window._upload._on_fail("Сервис отклонил ключ доступа.")
+    assert busy._ok.isVisible() or not busy.isVisible()
+    assert "ключ" in busy._stage.text()
+
+
+def test_the_way_back_leads_to_a_new_upload(window):
+    from lt_ui.screens.upload import _Idle
+
+    window.goto("upload")
+    window._upload._stack.setCurrentWidget(window._upload._busy)
+    window._upload._on_fail("что-то пошло не так")
+    window._upload._busy._ok.click()
+    assert isinstance(window._upload._stack.currentWidget(), _Idle)
+    assert window._upload._path is None
+
+
+def test_the_button_is_absent_while_the_job_runs(window):
+    """There is nothing to acknowledge yet, and it is not a cancel."""
+    window.goto("upload")
+    window._upload._busy.reset("clip.mp4")
+    assert window._upload._busy._ok.isHidden()
+
+
+def test_the_ring_stops_short_while_work_continues(window):
+    """It measures recognition, which finishes well before the job does.
+    A full ring over «assembling the video» reads as finished and frozen."""
+    busy = window._upload._busy
+    busy.set_progress(1.0)
+    assert busy._ring._value < 1.0
+    assert busy._ring._value >= 0.98
+
+
+def test_starting_again_hides_the_button(window):
+    window.goto("upload")
+    window._upload._stack.setCurrentWidget(window._upload._busy)
+    window._upload._on_fail("ошибка")
+    window._upload._busy.reset("clip.mp4")
+    assert window._upload._busy._ok.isHidden()

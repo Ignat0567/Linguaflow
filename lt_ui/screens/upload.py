@@ -124,8 +124,7 @@ class UploadScreen(QWidget):
 
     def _on_fail(self, message: str) -> None:
         self._pending = False
-        self._busy.set_stage(message)
-        self._busy.set_progress(0.0)
+        self._busy.stop(message)
 
     def _on_done(self, result) -> None:
         self._result = result
@@ -349,8 +348,22 @@ class _Ready(QWidget):
 
 
 class _Busy(QWidget):
+    """The job running, and the one state it can end in without a result.
+
+    A failure used to leave the user here with the message and nothing else:
+    no button, and leaving through the nav came back to this same page. The
+    way out is now on the screen that needs it.
+    """
+
+    #: The ring measures recognition, which finishes well before the job
+    #: does -- translation, speech and muxing all come after it. Showing 100%
+    #: while a video is still being assembled reads as finished-and-frozen,
+    #: so the ring stops just short until there is a result.
+    RUNNING_CEILING = 0.99
+
     def __init__(self, screen: UploadScreen) -> None:
         super().__init__()
+        self.screen = screen
         clear_fill(self)
         self._ring = glass.ProgressRing(self, 160)
         self._stage = glass.label(_("Загружаю модели…"), 13, 400, 0.75)
@@ -364,18 +377,30 @@ class _Busy(QWidget):
         column.addWidget(self._ring, 0, Qt.AlignHCenter)
         column.addWidget(self._stage)
         column.addWidget(self._name)
+        self._ok = glass.GlassButton(_("ОК"), self, primary=True, height=38)
+        self._ok.clicked.connect(screen.reset)
+        self._ok.hide()
+        column.addSpacing(22)
+        column.addWidget(self._ok, 0, Qt.AlignHCenter)
         column.addStretch()
 
     def reset(self, name: str) -> None:
         self._ring.set_value(0.0)
         self._stage.setText(_("Загружаю модели…"))
         self._name.setText(name)
+        self._ok.hide()
 
     def set_stage(self, text: str) -> None:
         self._stage.setText(text)
 
     def set_progress(self, fraction: float) -> None:
-        self._ring.set_value(fraction)
+        self._ring.set_value(min(fraction, self.RUNNING_CEILING))
+
+    def stop(self, message: str) -> None:
+        """The job ended without a result. Say so, and offer the way back."""
+        self._stage.setText(message)
+        self._ring.set_value(0.0)
+        self._ok.show()
 
 
 class _Done(QWidget):
