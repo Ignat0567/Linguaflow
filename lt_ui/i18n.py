@@ -161,6 +161,10 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "For video, save a copy with the new soundtrack",
         "Bei Video eine Kopie mit der neuen Tonspur speichern",
     ),
+    "Сокращать перевод, чтобы успевал в реплику": (
+        "Shorten the translation so it fits the line",
+        "Übersetzung kürzen, damit sie in die Zeile passt",
+    ),
     "Формат субтитров": ("Subtitle format", "Untertitelformat"),
     "Где выполняется перевод": (
         "Where translating happens", "Wo übersetzt wird",

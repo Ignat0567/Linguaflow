@@ -90,6 +90,9 @@ def main() -> int:
         help="читать всех одним голосом; по умолчанию мужские реплики читает "
              "мужской голос, женские — женский")
     translation.add_argument(
+        "--no-condense", action="store_true",
+        help="не сокращать перевод под длительность реплики")
+    translation.add_argument(
         "--no-video", action="store_true",
         help="не собирать копию видео с переведённой дорожкой")
     translation.add_argument(
@@ -179,6 +182,7 @@ def main() -> int:
             voice=args.voice or args.voice_only,
             match_voices=not args.one_voice,
             dub_video=not args.no_video,
+            condense=not args.no_condense,
             keep_original_audio=not args.voice_only,
         )
     except UnsupportedLanguage as error:
@@ -243,6 +247,11 @@ def main() -> int:
     if result.dub is not None:
         d = result.dub
         print(f"Озвучка:    {d.spoken} реплик, {d.duration:.0f} с")
+        shortened = result.shortened
+        if shortened:
+            saved = sum(record.saved for record in shortened)
+            print(f"            {len(shortened)} реплик сокращено "
+                  f"(снято {saved} символов, чтобы уложиться в тайминг)")
         if d.overran:
             print(f"            {d.overran} не уместились в свой слот "
                   f"(перевод длиннее оригинала; речь не ускорялась сверх "

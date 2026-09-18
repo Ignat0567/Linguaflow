@@ -1,0 +1,240 @@
+"""Day 7: shortening a translation so it can be said in the time available.
+
+A dub has a constraint subtitles do not. Speaking faster buys 15-20%, Russian
+runs longer than English, and on a fast speaker 42% of the lines did not fit.
+Measured on a real recording: the median line needed 11% taken off.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from lt_core.mt.condense import (
+    NEGATIONS,
+    REPLACEMENTS,
+    budget_for,
+    condense,
+    condense_cues,
+    slot_seconds,
+)
+from lt_core.mt.numbers import extract
+from lt_core.mt.shorten_with_model import can_shorten, shorten_cues
+from lt_core.subtitles.cues import Cue
+
+
+def cue(index: int, start: float, end: float, text: str) -> Cue:
+    return Cue(index=index, start=start, end=end, lines=(text,))
+
+
+# -- what it removes -----------------------------------------------------
+
+def test_a_line_that_fits_is_left_alone():
+    """Nothing is shortened for its own sake."""
+    result = condense("Короткая фраза.", 100, "ru")
+    assert not result.changed
+    assert result.text == "Короткая фраза."
+
+
+def test_filler_goes_first():
+    result = condense("Вы знаете, это работает хорошо.", 22, "ru")
+    assert "Вы знаете" not in result.text
+    assert "работает хорошо" in result.text
+
+
+def test_a_long_connective_becomes_a_short_one():
+    result = condense("Он пришёл для того чтобы помочь нам всем сегодня.", 40, "ru")
+    assert "для того чтобы" not in result.text
+    assert "чтобы" in result.text
+
+
+def test_shortening_stops_as_soon_as_the_line_fits():
+    """Emphasis is part of what a speaker meant; it is not removed for sport."""
+    text = "Вы знаете, это очень действительно просто и совершенно понятно."
+    generous = condense(text, len(text) - 12, "ru")
+    aggressive = condense(text, 20, "ru")
+    assert len(generous.steps) < len(aggressive.steps)
+
+
+def test_the_opening_capital_survives_a_removal_at_the_front():
+    result = condense("Вы знаете, это работает.", 15, "ru")
+    assert result.text[:1].isupper()
+
+
+def test_a_lower_case_opening_is_not_capitalised():
+    result = condense("вы знаете, это работает.", 15, "ru")
+    assert result.text[:1].islower()
+
+
+@pytest.mark.parametrize("language", ["ru", "en", "de"])
+def test_every_offered_language_has_rules(language):
+    assert REPLACEMENTS.get(language)
+    assert NEGATIONS.get(language)
+
+
+# -- what it refuses to touch -------------------------------------------
+
+def test_a_figure_is_never_lost():
+    """A dub that says a different number is worse than one that runs over."""
+    text = "Вы знаете, этот канал приносит 12000 долларов в месяц."
+    result = condense(text, 20, "ru")
+    assert extract(result.text) == extract(text)
+
+
+def test_a_negation_is_never_dropped():
+    """Removing «не» inverts the sentence, which is the worst outcome here."""
+    text = "На самом деле это не работает так, как вы думаете."
+    result = condense(text, 15, "ru")
+    assert result.text.count("не") >= text.count("не")
+
+
+def test_nothing_is_reduced_to_nothing():
+    result = condense("Вы знаете, понимаете, в общем.", 1, "ru")
+    assert result.text.strip()
+
+
+def test_no_replacement_substitutes_an_inflected_noun():
+    """Russian inflects, and a noun swapped in the nominative lands in the
+    wrong case: «программное обеспечение» for «программа» produced «открыть
+    программа». Only phrases that agree with nothing may be replaced.
+    """
+    banned = ("программное обеспечение", "с помощью", "в течение",
+              "которые требуются для")
+    for long_form, _short in REPLACEMENTS["ru"]:
+        assert long_form not in banned, long_form
+
+
+# -- the time a line actually has ---------------------------------------
+
+def test_a_line_may_use_the_silence_before_the_next_one():
+    """Free and lossless: on a real recording this alone took the lines that
+    do not fit from 75 to 59."""
+    cues = (cue(1, 0.0, 1.0, "раз"), cue(2, 3.0, 4.0, "два"))
+    assert slot_seconds(cues, 0) == pytest.approx(3.0)
+
+
+def test_the_last_line_has_only_its_own_time():
+    cues = (cue(1, 0.0, 1.0, "раз"), cue(2, 3.0, 4.5, "два"))
+    assert slot_seconds(cues, 1) == pytest.approx(1.5)
+
+
+def test_the_budget_follows_the_voice_that_will_speak():
+    """Measured: ruslan says 18.4 characters a second, irina 13.9 -- a third
+    apart, so one number for both would be wrong by that much."""
+    assert budget_for(2.0, 18.4) > budget_for(2.0, 13.9)
+
+
+def test_headroom_allows_for_the_speed_up_still_to_come():
+    assert budget_for(2.0, 15.0, headroom=1.18) > budget_for(2.0, 15.0)
+
+
+def test_cues_keep_their_timings_when_shortened():
+    """Timings belong to the speech. Only the words may change."""
+    cues = (cue(1, 0.0, 1.0, "Вы знаете, это на самом деле очень просто."),)
+    out, records = condense_cues(cues, "ru", 10.0, headroom=1.0)
+    assert out[0].start == cues[0].start and out[0].end == cues[0].end
+    assert records[0].changed
+
+
+# -- handing the rest to the model --------------------------------------
+
+class FakeProvider:
+    """Answers with whatever it is told to, so the checks can be tested."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self.answers = answers
+        self.asked: list[tuple[str, int]] = []
+
+    def shorten(self, lines, language):
+        self.asked = list(lines)
+        return self.answers
+
+
+def long_cues() -> tuple[Cue, ...]:
+    return (
+        cue(1, 0.0, 2.0,
+            "Этот довольно длинный текст никак не помещается в своё время"),
+    )
+
+
+def test_a_provider_that_cannot_rewrite_is_not_asked():
+    assert not can_shorten(object())
+    assert can_shorten(FakeProvider([]))
+
+
+def test_the_model_is_given_the_budget_for_each_line():
+    provider = FakeProvider(["Короче."])
+    shorten_cues(long_cues(), "ru", 17.8, provider, headroom=1.18)
+    assert provider.asked and isinstance(provider.asked[0][1], int)
+    assert provider.asked[0][1] > 0
+
+
+def test_a_shortened_line_that_lost_a_figure_is_discarded():
+    cues = (cue(1, 0.0, 1.5,
+                "Этот канал приносит 5000 долларов каждый месяц без перерыва"),)
+    provider = FakeProvider(["Канал приносит 9000 долларов."])
+    out, records, report = shorten_cues(cues, "ru", 17.8, provider, headroom=1.18)
+    assert report.rejected_unsafe == 1
+    assert out[0].flat_text == cues[0].flat_text
+    assert not records[0].changed
+
+
+def test_a_shortened_line_that_lost_a_negation_is_discarded():
+    cues = (cue(1, 0.0, 1.5,
+                "Этот довольно длинный текст не помещается в отведённое время"),)
+    provider = FakeProvider(["Текст помещается в отведённое время."])
+    _out, _records, report = shorten_cues(cues, "ru", 17.8, provider, headroom=1.18)
+    assert report.rejected_unsafe == 1
+
+
+def test_a_line_that_came_back_longer_is_discarded():
+    provider = FakeProvider([
+        "Этот довольно длинный текст никак не помещается в своё время, "
+        "и после переписывания он стал ещё заметно длиннее прежнего."
+    ])
+    _out, _records, report = shorten_cues(
+        long_cues(), "ru", 17.8, provider, headroom=1.18
+    )
+    assert report.rejected_longer == 1
+
+
+def test_an_empty_answer_is_discarded():
+    provider = FakeProvider(["   "])
+    _out, _records, report = shorten_cues(
+        long_cues(), "ru", 17.8, provider, headroom=1.18
+    )
+    assert report.rejected_longer == 1
+
+
+def test_a_safe_shortening_is_accepted_and_recorded():
+    provider = FakeProvider(["Текст не помещается."])
+    out, records, report = shorten_cues(
+        long_cues(), "ru", 17.8, provider, headroom=1.18
+    )
+    assert report.accepted == 1
+    assert out[0].flat_text == "Текст не помещается."
+    assert "сокращено моделью" in records[0].steps
+
+
+def test_a_failing_provider_leaves_the_dub_alone():
+    """A service that is down must not cost the recording."""
+
+    class Broken:
+        def shorten(self, lines, language):
+            raise RuntimeError("сервис недоступен")
+
+    out, _records, report = shorten_cues(
+        long_cues(), "ru", 17.8, Broken(), headroom=1.18
+    )
+    assert report.failed
+    assert out[0].flat_text == long_cues()[0].flat_text
+    assert "не выполнено" in report.summary()
+
+
+def test_lines_that_already_fit_are_not_sent_anywhere():
+    """They are the text of the recording, and it does not leave without
+    reason."""
+    cues = (cue(1, 0.0, 10.0, "Коротко."),)
+    provider = FakeProvider([])
+    _out, _records, report = shorten_cues(cues, "ru", 17.8, provider)
+    assert not report.used
+    assert provider.asked == []

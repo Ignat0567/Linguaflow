@@ -274,6 +274,68 @@ class OpenAICompatibleTranslator:
         return _parse_numbered(content, len(texts))
 
 
+    # -- shortening ------------------------------------------------------
+    def shorten(self, lines: list[tuple[str, int]], language: str) -> list[str]:
+        """Rewrite each line to fit its character budget.
+
+        The rule-based shortener removes filler, and machine-translated prose
+        has almost none: measured on a real recording it could touch 19 lines
+        in 243, while 101 needed a median of 11% taken off. Removing 11% of a
+        sentence without changing what it says is rewriting, and rewriting is
+        what a model is for.
+
+        Numbered in and numbered out, for the same reason translation is: a
+        model asked for "one line each" eventually merges two, and a dub whose
+        lines have shifted is worse than one that runs over.
+        """
+        if not lines:
+            return []
+        results: list[str] = []
+        for start in range(0, len(lines), self.lines_per_request):
+            chunk = lines[start:start + self.lines_per_request]
+            results.extend(self._shorten_chunk(chunk, language))
+        return results
+
+    def _shorten_chunk(self, lines: list[tuple[str, int]], language: str) -> list[str]:
+        numbered = "\n".join(
+            f"{n + 1}. [{budget}] {text}" for n, (text, budget) in enumerate(lines)
+        )
+        name = _LANGUAGE_NAMES.get(language, language)
+        instruction = (
+            f"Shorten each numbered {name} subtitle line so that it fits the "
+            f"character limit in brackets.\n"
+            f"Rules: keep the meaning and every number, unit, name and "
+            f"negation exactly; stay in {name}; keep it grammatical; drop "
+            f"filler and redundancy rather than facts; if a line already "
+            f"fits, repeat it unchanged; never merge or split lines; no "
+            f"commentary.\n"
+            f"Reply with exactly {len(lines)} lines, numbered, without the "
+            f"bracketed limit."
+        )
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        data = _post(
+            f"{self.base_url}/chat/completions",
+            {
+                "model": self.model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": numbered},
+                ],
+            },
+            headers,
+            self.timeout,
+        )
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise TranslationError(
+                f"Непонятный ответ от {self.service.label}.",
+                json.dumps(data)[:400],
+            ) from exc
+        return _parse_numbered(content, len(lines))
+
+
 def _parse_numbered(content: str, expected: int) -> list[str]:
     """Pull `expected` lines back out of a numbered reply."""
     import re

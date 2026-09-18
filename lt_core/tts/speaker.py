@@ -94,6 +94,7 @@ class Speaker:
         self.voice_name = voice or self._default_voice(language)
         self.voices_dir = Path(voices_dir or Path.cwd() / "models" / "piper")
         self._voice = self._load()
+        self._pace: float | None = None
 
     @staticmethod
     def _default_voice(language: str) -> str:
@@ -145,6 +146,30 @@ class Speaker:
         raw = b"".join(chunk.audio_int16_bytes for chunk in chunks)
         samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
         return samples, rate
+
+    #: A sentence used to measure the voice's own pace. Ordinary prose: a
+    #: tongue-twister or a list of numbers would time differently.
+    PACE_SAMPLE = {
+        "ru": "Сегодня мы разберём несколько важных вопросов и перейдём к примерам.",
+        "en": "Today we will go through a few important points and look at examples.",
+        "de": "Heute gehen wir einige wichtige Punkte durch und sehen uns Beispiele an.",
+    }
+
+    def chars_per_second(self) -> float:
+        """How fast this voice speaks, measured once and kept.
+
+        Not a constant: measured on the two Russian voices, ruslan says 18.4
+        characters a second and irina 13.9 -- a third apart. A budget built
+        from one number would be wrong by that much for the other.
+        """
+        if self._pace is None:
+            sample = self.PACE_SAMPLE.get(self.language)
+            if not sample:
+                sample = languages.punctuation_sample(self.language)
+            samples, rate = self.say(sample)
+            seconds = len(samples) / rate if rate else 0.0
+            self._pace = len(sample) / seconds if seconds > 0 else 15.0
+        return self._pace
 
     def fit(self, text: str, start: float, seconds: float) -> Utterance:
         """Speak `text` so that it fits `seconds`, as far as that is sensible.

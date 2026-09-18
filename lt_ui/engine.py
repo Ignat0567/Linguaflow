@@ -112,6 +112,7 @@ class BatchWorker(QThread):
                 voice=settings.voiceover,
                 match_voices=settings.match_voices,
                 dub_video=settings.dub_video,
+                condense=settings.condense,
             )
             self.progress.emit(1.0)
             self.done.emit(result)

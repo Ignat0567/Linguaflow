@@ -27,6 +27,12 @@ from ..subtitles.export import EXPORTERS, write
 
 DEFAULT_FORMATS = ("srt", "txt")
 
+#: How much faster than its natural pace the voice may be asked to speak when
+#: deciding how much text fits. Measured on Day 5: past about 18% the voice
+#: stops sounding like a person, so the text budget is allowed to count on
+#: that much and no more.
+SPEED_HEADROOM = 1.18
+
 
 @dataclass
 class BatchResult:
@@ -41,6 +47,14 @@ class BatchResult:
     target_language: str | None = None
     #: The dubbed track, when one was asked for.
     dub: object | None = None
+    #: What shortening did to each line, when it was asked for.
+    condensed: list = field(default_factory=list)
+    #: What the model was asked to shorten, and what survived the checks.
+    shorten_report: object | None = None
+
+    @property
+    def shortened(self) -> list:
+        return [record for record in self.condensed if record.changed]
     # Which cues each translated sentence covered, so a flagged sentence can be
     # reported at the time it was spoken rather than as an index nobody can
     # locate in a subtitle file.
@@ -94,6 +108,7 @@ def transcribe_file(
     keep_original_audio: bool = True,
     match_voices: bool = True,
     dub_video: bool = True,
+    condense: bool = True,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -175,32 +190,45 @@ def transcribe_file(
         translated_cues = translate_cues(
             cues, translations, CueStyle.for_language(target_language)
         )
-        for name in formats:
-            if name not in ("srt", "vtt"):
-                continue
-            stem = f"{media.path.stem}.{target_language}"
-            outputs[f"{name}.{target_language}"] = write(
-                destination / f"{stem}.{name}",
-                EXPORTERS[name](transcript, translated_cues),
-            )
-        if bilingual:
-            merged = merge_bilingual(cues, translated_cues)
-            outputs["srt.bilingual"] = write(
-                destination / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
-                EXPORTERS["srt"](transcript, merged),
-            )
         sentence_groups = groups
 
     dub = None
+    condensed: list = []
+    shorten_report = None
     if voice and translated_cues:
+        from ..mt.condense import condense_cues
+        from ..mt.shorten_with_model import can_shorten, shorten_cues
         from ..tts.dub import mix
         from ..tts.speaker import VoiceBank, write_wav
 
         voices_dir = Path(__file__).resolve().parents[2] / "models" / "piper"
         pair = match_voices and languages.has_voice_pair(target_language)
-        stage("Озвучиваю перевод" + (" (голоса по говорящему)" if pair else ""))
         bank = VoiceBank(target_language, voices_dir=voices_dir,
                          single=languages.voice_for(target_language))
+
+        if condense:
+            # Before the subtitles are written, so that what is read out and
+            # what is on screen are the same sentence. The budget comes from
+            # the voice that will actually speak, whose pace is measured
+            # rather than assumed.
+            stage("Сокращаю перевод под тайминг")
+            pace = bank.for_gender().chars_per_second()
+            translated_cues, condensed = condense_cues(
+                translated_cues, target_language, pace, headroom=SPEED_HEADROOM,
+            )
+            # The rules remove filler, and a machine translation has little.
+            # Whatever still does not fit goes to the model that translated
+            # it -- but only when the user already chose to work online, since
+            # it is the same text going to the same third party.
+            if translator is not None and can_shorten(translator.provider):
+                translated_cues, condensed, shorten_report = shorten_cues(
+                    translated_cues, target_language, pace, translator.provider,
+                    headroom=SPEED_HEADROOM, records=condensed,
+                )
+                if shorten_report.summary():
+                    stage(shorten_report.summary())
+
+        stage("Озвучиваю перевод" + (" (голоса по говорящему)" if pair else ""))
         dub = mix(media.path, translated_cues, bank, media.duration,
                   keep_original=keep_original_audio, match_voices=pair)
         outputs["audio"] = write_wav(
@@ -233,6 +261,22 @@ def transcribe_file(
             else:
                 outputs["video"] = muxed.path
 
+    if translated_cues is not None and target_language:
+        for name in formats:
+            if name not in ("srt", "vtt"):
+                continue
+            stem = f"{media.path.stem}.{target_language}"
+            outputs[f"{name}.{target_language}"] = write(
+                destination / f"{stem}.{name}",
+                EXPORTERS[name](transcript, translated_cues),
+            )
+        if bilingual:
+            merged = merge_bilingual(cues, translated_cues)
+            outputs["srt.bilingual"] = write(
+                destination / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
+                EXPORTERS["srt"](transcript, merged),
+            )
+
     return BatchResult(
         media=media,
         transcript=transcript,
@@ -244,4 +288,6 @@ def transcribe_file(
         target_language=target_language,
         sentence_groups=sentence_groups,
         dub=dub,
+        condensed=condensed,
+        shorten_report=shorten_report,
     )

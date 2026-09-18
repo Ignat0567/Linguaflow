@@ -79,6 +79,9 @@ class Settings:
     #: For a video source, also write a copy of it with the translated
     #: soundtrack against the picture.
     dub_video: bool = True
+    #: Trim filler out of a translated line when it cannot be spoken in the
+    #: time the original took.
+    condense: bool = True
     sub_format: str = "srt"
     notify: bool = True
     translation_mode: str = TranslationMode.OFFLINE

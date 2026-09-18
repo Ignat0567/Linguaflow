@@ -92,6 +92,14 @@ class SettingsScreen(QWidget):
             )
         )
 
+        self._condense = glass.Toggle(voice)
+        self._condense.toggled.connect(self._sync_condense)
+        voice.body.addWidget(
+            self._switch_row(
+                self._condense, _("Сокращать перевод, чтобы успевал в реплику")
+            )
+        )
+
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
         voice.body.addWidget(self._voice_note)
 
@@ -256,6 +264,7 @@ class SettingsScreen(QWidget):
             (self._voice, settings.voiceover),
             (self._match, settings.match_voices),
             (self._dub_video, settings.dub_video),
+            (self._condense, settings.condense),
         ):
             toggle.blockSignals(True)
             toggle.setChecked(value)
@@ -401,6 +410,10 @@ class SettingsScreen(QWidget):
         self.app.store.settings.match_voices = on
         self.app.store.save_settings()
         self._update_voice_note()
+
+    def _sync_condense(self, on: bool) -> None:
+        self.app.store.settings.condense = on
+        self.app.store.save_settings()
 
     def _sync_dub_video(self, on: bool) -> None:
         self.app.store.settings.dub_video = on

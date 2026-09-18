@@ -17,6 +17,7 @@ import numpy as np
 from ..audio.capture import FileSource
 from ..audio.types import TARGET_SAMPLE_RATE
 from ..subtitles.cues import Cue
+from ..mt.condense import slot_seconds
 from . import casting
 from .casting import Cast
 from .speaker import Speaker, Utterance, VoiceBank, resample
@@ -90,7 +91,9 @@ def synthesise_track(
                 gender = cast.genders[index]
             voice = speaker.for_gender(gender)
 
-        utterance = voice.fit(text, cue.start, cue.duration)
+        # The slot runs to the start of the next line, not to the end of
+        # this one: the silence between them is time nothing else is using.
+        utterance = voice.fit(text, cue.start, slot_seconds(cues, index))
         if utterance.samples.size == 0:
             continue
 

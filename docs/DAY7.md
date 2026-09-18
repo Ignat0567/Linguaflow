@@ -269,6 +269,72 @@ splitter can finally break at real sentence ends rather than mid-thought.
 
 354 tests.
 
+## Making the translation fit the slot
+
+Asked for after listening to the dub: shorten the translation by meaning so
+that it can be spoken in the time the original took.
+
+First, the size of the problem, measured rather than estimated. Of 243 lines,
+101 could not be spoken in their slot even at the voice's speed limit -- and
+the median one overran by only **1.13x**. Eleven per cent, on the median line.
+That is the whole of what has to go.
+
+### Built
+
+`lt_core/mt/condense.py` — the rules, and the slot arithmetic.
+`lt_core/mt/shorten_with_model.py` — the rest, handed to the model.
+Wired ahead of the subtitles, so that what is on screen is what is said.
+
+### Findings
+
+22. **A line may use the silence before the next one.** A cue ends when its
+    words end, not when the next begins. Counting the slot to the *start of
+    the next line* took the lines that do not fit from 75 to 59, changed no
+    text at all, and cost nothing.
+23. **The budget belongs to the voice, not to the language.** Measured:
+    ruslan says 18.4 characters a second and irina 13.9 -- a third apart. One
+    number for both would have been wrong by that much for one of them. The
+    fuller model is `duration = 0.19 s + characters / 17.8`; the fixed part is
+    the silence at the edges, which does not scale.
+24. **Commas cost almost nothing.** Worth checking, since the punctuation fix
+    had just multiplied them eightfold: 17.2 characters a second without them
+    against 16.9 with, on the same sentence.
+25. **Substituting a noun does not work in an inflected language.** The first
+    rule table replaced «программное обеспечение» with «программа» and
+    produced **«открыть программа»** -- the replacement arrived in the
+    nominative and the sentence wanted the accusative. A line that runs over
+    is a smaller fault than a line in the wrong case, so every rule that
+    agrees with its surroundings was taken back out. What is left are
+    conjunctions, adverbials, whole predicates, and two quantifiers that
+    govern the same case as what they replace.
+26. **Rules cannot reach eleven per cent, and the measurement says why.**
+    Machine-translated prose has almost no filler in it: the rules could touch
+    19 lines in 243. Removing a tenth of a sentence that contains no filler is
+    rewriting, not deletion.
+27. **So the rest goes to the model that did the translating** -- and only
+    when the user is already working online, because it is the same text going
+    to the same third party and no further. In offline mode nothing is sent,
+    which is the promise the mode exists to make.
+28. **Everything the model returns is checked before it is used.** A line that
+    lost a figure, gained or lost a negation, came back empty, or came back
+    longer is discarded and the original kept. Running over is a smaller fault
+    than saying something else, and a model asked to be brief will cheerfully
+    drop a «не».
+
+### What it is worth
+
+Offline, on the recording that prompted this: lines that overran their slot
+went from **104 to 91**, and lines spoken at the compression limit from 138 to
+122. Nothing was lost to get there -- 10 lines had filler removed, 106
+characters in total, and the rest of the gain is the silence between lines.
+
+That is honest progress and not a solution. The remaining 91 need a tenth of
+their words rewritten away, which the model path does and which needs a key
+and online mode turned on. It has been tested against a stand-in provider, not
+against a live service.
+
+381 tests.
+
 ## Not done
 
 Packaging into an installer. Burning subtitles into the picture (they are
