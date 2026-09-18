@@ -44,7 +44,12 @@ _CLAUSE_END = re.compile(r"[,;:—–、，；：]['\"»”’)\]]*\s*$")
 #: instead was measured and costs meaning -- "mass times energy times
 #: coordination", handed over a clause at a time, came back as "масса во время
 #: энергии", because "times" without its sentence is the preposition.
-HOLD_LIMIT = 20.0
+#:
+#: Ordinary speech runs six to ten seconds to a sentence. The longest real one
+#: measured here was twenty, so at eight the valve was doing the work and
+#: producing exactly that fault; at twenty-four it never fires on this
+#: recording and still bounds a speaker who genuinely never stops.
+HOLD_LIMIT = 24.0
 
 #: Never hand the translator fewer than this many words on its own. A fragment
 #: is what makes the model invent -- measured on Day 3, "Yes." came back as

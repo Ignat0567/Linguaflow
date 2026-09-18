@@ -129,6 +129,30 @@ def qapp():
     yield app
 
 
+def test_a_live_caption_shows_the_draft_translation_under_the_settled_one(qapp):
+    """While a sentence is still being spoken its translation is provisional.
+    It is drawn in a lighter hand, below the settled text, and it must not
+    replace it: both are true at once for as long as the sentence lasts."""
+    from lt_ui.screens.realtime import Line, _Caption
+
+    line = Line(
+        original="Good morning everyone.", translated="Доброе утро всем.",
+        partial_translated="За последние три месяца",
+    )
+    from PySide6.QtWidgets import QLabel
+
+    caption = _Caption(line, conversation=False)
+    shown = [label.text() for label in caption.findChildren(QLabel)]
+    assert any("Доброе утро" in text for text in shown), shown
+    assert any("За последние" in text for text in shown), shown
+
+
+def test_a_caption_with_only_a_draft_translation_still_draws(qapp):
+    from lt_ui.screens.realtime import Line, _Caption
+
+    _Caption(Line(partial_translated="черновик"), conversation=False)
+
+
 def test_language_pair_auto_does_not_collide_with_the_target(qapp):
     from lt_ui.widgets import LanguagePair
 
