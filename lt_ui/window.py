@@ -123,9 +123,11 @@ class Window(QWidget):
         nav_row = QHBoxLayout()
         nav_row.setContentsMargins(0, 0, 0, 0)
         nav_row.setSpacing(0)
-        nav_row.addWidget(self._mark, 0, Qt.AlignLeft)
+        # The name is taller than the bar now, so they share a centre line
+        # rather than a top edge.
+        nav_row.addWidget(self._mark, 0, Qt.AlignLeft | Qt.AlignVCenter)
         nav_row.addStretch(1)
-        nav_row.addWidget(self._nav)
+        nav_row.addWidget(self._nav, 0, Qt.AlignVCenter)
         nav_row.addStretch(1)
         # The nav is centred on the window, not on what is left of it, so the
         # name's width is given back on the other side.

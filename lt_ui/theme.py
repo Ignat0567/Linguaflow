@@ -91,6 +91,20 @@ def on_accent() -> QColor:
     return QColor(INK)
 
 
+#: The wordmark's own colour, and the only place gold appears.
+#:
+#: Two of them, because one does not work twice: a bright gold that reads as
+#: metal over a dark photograph turns pale and weak over a light one. The dark
+#: theme gets a warm, light gold; the light theme an old gold, dark enough to
+#: hold its edge against a bright scrim.
+GOLD_ON_DARK = QColor("#E8C873")
+GOLD_ON_LIGHT = QColor("#9A6F16")
+
+
+def gold() -> QColor:
+    return GOLD_ON_LIGHT if is_light() else GOLD_ON_DARK
+
+
 # -- hierarchy of foreground text ---------------------------------------
 PRIMARY = 1.00
 SECONDARY = 0.75

@@ -226,13 +226,15 @@ def test_the_name_sits_in_the_top_left_corner(window):
 
 
 def test_the_name_is_level_with_the_nav(window):
+    """Level on a shared centre line, not a shared top edge: at twice the
+    size the name is taller than the bar, and matching their tops would put
+    the bar visibly high beside it."""
     window.resize(1280, 860)
     window.show()
     window.goto("home")
-    mark = window._mark.mapTo(window, window._mark.rect().topLeft())
-    nav = window._nav.mapTo(window, window._nav.rect().topLeft())
-    assert mark.y() == nav.y()
-    assert window._mark.height() == window._nav.height()
+    mark = window._mark.mapTo(window, window._mark.rect().center())
+    nav = window._nav.mapTo(window, window._nav.rect().center())
+    assert abs(mark.y() - nav.y()) <= 1
 
 
 def test_the_nav_stays_centred_on_the_window(window):
@@ -252,3 +254,30 @@ def test_the_nav_no_longer_carries_the_name(window):
 
     labels = [w.text() for w in window._nav.findChildren(QLabel)]
     assert "Linguaflow" not in labels
+
+
+def test_the_name_has_no_panel_behind_it(window):
+    """It is not a control, and a surface would make it look like one."""
+    from lt_ui import glass
+
+    assert not isinstance(window._mark, glass.GlassPanel)
+
+
+def test_the_name_reports_its_own_size(window):
+    """A widget that paints itself must, or the layout that balances the bar
+    is handed -1 and the bar sits half a word off centre."""
+    assert window._mark.sizeHint().width() == window._mark.width() > 0
+
+
+def test_the_gold_differs_between_the_themes(window):
+    """A gold that reads as metal over a dark photograph turns pale over a
+    bright one."""
+    from lt_ui import theme
+
+    theme.set_mode(theme.DARK)
+    dark = theme.gold()
+    theme.set_mode(theme.LIGHT)
+    light = theme.gold()
+    theme.set_mode(theme.DARK)
+    assert dark != light
+    assert dark.lightness() > light.lightness()

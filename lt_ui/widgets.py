@@ -8,8 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -253,25 +260,51 @@ class NavItem(glass.Hoverable):
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
-class Wordmark(glass.GlassPanel):
-    """The name, top left, on the same band as the nav.
+class Wordmark(QWidget):
+    """The name, top left, in gold, on nothing.
 
-    Its own panel rather than a passenger inside the nav pill: the nav is
-    centred and the name is not, so sharing one surface put the name wherever
-    the centre happened to fall. Here it sits against the left gutter, the
-    same distance from that edge as from the top, and level with the bar.
+    No panel behind it. A surface would make it one more control on a screen
+    that already has six of them, and the name is not a control -- it is the
+    product saying what it is.
+
+    It paints its own text rather than wearing a style sheet, so that a change
+    of theme is a repaint: the gold that reads as metal over a dark photograph
+    is not the gold that survives a bright one.
     """
 
-    def __init__(self, parent: QWidget | None = None, size: int = 24) -> None:
-        super().__init__(parent, radius=theme.RADIUS_PILL,
-                         tint=theme.tint(raised=True))
-        self.setFixedHeight(theme.NAV_HEIGHT + 16)
-        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        label = glass.label("Linguaflow", size, 700, tracking=-2)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(22, 8, 22, 8)
-        row.setSpacing(0)
-        row.addWidget(label)
+    #: Twice the size it was, which puts it taller than the bar beside it --
+    #: hence the centring rather than a shared top edge.
+    SIZE = 48
+
+    def __init__(self, parent: QWidget | None = None, size: int = SIZE) -> None:
+        super().__init__(parent)
+        clear_fill(self)
+        self._font = theme.font(size, 700, tracking=-2)
+        metrics = QFontMetrics(self._font)
+        self._text = "Linguaflow"
+        # Room for the descender of the g: a band cut to the cap height
+        # shaves it off, and a clipped letter reads as a broken font.
+        self.setFixedSize(
+            metrics.horizontalAdvance(self._text) + 6,
+            metrics.height() + 6,
+        )
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        """A widget that paints itself has to report its own size.
+
+        Without this a bare QWidget answers (-1, -1), and the layout that
+        gives the name's width back on the other side of the bar gave back
+        minus one pixel -- so the bar sat half a word right of centre.
+        """
+        return self.size()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setFont(self._font)
+        painter.setPen(theme.gold())
+        painter.drawText(self.rect(), Qt.AlignLeft | Qt.AlignVCenter, self._text)
 
 
 class NavBar(glass.GlassPanel):
