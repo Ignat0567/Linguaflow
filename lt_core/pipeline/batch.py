@@ -92,6 +92,55 @@ class BatchResult:
         return tuple(c for c in self.cues if c.chars_per_second > style.max_cps * 1.05)
 
 
+def _spread(cues, groups, sentences, language: str, with_space: bool):
+    """Put each translated sentence back across the cues it came from.
+
+    Subtitles are cut for reading speed, so a sentence routinely spans two or
+    three of them and its translation has to be divided the same way. The
+    timings never move; only the words change.
+    """
+    translations: list[str] = [""] * len(cues)
+    for group, translated in zip(groups, sentences):
+        shares = distribute(
+            translated,
+            [len(cues[position].flat_text) for position in group],
+            join_with_space=with_space,
+        )
+        for position, share in zip(group, shares):
+            translations[position] = share
+    return translate_cues(cues, translations, CueStyle.for_language(language))
+
+
+def _sentence_cues(cues, groups, sentences) -> tuple[Cue, ...]:
+    """The translation as whole sentences, with the time each one has.
+
+    A dub built from subtitle cues speaks in fragments, because a subtitle is
+    cut where a line gets too long to read and not where a thought ends.
+    Measured on a real recording: 117 of 519 spoken lines ended mid-clause --
+    «Часто люди думают, что я» and then, after a pause, «делаю это». Nobody
+    talks like that, and on a recording there is no reason to: the whole
+    sentence is known before a word of it is spoken.
+
+    Each sentence starts where its first cue starts and has the time until
+    the next sentence begins -- including the silence between them, which is
+    time nothing else is using.
+    """
+    units: list[Cue] = []
+    for index, (group, text) in enumerate(zip(groups, sentences)):
+        if not group or not text.strip():
+            continue
+        start = cues[group[0]].start
+        if index + 1 < len(groups) and groups[index + 1]:
+            end = cues[groups[index + 1][0]].start
+        else:
+            end = cues[group[-1]].end
+        units.append(
+            Cue(index=len(units) + 1, start=start, end=max(end, start + 0.05),
+                lines=(text.strip(),))
+        )
+    return tuple(units)
+
+
 def transcribe_file(
     target: str | Path,
     transcriber: Transcriber,
@@ -159,6 +208,7 @@ def transcribe_file(
     translated_cues = None
     report = None
     sentence_groups: list[list[int]] = []
+    spoken_units: tuple[Cue, ...] = ()
     if translator is not None and target_language and transcript.language == target_language:
         # Auto-detect can land on the language the user asked to translate
         # into. Translating a language into itself is a hard error downstream,
@@ -179,19 +229,13 @@ def transcribe_file(
         )
 
         target_joins_with_space = languages.joins_with_space(target_language)
-        translations: list[str] = [""] * len(cues)
-        for group, translated in zip(groups, sentence_translations):
-            shares = distribute(
-                translated,
-                [len(cues[position].flat_text) for position in group],
-                join_with_space=target_joins_with_space,
-            )
-            for position, share in zip(group, shares):
-                translations[position] = share
-        # Timings belong to the speech and do not move: only the words change.
-        translated_cues = translate_cues(
-            cues, translations, CueStyle.for_language(target_language)
+        translated_cues = _spread(
+            cues, groups, sentence_translations, target_language,
+            target_joins_with_space,
         )
+        # Kept whole as well as spread: subtitles are cut for reading speed,
+        # and speech is not. See `_sentence_cues`.
+        spoken_units = _sentence_cues(cues, groups, sentence_translations)
         sentence_groups = groups
 
     dub = None
@@ -220,8 +264,11 @@ def transcribe_file(
                 """How long this voice really takes over this text."""
                 samples, rate = _bank.for_gender().say(text)
                 return len(samples) / rate if rate else 0.0
-            translated_cues, condensed = condense_cues(
-                translated_cues, target_language, pace,
+            # Whole sentences, not subtitle cues: a sentence has the time of
+            # all its cues together, so there is more room to fit into and
+            # more context to shorten within.
+            spoken_units, condensed = condense_cues(
+                spoken_units, target_language, pace,
                 headroom=SPEED_HEADROOM, overhead=overhead, measure=measure,
             )
             # The rules remove filler, and a machine translation has little.
@@ -240,18 +287,32 @@ def transcribe_file(
                     rewriter = translator.provider
             if rewriter is not None and can_shorten(rewriter):
                 stage(tell("Сокращаю остальное моделью"))
-                translated_cues, condensed, shorten_report = shorten_cues(
-                    translated_cues, target_language, pace, rewriter,
+                spoken_units, condensed, shorten_report = shorten_cues(
+                    spoken_units, target_language, pace, rewriter,
                     headroom=SPEED_HEADROOM, overhead=overhead,
                     measure=measure, records=condensed,
                 )
                 if shorten_report.summary():
                     stage(shorten_report.summary())
 
+        if condense and spoken_units:
+            # Shortening changed the sentences; the subtitles must say what is
+            # said, so they are rebuilt from the sentences rather than kept
+            # from before.
+            translated_cues = _spread(
+                cues, sentence_groups,
+                [unit.flat_text for unit in spoken_units],
+                target_language, languages.joins_with_space(target_language),
+            )
+
         stage(tell("Озвучиваю перевод, голоса по говорящему") if pair
               else tell("Озвучиваю перевод"))
-        dub = mix(media.path, translated_cues, bank, media.duration,
-                  keep_original=keep_original_audio, match_voices=pair)
+        # Spoken as sentences. A dub cut to subtitle timings speaks in
+        # fragments, because a subtitle ends where a line gets too long to
+        # read and not where a thought ends.
+        dub = mix(media.path, spoken_units or translated_cues, bank,
+                  media.duration, keep_original=keep_original_audio,
+                  match_voices=pair)
         outputs["audio"] = write_wav(
             destination / f"{media.path.stem}.{target_language}.wav",
             dub.samples, dub.rate,

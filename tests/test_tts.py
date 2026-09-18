@@ -99,14 +99,44 @@ def test_an_overrun_is_reported_not_hidden():
 # -- track assembly ------------------------------------------------------
 
 def test_each_line_lands_at_its_own_timestamp():
+    """Within EARLY_START of it, and never after it.
+
+    A line that does not fit may begin in the silence before it was said
+    rather than talk over the line after it -- half a second ahead of the
+    picture is a dub, two voices at once is a mess. The allowance is bounded,
+    so the gap between two well-spaced lines is still silent.
+    """
     cues = (cue(1, 0.0, 2.0, "first line"), cue(2, 5.0, 7.0, "second line"))
     result = dubbing.synthesise_track(cues, FakeSpeaker(), 8.0, rate=16_000)
 
-    quiet = result.samples[int(3.0 * 16_000):int(4.5 * 16_000)]
+    quiet = result.samples[int(3.0 * 16_000):int(3.9 * 16_000)]
     assert np.abs(quiet).max() < 0.01, "the gap between lines must stay empty"
     for start in (0.0, 5.0):
         at = result.samples[int(start * 16_000):int((start + 0.5) * 16_000)]
         assert np.abs(at).max() > 0.05
+
+
+def test_a_line_never_starts_later_than_it_was_said():
+    """Early is a concession to length; late would be a drift."""
+    cues = (cue(1, 0.0, 2.0, "first"), cue(2, 5.0, 7.0, "second"))
+    result = dubbing.synthesise_track(cues, FakeSpeaker(), 8.0, rate=16_000)
+    for spoken, source in zip(result.utterances, cues):
+        assert spoken.start <= source.start + 1e-6
+
+
+def test_a_line_never_starts_more_than_the_allowance_early():
+    cues = (cue(1, 0.0, 2.0, "first"), cue(2, 20.0, 22.0, "second"))
+    result = dubbing.synthesise_track(cues, FakeSpeaker(), 24.0, rate=16_000)
+    for spoken, source in zip(result.utterances, cues):
+        assert spoken.start >= source.start - dubbing.EARLY_START - 1e-6
+
+
+def test_a_line_never_starts_before_the_one_before_it_has_finished():
+    """The allowance buys silence, not a second voice."""
+    cues = (cue(1, 0.0, 6.0, "a long first line"), cue(2, 6.2, 8.0, "second"))
+    result = dubbing.synthesise_track(cues, FakeSpeaker(), 10.0, rate=16_000)
+    first, second = result.utterances[0], result.utterances[1]
+    assert second.start >= first.start + first.duration - 1e-6
 
 
 def test_an_overrunning_line_overlaps_rather_than_being_cut():

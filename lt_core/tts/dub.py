@@ -30,6 +30,16 @@ DUCK_GAIN = 0.125
 #: Fade into and out of ducking, so the original does not jump in level.
 DUCK_FADE = 0.15
 
+#: How far a line may begin before the moment it was said.
+#:
+#: The translation of a sentence rarely takes exactly as long as the sentence
+#: did, and when it takes longer the choice is between starting early and
+#: talking over the next line. Early wins: a dub that runs half a second ahead
+#: of the picture is a dub, two voices at once is a mess. Bounded, and never
+#: before the previous line has finished speaking, so the drift cannot
+#: accumulate across a recording.
+EARLY_START = 1.0
+
 
 @dataclass
 class DubResult:
@@ -79,6 +89,7 @@ def synthesise_track(
     track = np.zeros(length, dtype=np.float32)
     result = DubResult(samples=track, rate=rate, cast=cast)
 
+    spoken_until = 0.0
     for index, cue in enumerate(cues):
         text = cue.flat_text.strip()
         if not text:
@@ -91,14 +102,28 @@ def synthesise_track(
                 gender = cast.genders[index]
             voice = speaker.for_gender(gender)
 
-        # The slot runs to the start of the next line, not to the end of
-        # this one: the silence between them is time nothing else is using.
-        utterance = voice.fit(text, cue.start, slot_seconds(cues, index))
+        # The slot runs to the start of the next line: the silence after a
+        # line is time nothing else is using.
+        slot = slot_seconds(cues, index)
+        begin = cue.start
+        utterance = voice.fit(text, begin, slot)
+
+        if utterance.overran:
+            # Only now, and only as far as the silence before it allows. A
+            # line that fits stays exactly where it was said -- moving those
+            # too would walk the whole dub forward for no reason, which is
+            # what the first version of this did.
+            earlier = max(spoken_until, cue.start - EARLY_START)
+            if earlier < cue.start - 1e-3:
+                begin = earlier
+                utterance = voice.fit(
+                    text, begin, max(0.05, cue.start + slot - begin)
+                )
         if utterance.samples.size == 0:
             continue
 
         samples = resample(utterance.samples, utterance.rate, rate)
-        at = int(cue.start * rate)
+        at = int(begin * rate)
         end = min(at + len(samples), length)
         if end > at:
             # Added rather than assigned: a line that runs into the next slot
@@ -106,6 +131,7 @@ def synthesise_track(
             # talking over the end of a sentence sounds.
             track[at:end] += samples[: end - at]
 
+        spoken_until = begin + utterance.duration
         result.spoken += 1
         result.overran += int(utterance.overran)
         result.tightest_scale = min(result.tightest_scale, utterance.length_scale)
