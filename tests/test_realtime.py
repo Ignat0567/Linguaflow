@@ -110,6 +110,40 @@ def test_forgetting_history_does_not_move_the_commit_point():
     assert agreement.committed_until == before
 
 
+def test_a_word_is_not_lost_when_its_timing_drifts_across_the_commit_point():
+    """Measured on a real recording: "the people who always win the game" came
+    out committed as "the who always win the game".
+
+    The timings are the measured ones. "the" is committed, ending at 3.84; the
+    buffer is trimmed and the model re-reads the shorter audio, where the word
+    after it now ends at 3.80 -- four hundredths before the commit point, and
+    so filtered out as though it had already been committed. It had not: it was
+    the word this agreement was waiting to confirm.
+    """
+    agreement = LocalAgreement()
+    agreement.insert(words((" the", 3.70, 3.84)))
+    agreement.insert(words((" the", 3.72, 3.84), (" people", 3.84, 4.36),
+                           (" who", 4.36, 4.62)))
+    assert agreement.committed_text == "the"
+
+    agreement.insert(words((" people", 2.68, 3.80), (" who", 3.80, 4.60),
+                           (" always", 4.60, 5.44)))
+    assert agreement.committed_text == "the people who"
+
+
+def test_a_word_is_not_committed_twice_when_its_timing_drifts_the_other_way():
+    """The same movement in the other direction produced "they They win" and
+    "times times energy"."""
+    agreement = LocalAgreement()
+    agreement.insert(words((" they", 7.38, 7.94)))
+    agreement.insert(words((" they", 7.38, 7.94), (" win", 7.94, 8.34)))
+    assert agreement.committed_text == "they"
+    agreement.insert(words((" they", 7.36, 7.96), (" win", 7.96, 8.34)))
+    agreement.insert(words((" they", 7.36, 7.98), (" win", 7.98, 8.36),
+                           (" because", 8.36, 8.86)))
+    assert agreement.committed_text == "they win"
+
+
 # -- pacing --------------------------------------------------------------
 
 def test_expected_delay_counts_two_windows():
@@ -130,6 +164,11 @@ def test_every_pace_bounds_its_lag():
     for pace in (FAST, BALANCED, STEADY):
         assert pace.max_lag > pace.window
         assert pace.max_buffer > pace.max_lag
+
+
+class _EchoTranslator:
+    def translate(self, texts, source, target):
+        return [f"[{target}] {text}" for text in texts], None
 
 
 # -- live session --------------------------------------------------------
@@ -254,6 +293,89 @@ def test_stall_is_measured_as_lag_not_as_idle_time():
     assert session.agreement.committed_until > 1.0, "the stream must move on"
 
 
+def test_a_finished_sentence_is_translated_without_waiting_for_the_next_one():
+    """It used to ask whether the whole accumulation ended on a full stop, so a
+    sentence that finished mid-commit waited for a later commit to land exactly
+    on one. Measured on a five-minute talk: the first translation appeared at
+    40 s, they arrived a median of 10 s apart, and one was 496 characters."""
+    script = [
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0)),
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0), (" are", 1.0, 1.5)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    settled = [
+        update.translation
+        for update in (session.feed(chunk) for chunk in chunks(3.0))
+        if update and update.translation
+    ]
+    assert settled, "a finished sentence was never translated"
+    assert "Hello." in settled[0]
+    assert "How" not in settled[0], "the unfinished tail went with it"
+
+
+def test_the_sentence_still_being_spoken_is_translated_provisionally():
+    """Waiting for a full stop is right for text that will never be revised,
+    and on its own it leaves a reader with nothing while a long sentence is
+    spoken."""
+    script = [
+        words((" The", 0.0, 0.5), (" cat", 0.5, 1.0)),
+        words((" The", 0.0, 0.5), (" cat", 0.5, 1.0), (" sat", 1.0, 1.5)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    previews = [
+        update.partial_translation
+        for update in (session.feed(chunk) for chunk in chunks(3.0))
+        if update and update.partial_translation
+    ]
+    assert previews, "nothing was offered while the sentence was unfinished"
+    assert "The cat" in previews[-1]
+
+
+def test_the_provisional_translation_gives_way_to_the_committed_one():
+    """Two translations of the same words on screen at once is worse than a
+    short delay."""
+    script = [
+        words((" The", 0.0, 0.5), (" cat", 0.5, 1.0)),
+        words((" The", 0.0, 0.5), (" cat", 0.5, 1.0), (" sat.", 1.0, 1.5)),
+        words((" The", 0.0, 0.5), (" cat", 0.5, 1.0), (" sat.", 1.0, 1.5),
+              (" Then", 1.5, 2.0)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    for chunk in chunks(4.0):
+        update = session.feed(chunk)
+        if update and update.translation:
+            assert not update.partial_translation, (
+                "the settled translation arrived with a draft of itself"
+            )
+
+
+def test_a_sentence_that_never_ends_is_committed_at_a_clause():
+    """A speaker who runs clause into clause without a full stop must not stop
+    the translation altogether. Broken at a comma, never mid-phrase."""
+    run = words(*[(f" word{n}", n * 1.0, n * 1.0 + 1.0) for n in range(40)])
+    run[9] = w(" nine,", 9.0, 10.0)
+    session = LiveSession(
+        FakeTranscriber([run, run]), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    settled = [
+        update.translation
+        for update in (session.feed(chunk) for chunk in chunks(45.0))
+        if update and update.translation
+    ]
+    assert settled, "nothing was committed for a speaker who never stops"
+    assert settled[0].rstrip().endswith("nine,"), settled[0]
+
+
 # -- conversation --------------------------------------------------------
 
 def test_conversation_requires_two_different_languages():
@@ -299,6 +421,3 @@ def test_a_turn_change_releases_the_unfinished_sentence():
     assert released == "[ru] An unfinished thought"
 
 
-class _EchoTranslator:
-    def translate(self, texts, source, target):
-        return [f"[{target}] {text}" for text in texts], None

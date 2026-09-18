@@ -66,10 +66,7 @@ class LocalAgreement:
         already been committed, so anything ending at or before the commit
         point is dropped before comparison.
         """
-        fresh = [
-            word for word in hypothesis
-            if word.end > self.committed_until + 1e-6
-        ]
+        fresh = self._beyond_commit(hypothesis)
 
         agreed: list[Word] = []
         for current, previous in zip(fresh, self._previous):
@@ -84,6 +81,48 @@ class LocalAgreement:
             self._until = max(self._until, agreed[-1].end)
         self._previous = fresh[len(agreed):]
         return agreed
+
+    def _beyond_commit(self, hypothesis: list[Word]) -> list[Word]:
+        """The part of a hypothesis that is not already committed.
+
+        Decided by words, not by the clock. The buffer deliberately keeps a few
+        seconds of already-committed audio for context, so a hypothesis opens
+        by re-transcribing the tail of what is committed; whatever follows that
+        repetition is new.
+
+        Cutting on the commit point instead looks equivalent and is not. The
+        model re-estimates every word's boundaries on every pass, so a word
+        that was never committed comes back ending a fraction before the commit
+        point and disappears -- measured on a real recording, "the people who
+        always win" was committed as "the who always win", and "which is the
+        ability of these people" as "which is the of these people". The same
+        movement the other way commits a word twice: "they They win", "times
+        times energy".
+
+        Sometimes there is no repetition to align against: the buffer is
+        trimmed after every commit, and on the shorter audio the model does not
+        always render the opening again. The word it starts with then is the
+        word this agreement was already waiting on, so that is the second
+        anchor -- and only when neither matches does the clock decide.
+        """
+        if not self.committed:
+            return list(hypothesis)
+
+        keys = [_key(word) for word in hypothesis]
+        tail = [_key(word) for word in self.committed[-len(keys):]]
+        for length in range(min(len(tail), len(keys)), 0, -1):
+            if tail[-length:] == keys[:length]:
+                return list(hypothesis[length:])
+
+        if keys and self._previous and _key(self._previous[0]) == keys[0]:
+            # It opens on the word still pending confirmation, so none of it
+            # has been committed however its timings happen to read.
+            return list(hypothesis)
+
+        return [
+            word for word in hypothesis
+            if word.end > self.committed_until + 1e-6
+        ]
 
     def pending(self) -> list[Word]:
         """Words seen but not yet confirmed -- the provisional tail."""
