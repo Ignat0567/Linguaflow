@@ -90,6 +90,12 @@ def main() -> int:
         help="читать всех одним голосом; по умолчанию мужские реплики читает "
              "мужской голос, женские — женский")
     translation.add_argument(
+        "--shorten-with", choices=["groq", "openai", "nvidia", "local"],
+        help="кем сокращать реплики, которые не влезают в тайминг; "
+             "перевод при этом может оставаться офлайн")
+    translation.add_argument(
+        "--shorten-model", help="модель для --shorten-with")
+    translation.add_argument(
         "--no-condense", action="store_true",
         help="не сокращать перевод под длительность реплики")
     translation.add_argument(
@@ -99,6 +105,16 @@ def main() -> int:
         "--bilingual", action="store_true",
         help="дополнительный SRT с обоими языками")
     args = parser.parse_args()
+
+    shortener = None
+    if args.shorten_with:
+        from lt_core.mt.cloud import build_cloud_provider
+
+        shortener = build_cloud_provider(
+            service=args.shorten_with,
+            api_key=args.api_key,
+            **({"model": args.shorten_model} if args.shorten_model else {}),
+        )
 
     # Resolve the source before loading the model. Loading costs a couple of
     # seconds and a couple of gigabytes of VRAM, and spending them to then
@@ -121,8 +137,14 @@ def main() -> int:
     # not once the GPU has finished ten minutes of work.
     translator = None
     if args.to:
-        options = {"api_key": args.api_key} if args.api_key else {}
+        # The key belongs to whichever service is being called. Offline
+        # translation takes no key, and passing one anyway -- as this did --
+        # fails at construction with a message about an unexpected argument,
+        # which tells a user nothing about their own command.
+        options: dict = {}
         if args.mode == TranslationMode.ONLINE:
+            if args.api_key:
+                options["api_key"] = args.api_key
             options["service"] = args.service
             if args.llm_model:
                 options["model"] = args.llm_model
@@ -183,6 +205,7 @@ def main() -> int:
             match_voices=not args.one_voice,
             dub_video=not args.no_video,
             condense=not args.no_condense,
+            shortener=shortener,
             keep_original_audio=not args.voice_only,
         )
     except UnsupportedLanguage as error:

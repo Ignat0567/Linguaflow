@@ -94,7 +94,7 @@ class Speaker:
         self.voice_name = voice or self._default_voice(language)
         self.voices_dir = Path(voices_dir or Path.cwd() / "models" / "piper")
         self._voice = self._load()
-        self._pace: float | None = None
+        self._pace: tuple[float, float] | None = None
 
     @staticmethod
     def _default_voice(language: str) -> str:
@@ -149,27 +149,53 @@ class Speaker:
 
     #: A sentence used to measure the voice's own pace. Ordinary prose: a
     #: tongue-twister or a list of numbers would time differently.
+    #: A short line, to separate the fixed cost of an utterance from the cost
+    #: of its text.
+    PACE_PROBE_SHORT = {"ru": "Да.", "en": "Yes.", "de": "Ja."}
+
     PACE_SAMPLE = {
         "ru": "Сегодня мы разберём несколько важных вопросов и перейдём к примерам.",
         "en": "Today we will go through a few important points and look at examples.",
         "de": "Heute gehen wir einige wichtige Punkte durch und sehen uns Beispiele an.",
     }
 
-    def chars_per_second(self) -> float:
-        """How fast this voice speaks, measured once and kept.
+    def pace(self) -> tuple[float, float]:
+        """How long this voice takes: (characters per second, fixed overhead).
 
-        Not a constant: measured on the two Russian voices, ruslan says 18.4
-        characters a second and irina 13.9 -- a third apart. A budget built
-        from one number would be wrong by that much for the other.
+        Two numbers, not one. A line's duration is `overhead + characters /
+        rate`: the overhead is the silence at the edges and the model's floor
+        on a phoneme, and it does not scale with the text. Measured on
+        ru_RU-ruslan-medium: 0.19 s and 17.8 characters a second.
+
+        Leaving the overhead out is not a rounding error. It made the budget
+        generous enough that only 17 lines looked too long where the
+        synthesiser then overran on 86, so the shortening step quietly did a
+        fifth of its job.
+
+        The rate is not a constant either: ruslan says 18.4 characters a
+        second and irina 13.9, a third apart.
         """
         if self._pace is None:
-            sample = self.PACE_SAMPLE.get(self.language)
-            if not sample:
-                sample = languages.punctuation_sample(self.language)
-            samples, rate = self.say(sample)
-            seconds = len(samples) / rate if rate else 0.0
-            self._pace = len(sample) / seconds if seconds > 0 else 15.0
+            short = self.PACE_PROBE_SHORT.get(self.language, "Да.")
+            long = self.PACE_SAMPLE.get(
+                self.language
+            ) or languages.punctuation_sample(self.language)
+            durations = []
+            for text in (short, long):
+                samples, rate = self.say(text)
+                durations.append(len(samples) / rate if rate else 0.0)
+            span = len(long) - len(short)
+            gap = durations[1] - durations[0]
+            if span > 0 and gap > 0:
+                rate = span / gap
+                overhead = max(0.0, durations[0] - len(short) / rate)
+            else:
+                rate, overhead = 15.0, 0.2
+            self._pace = (rate, overhead)
         return self._pace
+
+    def chars_per_second(self) -> float:
+        return self.pace()[0]
 
     def fit(self, text: str, start: float, seconds: float) -> Utterance:
         """Speak `text` so that it fits `seconds`, as far as that is sensible.

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .condense import Condensed, _safe, budget_for, slot_seconds
+from .condense import Condensed, _safe, budgets_for
 
 
 @dataclass
@@ -62,6 +62,8 @@ def shorten_cues(
     chars_per_second: float,
     provider,
     headroom: float = 1.0,
+    overhead: float = 0.0,
+    measure=None,
     records: list[Condensed] | None = None,
 ) -> tuple[list, list[Condensed], ShortenReport]:
     """Shorten the lines that still do not fit, using the model.
@@ -80,12 +82,12 @@ def shorten_cues(
     ]
     style = CueStyle.for_language(language)
 
+    budgets = budgets_for(cues, chars_per_second, headroom, overhead, measure)
     pending: list[tuple[int, str, int]] = []
     for index, cue in enumerate(cues):
         text = cue.flat_text
-        budget = budget_for(slot_seconds(cues, index), chars_per_second, headroom)
-        if len(text) > budget:
-            pending.append((index, text, budget))
+        if text.strip() and len(text) > budgets[index]:
+            pending.append((index, text, budgets[index]))
 
     if not pending:
         return cues, records, report

@@ -166,13 +166,23 @@ LLM_SERVICES: dict[str, LlmService] = {
         # model list is public, and a bad key comes back 403, which is already
         # mapped to "the service rejected your key".
         base_url="https://integrate.api.nvidia.com/v1",
-        # Chosen for Russian rather than for speed: this task sends a handful
-        # of requests, so a large model costs little here. The catalogue moves
-        # -- `meta/llama-3.3-70b-instruct` was retired in August 2026 and the
-        # obvious default was already dead -- so `--llm-model` takes any id
-        # from integrate.api.nvidia.com/v1/models. Faster alternatives that
-        # exist today: z-ai/glm-5.3-flash, deepseek-ai/deepseek-v4-flash-0731.
-        default_model="mistralai/mistral-large-2-instruct",
+        # Chosen by trying them. A free key opens a small part of the public
+        # catalogue -- of 57 chat models listed, six answered for this
+        # account -- so the default is one that was measured working rather
+        # than one that reads well in a table:
+        #
+        #   google/gemma-4-31b-it    shortened 15 of 18 lines, all checks
+        #                            passed, clean Russian, 0.9 s a request
+        #   nvidia/ising-...-31b     shortened 0 of 18: every answer failed
+        #                            the number or negation check
+        #   nvidia/nemotron-3.*      answer with their reasoning out loud,
+        #                            which breaks the numbered-line contract
+        #   mistralai/mistral-large  404 for this account
+        #   meta/llama-3.3-70b       retired 2026-08-26
+        #
+        # The catalogue moves and accounts differ, so `--llm-model` takes any
+        # id from integrate.api.nvidia.com/v1/models.
+        default_model="google/gemma-4-31b-it",
         env_var="NVIDIA_API_KEY",
         where_to_get_a_key="build.nvidia.com — бесплатные кредиты при регистрации",
     ),
@@ -220,7 +230,12 @@ class OpenAICompatibleTranslator:
         service: str = "openai",
         base_url: str | None = None,
         model: str | None = None,
-        timeout: float = 60.0,
+        # Sixty seconds was a Groq number, and Groq answers in about one.
+        # A 31-billion-parameter model on a free tier does not: forty
+        # subtitle lines took past a minute and the whole recording was lost
+        # to a timeout at the last step. Waiting longer costs nothing when
+        # the service is quick and saves the job when it is not.
+        timeout: float = 300.0,
         lines_per_request: int = DEFAULT_LINES_PER_REQUEST,
     ) -> None:
         spec = LLM_SERVICES.get(service)

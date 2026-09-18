@@ -260,8 +260,37 @@ def slot_seconds(cues, index: int) -> float:
     return max(0.0, cue.end - cue.start)
 
 
+def budgets_for(cues, chars_per_second: float, headroom: float,
+                overhead: float, measure=None) -> list[int]:
+    """The character budget for each line.
+
+    With `measure` -- a function that says how long the voice actually takes
+    over a piece of text -- the budget is derived from that measurement rather
+    than from a formula. It is worth the extra synthesis: a linear model
+    fitted to two probes said only 17 lines were too long where the
+    synthesiser then overran on 86, because short lines are spoken more slowly
+    per character than long ones and no single rate describes both.
+    """
+    budgets: list[int] = []
+    for index, cue in enumerate(cues):
+        slot = slot_seconds(cues, index)
+        text = cue.flat_text
+        if measure is not None and text.strip():
+            natural = measure(text)
+            allowed = slot * headroom
+            if natural <= allowed or natural <= 0:
+                budgets.append(len(text))
+            else:
+                budgets.append(max(1, int(len(text) * allowed / natural)))
+        else:
+            budgets.append(budget_for(slot, chars_per_second, headroom, overhead))
+    return budgets
+
+
 def condense_cues(cues, language: str, chars_per_second: float,
-                  headroom: float = 1.0) -> tuple[list, list[Condensed]]:
+                  headroom: float = 1.0,
+                  overhead: float = 0.0,
+                  measure=None) -> tuple[list, list[Condensed]]:
     """Shorten whichever lines cannot be spoken in the time they have.
 
     Returns the cues with their text replaced, and the record of what was
@@ -272,11 +301,11 @@ def condense_cues(cues, language: str, chars_per_second: float,
     from ..subtitles.cues import CueStyle, _wrap
 
     style = CueStyle.for_language(language)
+    budgets = budgets_for(cues, chars_per_second, headroom, overhead, measure)
     out, records = [], []
     for index, cue in enumerate(cues):
         text = cue.flat_text
-        budget = budget_for(slot_seconds(cues, index), chars_per_second, headroom)
-        result = condense(text, budget, language)
+        result = condense(text, budgets[index], language)
         records.append(result)
         if result.changed:
             cue = replace(cue, lines=_wrap(result.text, style))
@@ -284,10 +313,18 @@ def condense_cues(cues, language: str, chars_per_second: float,
     return out, records
 
 
-def budget_for(seconds: float, chars_per_second: float, headroom: float = 1.0) -> int:
+def budget_for(
+    seconds: float,
+    chars_per_second: float,
+    headroom: float = 1.0,
+    overhead: float = 0.0,
+) -> int:
     """How many characters can be spoken in `seconds`.
 
     `headroom` above 1.0 allows for the speed-up the voice can still apply on
-    top, so the text is not cut further than it has to be.
+    top, so the text is not cut further than it has to be. `overhead` is the
+    part of an utterance that is not text -- the silence at its edges -- and
+    leaving it out makes every budget too generous by that much on every line.
     """
-    return max(1, int(seconds * chars_per_second * headroom))
+    speakable = seconds * headroom - overhead
+    return max(1, int(speakable * chars_per_second))

@@ -109,6 +109,7 @@ def transcribe_file(
     match_voices: bool = True,
     dub_video: bool = True,
     condense: bool = True,
+    shortener: object | None = None,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -212,18 +213,36 @@ def transcribe_file(
             # the voice that will actually speak, whose pace is measured
             # rather than assumed.
             stage("Сокращаю перевод под тайминг")
-            pace = bank.for_gender().chars_per_second()
+            pace, overhead = bank.for_gender().pace()
+
+            def measure(text: str, _bank=bank) -> float:
+                """How long this voice really takes over this text."""
+                samples, rate = _bank.for_gender().say(text)
+                return len(samples) / rate if rate else 0.0
             translated_cues, condensed = condense_cues(
-                translated_cues, target_language, pace, headroom=SPEED_HEADROOM,
+                translated_cues, target_language, pace,
+                headroom=SPEED_HEADROOM, overhead=overhead, measure=measure,
             )
             # The rules remove filler, and a machine translation has little.
-            # Whatever still does not fit goes to the model that translated
-            # it -- but only when the user already chose to work online, since
-            # it is the same text going to the same third party.
-            if translator is not None and can_shorten(translator.provider):
+            # Whatever still does not fit is rewritten by a model.
+            #
+            # Which model is a separate choice from which translator, and the
+            # measurements are why. Translating this recording through a
+            # 31-billion-parameter model on a free tier would have taken about
+            # twenty minutes at 3-5 seconds a line, where the local model does
+            # it in four seconds and does it well. Only the lines that do not
+            # fit need rewriting -- 101 of 243 here -- so only those need to
+            # leave, and the translation can stay on this machine.
+            rewriter = shortener
+            if rewriter is None and translator is not None:
+                if can_shorten(translator.provider):
+                    rewriter = translator.provider
+            if rewriter is not None and can_shorten(rewriter):
+                stage("Сокращаю остальное моделью")
                 translated_cues, condensed, shorten_report = shorten_cues(
-                    translated_cues, target_language, pace, translator.provider,
-                    headroom=SPEED_HEADROOM, records=condensed,
+                    translated_cues, target_language, pace, rewriter,
+                    headroom=SPEED_HEADROOM, overhead=overhead,
+                    measure=measure, records=condensed,
                 )
                 if shorten_report.summary():
                     stage(shorten_report.summary())

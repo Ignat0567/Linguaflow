@@ -347,6 +347,55 @@ The obvious default was already dead: `meta/llama-3.3-70b-instruct` reached
 end of life on 2026-08-26 and the endpoint said so. The catalogue moves, so
 `--llm-model` takes any id from `integrate.api.nvidia.com/v1/models`.
 
+### With a key, measured
+
+A free NVIDIA key opens a small part of the catalogue -- six of the 57 chat
+models answered for this account -- and picking a default by name would have
+failed three times over:
+
+| | |
+|---|---|
+| `meta/llama-3.3-70b-instruct` | retired 2026-08-26, the endpoint said so |
+| `mistralai/mistral-large-2-instruct` | 404, not enabled for the account |
+| `nvidia/nemotron-3.*` | answer with their reasoning out loud |
+| `nvidia/ising-calibration-1.5-31b` | shortened 0 of 18: every answer failed a check |
+| **`google/gemma-4-31b-it`** | **shortened 15 of 18, clean Russian** |
+
+29. **Which model shortens is a separate choice from which model
+    translates.** Running the whole recording through a 31-billion-parameter
+    model on a free tier meant 3-5 seconds a line and about twenty minutes,
+    where the local translator does it in four seconds and does it well. Only
+    the lines that do not fit need rewriting, so `--shorten-with` sends those
+    and nothing else, and the translation stays on this machine.
+30. **A character budget cannot stand in for the synthesiser.** Fitted to two
+    probes it said 17 lines were too long where the voice then overran on 86
+    -- short lines are spoken more slowly per character than long ones, and no
+    single rate describes both. The budget is now taken from synthesising the
+    line and measuring it, which costs one extra pass over a fast model and
+    removes the error.
+31. **The timeout was a Groq number.** Sixty seconds, where Groq answers in
+    about one. A large model on a free tier took longer and the whole
+    recording was lost at the last step; waiting longer costs nothing when the
+    service is quick.
+
+### What it is worth, end to end
+
+On the recording that prompted all of this, 243 lines:
+
+| | overran their slot | at the speed limit |
+|---|---|---|
+| before any of this | 104 | 138 |
+| clause slots and rules, offline | 91 | 122 |
+| measured budgets and the model | **56** | **83** |
+
+57 lines were shortened, 1231 characters removed, and 8 of the model's answers
+were refused by the checks and the originals kept. The model added about two
+minutes to a 214-second run.
+
+Fifty-six lines still overrun. The checks accept any answer that is shorter
+and safe, including one that is shorter but still over its budget, which is an
+improvement rather than a fix and is counted honestly as such.
+
 384 tests.
 
 ## Not done
