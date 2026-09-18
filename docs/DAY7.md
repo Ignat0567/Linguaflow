@@ -468,7 +468,51 @@ own things belong.
     primed pass worse overall. A change that trades one class of error for
     another with no way to tell which is which is not an improvement.
 
-483 tests.
+41. **A live commit boundary made of seconds loses words and repeats them.**
+    The buffer is trimmed after every commit and the model re-estimates every
+    word's timing on the shorter audio, so a word that was never committed
+    comes back ending a fraction before the boundary and vanishes -- measured
+    in the first four hundred characters of a real talk: "the people who always
+    win" became "the who always win", "which is the ability of these people"
+    became "which is the of these people", and the same movement the other way
+    gave "they They win" and "times times energy". The boundary is now the
+    repetition itself: the buffer deliberately keeps a few seconds of committed
+    audio for context, so a hypothesis opens by re-transcribing the tail of
+    what is committed, and that is what to cut on. Where the trim leaves
+    nothing to align against, the word the hypothesis opens with is the word
+    the agreement was already waiting for. Forced commits fell from 21 to 5,
+    and "не весят одинаково" stopped arriving as "весят одинаково".
+42. **Waiting for a full stop is right, and asking for it at the end of the
+    accumulation is not.** A sentence that finished mid-commit sat unread until
+    a later commit happened to land exactly on one: first translation at 40 s,
+    a median of 10 s between them, one of 496 characters. Finished sentences
+    now go on their own.
+43. **The unfinished sentence is translated too, and marked as provisional.**
+    Cutting the *committed* translation at clauses was measured first and costs
+    meaning: "mass times energy times coordination", handed over a clause at a
+    time, comes back as "масса во время энергии", because "times" without its
+    sentence is the preposition. So the committed text stays whole-sentence and
+    a draft carries the reading -- first text on screen at 4 s instead of 40,
+    replaced 118 times over five minutes, for 0.27 -> 0.34 of real time.
+44. **In a conversation, which alphabet the words came out in beats which
+    window the audio fell in.** Committed text trails the audio by seconds, so
+    at a handover the window has already changed hands while the words still
+    belong to whoever was talking: "four major features." went to the Russian
+    side and "За последние три месяца." to the English one, and the translator
+    returned both unchanged. One commit can also hold both at once, and is now
+    split. Where the two sides share an alphabet -- English and German -- this
+    stays silent and the audio is still all there is.
+45. **Conversation mode sent no prompt at all, and threw away its own
+    ending.** No prompt was right for the previous speaker's words and wrong
+    for the punctuated sample, which is nobody's words; without it the Russian
+    side barely punctuated, so its turns never finished and never got
+    translated. And the window feeds chunks itself so that it can stop on a
+    button, then asked for the tail only `if isinstance(session, LiveSession)`
+    -- so the last thing either person said was dropped every time. Measured on
+    a two-language dialogue: turns returned untranslated 2 of 9 -> 0 of 12,
+    first reading 6.1 s -> 4.1 s, median gap between readings 6.1 s -> 2.0 s.
+
+505 tests.
 
 ## Not done
 
