@@ -191,7 +191,7 @@ class LiveSession:
         target_language: str | None = None,
         pace: Pace = BALANCED,
         speaker: str | None = None,
-        use_prompt: bool = True,
+        carry_context: bool = True,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -199,13 +199,17 @@ class LiveSession:
         self.target_language = target_language
         self.pace = pace
         self.speaker = speaker
-        # Conditioning on previously committed text keeps a monologue reading
-        # as prose. In a two-language conversation it does the opposite: the
-        # prompt is in the previous speaker's language and drags the model into
+        # Carrying previously committed text forward keeps a monologue reading
+        # as prose. In a two-language conversation it does the opposite: that
+        # text is in the previous speaker's language and drags the model into
         # transcribing the next speaker in it too. Measured -- a German turn
         # came out as Russian, and its translation degenerated into "The
         # system." repeated five times.
-        self.use_prompt = use_prompt
+        #
+        # The punctuated sample is a different thing and is always sent: it is
+        # not anybody's words, it is an example of what a finished sentence
+        # looks like, and it is chosen for the language of the window in hand.
+        self.carry_context = carry_context
         #: Filled in on the first tick when the language was not given.
         self.detected_language: str | None = source_language
 
@@ -285,7 +289,7 @@ class LiveSession:
                 # read as continuous prose rather than as disconnected
                 # fragments, and here the previous text is committed, so a bad
                 # guess cannot poison what follows.
-                initial_prompt=self._prompt() if self.use_prompt else None,
+                initial_prompt=self._prompt(),
                 # Silence is common between phrases and the filter costs almost
                 # nothing, but on a two-second window it can swallow a short
                 # word at the edge, so it is left off for the live path.
@@ -434,6 +438,8 @@ class LiveSession:
         back unpunctuated once, a prompt made only of it keeps it that way.
         """
         opening = languages.punctuation_sample(self.source_language or "")
+        if not self.carry_context:
+            return opening or None
         tail = self.agreement.committed[-30:]
         text = "".join(word.text for word in tail).strip()
         return " ".join(part for part in (opening, text) if part) or None

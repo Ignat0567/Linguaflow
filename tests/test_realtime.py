@@ -251,14 +251,35 @@ def test_session_feeds_committed_text_back_as_context():
     assert any(prompt and "alpha" in prompt for prompt in transcriber.prompts)
 
 
-def test_context_can_be_turned_off():
-    """In conversation mode the prompt is in the wrong speaker's language."""
+def test_the_previous_speakers_words_can_be_kept_out_of_the_prompt():
+    """In conversation mode the committed text is in the other person's
+    language, and carrying it forward drags the model into transcribing the
+    next speaker in it too -- measured, a German turn came out as Russian."""
     script = [words((" alpha", 0.0, 0.5))] * 4
     transcriber = FakeTranscriber(script)
-    session = LiveSession(transcriber, pace=Pace(window=1.0), use_prompt=False)
+    session = LiveSession(transcriber, source_language="en",
+                          pace=Pace(window=1.0), carry_context=False)
     for chunk in chunks(4.0):
         session.feed(chunk)
-    assert all(prompt is None for prompt in transcriber.prompts)
+    assert all(prompt is None or "alpha" not in prompt
+               for prompt in transcriber.prompts)
+
+
+def test_the_punctuated_example_is_sent_even_without_context():
+    """It is not anybody's words -- it is what a finished sentence looks like,
+    and without one this model transcribes speech as an unbroken run. A live
+    sentence with no full stop in it is a turn nobody can read."""
+    from lt_core import languages
+
+    script = [words((" alpha", 0.0, 0.5))] * 4
+    transcriber = FakeTranscriber(script)
+    session = LiveSession(transcriber, source_language="de",
+                          pace=Pace(window=1.0), carry_context=False)
+    for chunk in chunks(4.0):
+        session.feed(chunk)
+    sample = languages.punctuation_sample("de")
+    assert sample
+    assert any(prompt == sample for prompt in transcriber.prompts)
 
 
 def test_buffer_is_bounded_when_nothing_ever_agrees():
@@ -400,9 +421,13 @@ def test_the_window_does_not_ask_only_one_kind_of_session_for_its_tail():
     LiveSession)`. Both kinds have one."""
     from pathlib import Path as _Path
 
-    worker = (_Path(__file__).resolve().parent.parent
-              / "lt_ui" / "engine.py").read_text(encoding="utf-8")
-    assert "isinstance(session, LiveSession)" not in worker
+    root = _Path(__file__).resolve().parent.parent
+    for path in (root / "lt_ui" / "engine.py", root / "tools" / "live.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "finish()" in source, path.name
+        for guard in ("isinstance(session, LiveSession)",
+                      "isinstance(session, ConversationSession)"):
+            assert guard not in source, f"{path.name}: {guard}"
     assert callable(getattr(ConversationSession, "finish", None))
     assert callable(getattr(LiveSession, "finish", None))
 
@@ -455,6 +480,47 @@ def test_a_turn_is_routed_by_the_alphabet_it_came_out_in():
 
     assert session._by_script("four major features.") == "en"
     assert session._by_script("За последние три месяца.") == "ru"
+
+
+def _two_sided():
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("ru", "B")
+    session._left_script, session._right_script = "latin", "cyrillic"
+    return session
+
+
+def test_a_commit_that_spans_a_handover_is_split_between_the_two_sides():
+    """Agreement knows nothing about whose voice it is listening to, so one
+    commit can hold the end of one turn and the start of the next. Measured:
+    "За последние три месяца, reduced average response." came out as a single
+    line, and whichever way it was sent, half of it was being translated into
+    the language it was already in."""
+    pieces = _two_sided()._split_by_side(
+        "За последние три месяца, reduced average response.", "en"
+    )
+    assert pieces == [
+        ("ru", "За последние три месяца,"),
+        ("en", "reduced average response."),
+    ]
+
+
+def test_an_ordinary_turn_is_not_split_at_all():
+    pieces = _two_sided()._split_by_side("Reduced latency by 31%.", "en")
+    assert pieces == [("en", "Reduced latency by 31%.")]
+
+
+def test_a_turn_that_opens_on_a_figure_still_belongs_to_whoever_said_it():
+    pieces = _two_sided()._split_by_side("31% быстрее прежнего.", "en")
+    assert pieces == [("ru", "31% быстрее прежнего.")]
+
+
+def test_two_sides_sharing_an_alphabet_are_never_split():
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("de", "B")
+    session._left_script, session._right_script = "latin", "latin"
+    assert session._split_by_side("Guten Morgen, good morning.", "de") == [
+        ("de", "Guten Morgen, good morning.")
+    ]
 
 
 def test_figures_and_borrowed_words_do_not_change_whose_turn_it_is():

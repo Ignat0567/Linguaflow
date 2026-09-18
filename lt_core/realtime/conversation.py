@@ -120,7 +120,7 @@ class ConversationSession:
             source_language=left.language,
             target_language=None,
             pace=pace,
-            use_prompt=False,
+            carry_context=False,
         )
         self.transcriber = transcriber
         self._history: list[LiveUpdate] = []
@@ -202,52 +202,90 @@ class ConversationSession:
                 latency=update.latency,
             )]
 
-        spoken = self._by_script(update.committed) or heard
-        route = self._route(spoken) if spoken else None
-        if route is None:
-            # A language neither participant speaks. Show it untranslated
-            # rather than guessing a direction and translating into the wrong
-            # one.
-            resolved = LiveUpdate(
-                committed=update.committed,
-                partial=update.partial,
-                speaker=None,
+        produced: list[LiveUpdate] = []
+        # A commit that straddles a handover holds both languages at once --
+        # measured, "За последние три месяца, reduced average response." came
+        # out as one line, and whichever way it was sent half of it was being
+        # translated into the language it was already in. Each side's words go
+        # to their own side.
+        pieces = self._split_by_side(update.committed, heard)
+        for index, (language, text) in enumerate(pieces):
+            last = index == len(pieces) - 1
+            route = self._route(language) if language else None
+            if route is None:
+                # A language neither participant speaks. Show it untranslated
+                # rather than guessing a direction and translating into the
+                # wrong one.
+                produced.append(LiveUpdate(
+                    committed=text,
+                    partial=update.partial if last else "",
+                    speaker=None,
+                    audio_time=update.audio_time,
+                    latency=update.latency,
+                ))
+                continue
+
+            speaker, listener = route
+            released, translation, provisional = self._hold(
+                text, speaker.language, listener.language
+            )
+            if released:
+                # The previous speaker's unfinished sentence, closed by the
+                # handover. It belongs to them, not to whoever is talking now
+                # -- attaching it to the current update put Russian text under
+                # an English speaker's name.
+                produced.append(LiveUpdate(
+                    translation=released,
+                    speaker=self._previous_speaker,
+                    audio_time=update.audio_time,
+                ))
+            produced.append(LiveUpdate(
+                committed=text,
+                partial=update.partial if last else "",
+                translation=translation,
+                partial_translation=provisional if last else "",
+                speaker=speaker.label,
                 audio_time=update.audio_time,
                 latency=update.latency,
-            )
-            self._history.append(resolved)
-            return [resolved]
-
-        speaker, listener = route
-        released, translation, provisional = self._hold(
-            update.committed, speaker.language, listener.language
-        )
-
-        produced: list[LiveUpdate] = []
-        if released:
-            # The previous speaker's unfinished sentence, closed by the
-            # handover. It belongs to them, not to whoever is talking now --
-            # attaching it to the current update put Russian text under an
-            # English speaker's name.
-            produced.append(LiveUpdate(
-                translation=released,
-                speaker=self._previous_speaker,
-                audio_time=update.audio_time,
             ))
+            self._previous_speaker = speaker.label
 
-        resolved = LiveUpdate(
-            committed=update.committed,
-            partial=update.partial,
-            translation=translation,
-            partial_translation=provisional,
-            speaker=speaker.label,
-            audio_time=update.audio_time,
-            latency=update.latency,
-        )
-        self._previous_speaker = speaker.label
-        produced.append(resolved)
         self._history.extend(produced)
         return produced
+
+    def _split_by_side(
+        self, text: str, heard: str | None
+    ) -> list[tuple[str | None, str]]:
+        """Break committed text into runs, one per side that wrote them.
+
+        One run for all of it in the ordinary case. Two when the commit spans a
+        handover, and none of it when there is nothing to split on -- two sides
+        sharing an alphabet, where the audio's verdict is all there is.
+        """
+        if not text:
+            return []
+        if self._left_script is None or self._left_script == self._right_script:
+            return [(heard, text)]
+
+        sides = {self._left_script: self.left.language,
+                 self._right_script: self.right.language}
+        runs: list[list] = []
+        for token in text.split():
+            language = sides.get(_script_of(token) or "")
+            if runs and (language is None or runs[-1][0] == language):
+                runs[-1][1].append(token)
+            elif runs and runs[-1][0] is None:
+                # A run that began on figures or punctuation now has a side.
+                runs[-1][0] = language
+                runs[-1][1].append(token)
+            else:
+                runs.append([language, [token]])
+        if not runs:
+            return [(heard, text)]
+        return [
+            (language if language else heard, " ".join(words))
+            for language, words in runs
+        ]
 
     def _by_script(self, text: str) -> str | None:
         """Whose language this text is written in, when the two sides do not

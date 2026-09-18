@@ -136,13 +136,14 @@ def main() -> int:
     finally:
         source.stop()
 
-    if isinstance(session, ConversationSession):
-        stats = session.stats
-    else:
-        final = session.finish()
+    # Both kinds of session hold a tail: the last words are transcribed and
+    # then wait for a sentence that never comes. Asking only one of them lost
+    # the last thing either person said in conversation mode.
+    closing = session.finish()
+    for final in (closing if isinstance(closing, list) else [closing]):
         if final.has_content:
             _show(final)
-        stats = session.stats
+    stats = session.stats
     print("\n" + "-" * 60)
     print(f"Звука:        {stats.audio_seconds:.0f} с за "
           f"{time.perf_counter() - begin:.0f} с")
@@ -167,6 +168,8 @@ def _show(update) -> None:
         print(f"    → {update.translation}")
     if update.partial:
         print(f"    … {update.partial}", flush=True)
+    if update.partial_translation:
+        print(f"    ~ {update.partial_translation}", flush=True)
 
 
 if __name__ == "__main__":
