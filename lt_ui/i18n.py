@@ -273,6 +273,14 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "Язык интерфейса": ("Interface language", "Sprache der Oberfläche"),
     "Куда сохранять файлы": ("Where to save files", "Speicherort für Dateien"),
     "Выбрать папку": ("Choose a folder", "Ordner wählen"),
+    "Настройки, история и ключ: {path}": (
+        "Settings, history and key: {path}",
+        "Einstellungen, Verlauf und Schlüssel: {path}",
+    ),
+    "(система перенаправила эту папку)": (
+        "(the system redirected this folder)",
+        "(das System hat diesen Ordner umgeleitet)",
+    ),
     "По умолчанию": ("Default", "Standard"),
     "Внутри программы, по одной папке на задание": (
         "Inside the app, one folder per job",

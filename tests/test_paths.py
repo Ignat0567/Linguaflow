@@ -141,3 +141,35 @@ def test_the_store_lands_in_the_per_user_folder(monkeypatch, tmp_path):
 def test_the_store_still_honours_an_explicit_folder(tmp_path):
     store = Store(tmp_path / "elsewhere")
     assert store.root == tmp_path / "elsewhere"
+
+
+# -- when the system moves the folder behind us --------------------------
+
+def test_a_plain_folder_reports_itself(tmp_path):
+    from lt_ui.paths import actual_location
+
+    folder = tmp_path / "profile"
+    folder.mkdir()
+    real, redirected = actual_location(folder)
+    assert real == folder.resolve()
+    assert not redirected
+
+
+def test_a_redirected_folder_is_reported_as_such(tmp_path):
+    """Store-installed Python redirects %APPDATA% into a package sandbox, so
+    the program names a path that File Explorer says does not exist. Measured
+    on this machine: it lands under
+    AppData/Local/Packages/PythonSoftwareFoundation.Python.../LocalCache.
+    """
+    from lt_ui.paths import actual_location
+
+    real_place = tmp_path / "elsewhere"
+    real_place.mkdir()
+    link = tmp_path / "named"
+    try:
+        link.symlink_to(real_place, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("этой системе нельзя создать ссылку без прав")
+    found, redirected = actual_location(link)
+    assert redirected
+    assert found == real_place.resolve()

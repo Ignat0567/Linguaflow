@@ -47,6 +47,25 @@ def user_data_dir() -> Path:
     return Path(base) / APP_NAME
 
 
+def actual_location(folder: Path) -> tuple[Path, bool]:
+    """Where a folder really is, and whether that differs from its name.
+
+    Python installed from the Microsoft Store runs inside a package sandbox
+    and quietly redirects writes to `%APPDATA%` into its own LocalCache. The
+    program then reports a path that File Explorer says does not exist, and a
+    user looking for their settings finds nothing there. `resolve()` sees
+    through it; the interface shows what it finds.
+
+    A packaged build is an ordinary executable and is not redirected, so this
+    is a development quirk -- but one that would send someone hunting.
+    """
+    try:
+        real = folder.resolve()
+    except OSError:
+        return folder, False
+    return real, real != folder
+
+
 def legacy_data_dir(root: Path | str) -> Path:
     """Where this data used to live: a `data/` folder beside the code."""
     return Path(root) / "data"

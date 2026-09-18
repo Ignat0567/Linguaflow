@@ -22,6 +22,7 @@ from ..i18n import _, UI_LANGUAGE_NAMES, UI_LANGUAGES, language_name
 from ..store import ROOT, display_name
 from ..glass import GlassInput
 from ..keys import KeyStore
+from ..paths import actual_location
 from ..widgets import (
     AccentSwatch,
     ChipGroup,
@@ -280,6 +281,8 @@ class SettingsScreen(QWidget):
         folder_wrap.setMinimumHeight(_ROW_HEIGHT)
         folder_wrap.setLayout(folder_row)
         where_files.body.addWidget(folder_wrap)
+        self._where_state = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
+        where_files.body.addWidget(self._where_state)
 
         column = QVBoxLayout(self)
         column.setContentsMargins(8, 0, 8, 8)
@@ -417,6 +420,11 @@ class SettingsScreen(QWidget):
         self._folder.setText(
             chosen or _("Внутри программы, по одной папке на задание")
         )
+        real, redirected = actual_location(self.app.store.root)
+        note = _("Настройки, история и ключ: {path}", path=str(real))
+        if redirected:
+            note += " " + _("(система перенаправила эту папку)")
+        self._where_state.setText(note)
 
     def _choose_folder(self) -> None:
         start = self.app.store.settings.output_dir or str(ROOT)
