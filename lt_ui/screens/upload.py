@@ -143,7 +143,17 @@ class UploadScreen(QWidget):
             outputs=outputs,
         ))
         self.app.history_changed()
-        self._done.show_result(result, settings)
+        try:
+            self._done.show_result(result, settings)
+        except Exception as error:  # noqa: BLE001 -- see below
+            # The job finished and the files are on disk; the history above
+            # already names them. A result screen that cannot draw itself is a
+            # reason to say so and offer the way back, not a reason to leave
+            # somebody watching a ring stopped at 99% for work that is done.
+            self._busy.stop(
+                _("Готово, но результат не показать: {reason}", reason=str(error))
+            )
+            return
         self._stack.setCurrentWidget(self._done)
         if settings.notify:
             self.window().activateWindow()
@@ -467,7 +477,7 @@ class _Done(QWidget):
         chips.setSpacing(10)
         labels = {
             "srt": _("Субтитры (.srt)"),
-            "srt." + settings.to_lang: f_("Перевод (.srt)"),
+            "srt." + settings.to_lang: _("Перевод (.srt)"),
             "srt.bilingual": _("Оба языка (.srt)"),
             "vtt": _("Субтитры (.vtt)"),
             "txt": _("Текст (.txt)"),
@@ -477,7 +487,7 @@ class _Done(QWidget):
         for key, path in result.outputs.items():
             caption = labels.get(key)
             if caption is None and key.startswith("srt."):
-                caption = f'{_(_("Перевод (.srt)"))} · {key}'
+                caption = f'{_("Перевод (.srt)")} · {key}'
             if caption is None:
                 continue
             button = glass.GlassButton(caption, self, height=36, padding=16)

@@ -152,6 +152,96 @@ def test_the_underscore_name_is_never_used_as_a_throwaway():
     assert offenders == [], offenders
 
 
+def test_no_name_is_used_that_is_bound_nowhere():
+    """A third time, in the same family: `f_("Перевод (.srt)")`.
+
+    One character, in the branch that draws the result screen, in a commit
+    that added three interface languages. Python raises NameError only when
+    that line runs -- so the job finished, every file was written, and the
+    person watched a progress ring stopped at 99%.
+
+    The check is deliberately loose: a name counts as bound if it is bound
+    anywhere in its own module, which is not what Python's scoping says. That
+    over-approximation is what makes it free of false positives, and it still
+    catches the thing worth catching -- a name that exists nowhere at all.
+    """
+    import builtins
+
+    always = set(dir(builtins)) | {
+        "__file__", "__name__", "__doc__", "__all__", "__spec__",
+        "__package__", "__builtins__", "__loader__", "__path__",
+        "__debug__", "__class__",
+    }
+
+    def bound(tree: ast.AST) -> set[str]:
+        names: set[str] = set()
+
+        def parameters(arguments: ast.arguments) -> None:
+            for group in (arguments.posonlyargs, arguments.args,
+                          arguments.kwonlyargs):
+                names.update(argument.arg for argument in group)
+            for extra in (arguments.vararg, arguments.kwarg):
+                if extra is not None:
+                    names.add(extra.arg)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                names.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+                parameters(node.args)
+            elif isinstance(node, ast.Lambda):
+                parameters(node.args)
+            elif isinstance(node, ast.ClassDef):
+                names.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                names.update(node.names)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+                names.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and node.rest:
+                names.add(node.rest)
+        return names
+
+    unknown: list[str] = []
+    roots = [UI_ROOT, UI_ROOT.parent / "lt_core", UI_ROOT.parent / "tools"]
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            known = bound(tree) | always
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Name)
+                    and isinstance(node.ctx, ast.Load)
+                    and node.id not in known
+                ):
+                    unknown.append(f"{path.name}:{node.lineno}: {node.id}")
+    assert unknown == [], unknown
+
+
+def test_a_result_that_cannot_be_drawn_still_lets_the_person_out():
+    """The job is done and the files are written by then. Whatever goes wrong
+    while showing them, the progress ring must not be where it ends."""
+    source = (UI_ROOT / "screens" / "upload.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    handler = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_on_done"
+    )
+    guarded = [
+        node for node in ast.walk(handler)
+        if isinstance(node, ast.Try)
+        and any("show_result" in ast.dump(child) for child in node.body)
+    ]
+    assert guarded, "show_result is called without a way out if it raises"
+
+
 # -- the light theme -----------------------------------------------------
 
 def test_the_foreground_inverts_but_the_glass_does_not():

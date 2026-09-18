@@ -348,6 +348,11 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Das Video konnte nicht erstellt werden: {reason}",
     ),
 
+    "Готово, но результат не показать: {reason}": (
+        "Finished, but the result cannot be shown: {reason}",
+        "Fertig, aber das Ergebnis kann nicht angezeigt werden: {reason}",
+    ),
+
     # -- what the core reports when a job cannot go on ------------------
     "Файл не найден: {path}": (
         "File not found: {path}", "Datei nicht gefunden: {path}",
