@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QLinearGradient,
     QCursor,
     QFontMetrics,
     QPainter,
@@ -261,32 +262,44 @@ class NavItem(glass.Hoverable):
 
 
 class Wordmark(QWidget):
-    """The name, top left, in gold, on nothing.
+    """The name, top left, struck in gold.
 
-    No panel behind it. A surface would make it one more control on a screen
-    that already has six of them, and the name is not a control -- it is the
-    product saying what it is.
+    No panel behind it: a surface would make it one more control on a screen
+    that already has six, and the name is not a control.
 
-    It paints its own text rather than wearing a style sheet, so that a change
-    of theme is a repaint: the gold that reads as metal over a dark photograph
-    is not the gold that survives a bright one.
+    What makes letters read as metal is not the colour but the ramp across
+    them -- a dark base, a bright band where the light catches, a shadowed
+    middle -- plus a body they are cut from. So the text is built once as a
+    path and then painted in layers, back to front: a soft shadow, the
+    extruded side of the letters, the polished face, a lit top edge, and the
+    dark line that separates the face from its own side.
     """
 
     #: Twice the size it was, which puts it taller than the bar beside it --
     #: hence the centring rather than a shared top edge.
     SIZE = 48
 
+    #: How far the letters stand off the surface, in pixels of offset. Small:
+    #: past about four the lettering starts to read as a logo from 2004.
+    DEPTH = 3
+
+    #: The shadow is drawn as a handful of offset copies rather than blurred.
+    #: A real blur of a 250-pixel strip costs more per repaint than the
+    #: difference is worth, and repaints happen on every theme change.
+    SHADOW_STEPS = 5
+
     def __init__(self, parent: QWidget | None = None, size: int = SIZE) -> None:
         super().__init__(parent)
         clear_fill(self)
+        self._text = "Linguaflow"
         self._font = theme.font(size, 700, tracking=-2)
         metrics = QFontMetrics(self._font)
-        self._text = "Linguaflow"
-        # Room for the descender of the g: a band cut to the cap height
-        # shaves it off, and a clipped letter reads as a broken font.
+        self._baseline = metrics.ascent() + 4
+        # Room for the descender of the g, for the extrusion and for the
+        # shadow under it: a band cut to the letters clips all three.
         self.setFixedSize(
-            metrics.horizontalAdvance(self._text) + 6,
-            metrics.height() + 6,
+            metrics.horizontalAdvance(self._text) + self.DEPTH + 10,
+            metrics.height() + self.DEPTH + 10,
         )
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
@@ -299,12 +312,52 @@ class Wordmark(QWidget):
         """
         return self.size()
 
+    def _path(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addText(4.0, float(self._baseline), self._font, self._text)
+        return path
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
-        painter.setFont(self._font)
-        painter.setPen(theme.gold())
-        painter.drawText(self.rect(), Qt.AlignLeft | Qt.AlignVCenter, self._text)
+        letters = self._path()
+        top = letters.boundingRect().top()
+        height = max(1.0, letters.boundingRect().height())
+
+        # 1. The shadow it casts, softened by stacking rather than blurring.
+        painter.setPen(Qt.NoPen)
+        for step in range(self.SHADOW_STEPS, 0, -1):
+            shade = QColor(0, 0, 0, 16)
+            painter.setBrush(shade)
+            painter.drawPath(letters.translated(step * 0.7, step * 0.9))
+
+        # 2. The side of the letters, where they stand off the surface.
+        painter.setBrush(theme.GOLD_EDGE)
+        for step in range(self.DEPTH, 0, -1):
+            painter.drawPath(letters.translated(step * 0.8, step * 0.8))
+
+        # 3. The polished face.
+        ramp = QLinearGradient(0.0, top, 0.0, top + height)
+        for position, colour in theme.gold_ramp():
+            ramp.setColorAt(position, QColor(colour))
+        painter.setBrush(ramp)
+        painter.drawPath(letters)
+
+        # 4. The lit edge along the top, which is what a bevel actually is.
+        painter.save()
+        painter.setClipPath(letters)
+        lit = QLinearGradient(0.0, top, 0.0, top + height * 0.22)
+        lit.setColorAt(0.0, QColor(255, 255, 255, 150))
+        lit.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(lit)
+        painter.drawPath(letters)
+        painter.restore()
+
+        # 5. The line between the face and its own side.
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(theme.GOLD_EDGE, 1.0))
+        painter.drawPath(letters)
 
 
 class NavBar(glass.GlassPanel):

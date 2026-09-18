@@ -269,15 +269,42 @@ def test_the_name_reports_its_own_size(window):
     assert window._mark.sizeHint().width() == window._mark.width() > 0
 
 
-def test_the_gold_differs_between_the_themes(window):
-    """A gold that reads as metal over a dark photograph turns pale over a
-    bright one."""
+def test_the_gold_is_a_ramp_not_a_colour():
+    """A single gold is paint. What reads as metal is the ramp: a dark base,
+    a bright band where the light catches, a shadowed middle."""
+    from PySide6.QtGui import QColor
+
+    from lt_ui import theme
+
+    ramp = theme.gold_ramp()
+    assert len(ramp) >= 5
+    lightness = [QColor(colour).lightness() for _stop, colour in ramp]
+    assert max(lightness) - min(lightness) > 90, "плоский градиент — не металл"
+    assert ramp[0][0] == 0.0 and ramp[-1][0] == 1.0
+
+
+def test_the_light_theme_deepens_the_same_metal():
+    """The bright band that reads as a highlight over a dark photograph
+    becomes a hole over a pale one."""
+    from PySide6.QtGui import QColor
+
     from lt_ui import theme
 
     theme.set_mode(theme.DARK)
-    dark = theme.gold()
+    dark = [QColor(c).lightness() for _s, c in theme.gold_ramp()]
     theme.set_mode(theme.LIGHT)
-    light = theme.gold()
+    light = [QColor(c).lightness() for _s, c in theme.gold_ramp()]
     theme.set_mode(theme.DARK)
-    assert dark != light
-    assert dark.lightness() > light.lightness()
+    assert max(light) < max(dark)
+    assert sum(light) < sum(dark)
+
+
+def test_the_name_still_fits_its_own_shadow(window):
+    """The extrusion and the shadow fall outside the letters; a band cut to
+    the text clips both."""
+    from PySide6.QtGui import QFontMetrics
+
+    mark = window._mark
+    metrics = QFontMetrics(mark._font)
+    assert mark.width() > metrics.horizontalAdvance(mark._text)
+    assert mark.height() > metrics.height()

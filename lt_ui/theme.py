@@ -91,18 +91,46 @@ def on_accent() -> QColor:
     return QColor(INK)
 
 
-#: The wordmark's own colour, and the only place gold appears.
+#: Polished gold, as a vertical ramp rather than a colour.
 #:
-#: Two of them, because one does not work twice: a bright gold that reads as
-#: metal over a dark photograph turns pale and weak over a light one. The dark
-#: theme gets a warm, light gold; the light theme an old gold, dark enough to
-#: hold its edge against a bright scrim.
-GOLD_ON_DARK = QColor("#E8C873")
-GOLD_ON_LIGHT = QColor("#9A6F16")
+#: A single gold is paint; what reads as metal is the ramp -- a dark base, a
+#: bright band where the light catches, a shadowed middle, and a second
+#: highlight lower down. Flat colour cannot do it at any value, which is why
+#: this is a list of stops and not a swatch.
+GOLD_RAMP: tuple[tuple[float, str], ...] = (
+    (0.00, "#6E4410"),
+    (0.16, "#B9862A"),
+    (0.34, "#FFF3BE"),
+    (0.46, "#F0CC63"),
+    (0.60, "#A9741B"),
+    (0.78, "#E9C879"),
+    (1.00, "#5E3A0C"),
+)
+
+#: The light theme deepens the same metal rather than changing it: the bright
+#: band that reads as a highlight over a dark photograph becomes a hole over a
+#: pale one, so every stop is taken down.
+GOLD_RAMP_LIGHT: tuple[tuple[float, str], ...] = (
+    (0.00, "#4A2C08"),
+    (0.16, "#8A5F17"),
+    (0.34, "#E8C878"),
+    (0.46, "#C79A33"),
+    (0.60, "#7A5210"),
+    (0.78, "#BE9034"),
+    (1.00, "#3E2406"),
+)
+
+#: The extruded side of the letters, and the line around them.
+GOLD_EDGE = QColor("#3B2408")
+
+
+def gold_ramp() -> tuple[tuple[float, str], ...]:
+    return GOLD_RAMP_LIGHT if is_light() else GOLD_RAMP
 
 
 def gold() -> QColor:
-    return GOLD_ON_LIGHT if is_light() else GOLD_ON_DARK
+    """One representative stop, for anything that cannot take a gradient."""
+    return QColor(gold_ramp()[3][1])
 
 
 # -- hierarchy of foreground text ---------------------------------------
