@@ -22,7 +22,7 @@ from lt_core.mt.types import TranslationMode
 
 from .i18n import UI_LANGUAGES
 from .keys import KeyStore
-from .paths import resolve_data_dir
+from .paths import default_output_dir, resolve_data_dir
 
 ROOT = Path(__file__).resolve().parent.parent
 #: Gigabytes, identical for every user, read-only in use: they stay with the
@@ -101,10 +101,12 @@ class Settings:
     appearance: str = "dark"
     #: Which language the interface itself speaks: ru, en or de.
     ui_language: str = "ru"
-    #: Where finished files are written. Empty means the app's own `data/jobs`,
-    #: one folder per job. A folder chosen by the user is used as given --
-    #: someone who picks «Загрузки» wants the file in «Загрузки», not in a
-    #: subfolder of it.
+    #: Where finished files are written. Empty means the default -- a folder
+    #: called «translated» beside the user's other videos -- and is stored
+    #: empty rather than resolved, so that a profile copied to another
+    #: machine, or a Videos folder moved to another drive, still lands in the
+    #: right place. A folder chosen by the user is used as given: someone who
+    #: picks «Загрузки» wants the file in «Загрузки», not in a subfolder.
     output_dir: str = ""
     #: Floating caption window over the meeting.
     overlay: bool = True
@@ -288,18 +290,27 @@ class Store:
         return self.entries[:limit]
 
     def job_dir(self, entry_id: str) -> Path:
-        """Where this job's files go: the chosen folder, or one of our own."""
-        chosen = self.settings.output_dir
-        if chosen:
-            path = Path(chosen)
+        """Where this job's files go: the chosen folder, or the default one.
+
+        The default is «translated» beside the user's videos. Inside the
+        application's own data would be tidier and wrong: these are the files
+        the work was done for, and they belong where a person keeps such
+        files, not in a folder they would have to be told about.
+        """
+        for candidate in (self.settings.output_dir, default_output_dir()):
+            if not candidate:
+                continue
+            path = Path(candidate)
             try:
                 path.mkdir(parents=True, exist_ok=True)
                 return path
             except OSError:
-                # Read-only or vanished. Fall back rather than lose the job,
-                # and forget the setting so the next one does not retry it.
-                self.settings.output_dir = ""
-                self.save_settings()
+                # Read-only, or on a drive that is no longer there. Forget a
+                # chosen folder so the next job does not retry it, and fall
+                # through to somewhere that will certainly work.
+                if candidate == self.settings.output_dir:
+                    self.settings.output_dir = ""
+                    self.save_settings()
         path = self.jobs / entry_id
         path.mkdir(parents=True, exist_ok=True)
         return path

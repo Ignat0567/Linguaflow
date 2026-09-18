@@ -66,6 +66,69 @@ def actual_location(folder: Path) -> tuple[Path, bool]:
     return real, real != folder
 
 
+#: Where finished files go unless the user picks somewhere else.
+OUTPUT_FOLDER = "translated"
+
+#: The Windows identifier for the Videos folder. Asked of the system rather
+#: than assembled from the home directory: it can be moved to another drive,
+#: it is renamed in a localised Windows, and a guess would put a user's work
+#: somewhere they do not look.
+_FOLDERID_VIDEOS = "18989B1D-99B5-455B-841C-AB7C74E4DDFC"
+
+
+def _known_folder(folder_id: str) -> Path | None:
+    """Ask Windows where one of its own folders actually is."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import uuid
+    from ctypes import wintypes
+
+    class Guid(ctypes.Structure):
+        _fields_ = [
+            ("a", wintypes.DWORD), ("b", wintypes.WORD),
+            ("c", wintypes.WORD), ("d", ctypes.c_byte * 8),
+        ]
+
+    value = uuid.UUID(folder_id)
+    guid = Guid(
+        value.time_low, value.time_mid, value.time_hi_version,
+        (ctypes.c_byte * 8)(*value.bytes[8:]),
+    )
+    out = ctypes.c_wchar_p()
+    try:
+        if ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(guid), 0, None, ctypes.byref(out)
+        ) != 0:
+            return None
+        return Path(out.value) if out.value else None
+    except (OSError, AttributeError):
+        return None
+    finally:
+        if out.value:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+
+
+def videos_dir() -> Path:
+    """The user's videos folder, wherever they keep it."""
+    known = _known_folder(_FOLDERID_VIDEOS)
+    if known is not None and known.is_dir():
+        return known
+    if sys.platform == "darwin":
+        return Path.home() / "Movies"
+    return Path.home() / "Videos"
+
+
+def default_output_dir() -> Path:
+    """Where a finished translation goes when the user has not said.
+
+    Beside their other videos, in a folder that says what is in it. Inside the
+    application's own data would be tidy and wrong: these are the files the
+    work was done for, and they belong where the person keeps such files.
+    """
+    return videos_dir() / OUTPUT_FOLDER
+
+
 def legacy_data_dir(root: Path | str) -> Path:
     """Where this data used to live: a `data/` folder beside the code."""
     return Path(root) / "data"

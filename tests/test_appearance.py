@@ -234,11 +234,33 @@ def test_a_nonsense_setting_falls_back(field, bad, fallback):
 
 # -- where files land ----------------------------------------------------
 
-def test_by_default_each_job_gets_its_own_folder(tmp_path):
+def test_by_default_files_land_beside_the_user_s_videos(tmp_path):
+    """Not inside the application's data. These are the files the work was
+    done for, and they belong where a person keeps such files rather than in
+    a folder they would have to be told about."""
+    from lt_ui.paths import OUTPUT_FOLDER, videos_dir
+
     store = Store(tmp_path)
-    first, second = store.job_dir("aaa"), store.job_dir("bbb")
-    assert first != second
-    assert first.parent.name == "jobs"
+    store.settings.output_dir = ""
+    assert store.job_dir("aaa") == videos_dir() / OUTPUT_FOLDER
+
+
+def test_the_default_folder_is_shared_by_every_job(tmp_path):
+    """One folder called «translated», not one per job: a person looking for
+    last week's subtitles should not have to guess an identifier."""
+    store = Store(tmp_path)
+    store.settings.output_dir = ""
+    assert store.job_dir("aaa") == store.job_dir("bbb")
+
+
+def test_the_default_is_stored_empty_rather_than_resolved(tmp_path):
+    """So a profile copied to another machine, or a Videos folder moved to
+    another drive, still lands in the right place."""
+    store = Store(tmp_path)
+    store.settings.output_dir = ""
+    store.job_dir("aaa")
+    store.save_settings()
+    assert Store(tmp_path).settings.output_dir == ""
 
 
 def test_a_chosen_folder_is_used_as_given(tmp_path):

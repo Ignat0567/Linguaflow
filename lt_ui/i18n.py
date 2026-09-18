@@ -307,10 +307,6 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "(das System hat diesen Ordner umgeleitet)",
     ),
     "По умолчанию": ("Default", "Standard"),
-    "Внутри программы, по одной папке на задание": (
-        "Inside the app, one folder per job",
-        "In der Anwendung, ein Ordner pro Auftrag",
-    ),
     "Выберите папку для готовых файлов": (
         "Choose a folder for finished files",
         "Ordner für fertige Dateien wählen",

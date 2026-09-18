@@ -22,7 +22,7 @@ from ..i18n import _, UI_LANGUAGE_NAMES, UI_LANGUAGES, language_name
 from ..store import ROOT, display_name
 from ..glass import GlassInput
 from ..keys import KeyStore
-from ..paths import actual_location
+from ..paths import actual_location, default_output_dir
 from ..widgets import (
     AccentSwatch,
     ChipGroup,
@@ -423,9 +423,7 @@ class SettingsScreen(QWidget):
 
     def _show_folder(self) -> None:
         chosen = self.app.store.settings.output_dir
-        self._folder.setText(
-            chosen or _("Внутри программы, по одной папке на задание")
-        )
+        self._folder.setText(chosen or str(default_output_dir()))
         real, redirected = actual_location(self.app.store.root)
         note = _("Настройки, история и ключ: {path}", path=str(real))
         if redirected:
