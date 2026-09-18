@@ -398,6 +398,45 @@ improvement rather than a fix and is counted honestly as such.
 
 384 tests.
 
+## Ready to be installed
+
+The program is to be shipped as an installer, which changes where a user's
+own things belong.
+
+32. **A key is the user's, not the program's.** Settings has a field for it,
+    and it is kept apart from `settings.json` -- which is rewritten on every
+    toggle and travels with a copied folder. On Windows it is sealed with
+    DPAPI, the operating system's per-user protection: no password, no
+    dependency, and a folder copied to another account will not open it.
+    Measured: a 17-byte key becomes a 246-byte blob with no trace of the key
+    in it, and a blob from elsewhere is refused. Where there is no such
+    facility the file is plain text, and the interface says so rather than
+    implying otherwise.
+33. **The Test button asks the service a real question.** Verified against the
+    live endpoint: a working key answers «ключ работает», a wrong one «сервис
+    отклонил ключ доступа». An empty field is answered before any request,
+    because the provider's own refusal names `--api-key` and an environment
+    variable -- the command line talking inside a window that has a field for
+    exactly this.
+34. **User data moved out of the program's folder.** `Program Files` is not
+    writable, and one settings file shared by everyone who signs in is the
+    wrong shape for someone's languages, history and key. Settings, history
+    and keys now live in `%APPDATA%\Linguaflow`, with the platform's
+    equivalents elsewhere and `LINGUAFLOW_DATA` for a portable copy.
+35. **Two things deliberately stayed behind.** Models, because they are
+    gigabytes, identical for every user and read-only in use; and finished
+    files, because they go wherever the user chose, which is the point of that
+    setting.
+36. **The migration copies and does not move.** State is carried across only
+    when the new place does not have it, the old folder is left intact, and
+    job outputs stay where they are -- the history names them by absolute
+    path, so they keep working, and moving gigabytes of audio is a poor way
+    to spend a first start. Run against the real profile: 24 settings, 5
+    history entries and the key arrived; four job folders and every file they
+    point at stayed where they were.
+
+417 tests.
+
 ## Not done
 
 Packaging into an installer. Burning subtitles into the picture (they are

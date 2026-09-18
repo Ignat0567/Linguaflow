@@ -100,6 +100,7 @@ class BatchWorker(QThread):
         translator,
         output_dir: Path,
         keys=None,
+        data_root: Path | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -109,6 +110,7 @@ class BatchWorker(QThread):
         self.translator = translator
         self.output_dir = output_dir
         self.keys = keys
+        self.data_root = Path(data_root) if data_root else output_dir.parent
 
     def run(self) -> None:
         settings = self.settings
@@ -134,7 +136,9 @@ class BatchWorker(QThread):
                 ),
                 on_stage=self.stage.emit,
                 on_progress=on_progress,
-                download_dir=ROOT / "downloads",
+                # Scratch for anything fetched from a link. User data: an
+                # installed copy cannot write beside its own executable.
+                download_dir=self.data_root / "downloads",
                 translator=self.translator,
                 target_language=settings.to_lang,
                 bilingual=True,
@@ -302,10 +306,13 @@ class Engine(QObject):
     live_failed = Signal(str)
     live_stopped = Signal()
 
-    def __init__(self, parent: QObject | None = None, keys=None) -> None:
+    def __init__(self, parent: QObject | None = None, keys=None,
+                 data_root: Path | None = None) -> None:
         super().__init__(parent)
         #: The user's own API keys, or None when nothing has been entered.
         self.keys = keys
+        #: Where this user's data lives; scratch space goes under it.
+        self.data_root = Path(data_root) if data_root else ROOT
         self.transcriber: Transcriber | None = None
         self.translator = None
         self._loaded_for: tuple[str, str] | None = None
@@ -361,7 +368,7 @@ class Engine(QObject):
             return
         worker = BatchWorker(
             path, settings, self.transcriber, self.translator, output_dir,
-            self.keys, self,
+            self.keys, self.data_root, self,
         )
         worker.stage.connect(self.batch_stage)
         worker.progress.connect(self.batch_progress)

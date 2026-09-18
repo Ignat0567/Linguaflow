@@ -22,9 +22,11 @@ from lt_core.mt.types import TranslationMode
 
 from .i18n import UI_LANGUAGES
 from .keys import KeyStore
+from .paths import resolve_data_dir
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DATA = ROOT / "data"
+#: Gigabytes, identical for every user, read-only in use: they stay with the
+#: installation rather than being copied into each profile.
 MODEL_ROOT = ROOT / "models"
 
 SCREENS = ("home", "realtime", "upload", "history", "settings")
@@ -203,7 +205,9 @@ class Store:
     """One JSON file for settings, one for the history list."""
 
     def __init__(self, root: Path | str | None = None) -> None:
-        self.root = Path(root) if root else DEFAULT_DATA
+        # Per-user, and migrated out of the old `data/` beside the code the
+        # first time. See lt_ui.paths for why.
+        self.root = resolve_data_dir(ROOT, root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.settings = Settings()
         self.entries: list[HistoryEntry] = []

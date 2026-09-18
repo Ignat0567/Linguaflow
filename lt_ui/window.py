@@ -73,7 +73,7 @@ class Window(QWidget):
         self._backdrop = Backdrop()
         backdrop_module.install(self._backdrop)
 
-        self.engine = Engine(self, keys=self.store.keys)
+        self.engine = Engine(self, keys=self.store.keys, data_root=self.store.root)
         self.overlay = OverlayWindow(self.store)
 
         self._frame = QVBoxLayout(self)
