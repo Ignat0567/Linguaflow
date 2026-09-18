@@ -189,10 +189,15 @@ class ConversationSession:
 
         if not update.committed:
             # Provisional text still belongs on screen, on the side of whoever
-            # was last speaking, so the panel does not jump about.
+            # is speaking -- by its alphabet where that answers, and otherwise
+            # wherever the last turn was, so the panel does not jump about.
+            side = self._route(self._by_script(update.partial) or "")
             return [LiveUpdate(
                 partial=update.partial,
-                speaker=self._history[-1].speaker if self._history else None,
+                speaker=(
+                    side[0].label if side
+                    else (self._history[-1].speaker if self._history else None)
+                ),
                 audio_time=update.audio_time,
                 latency=update.latency,
             )]
