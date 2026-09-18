@@ -259,13 +259,31 @@ def _long_enough(words: list[Word], style: CueStyle) -> bool:
     return len(_join(words, style)) >= style.max_chars_per_line // 2
 
 
+def _glued(words: list[Word], position: int, style: CueStyle) -> bool:
+    """Would a cut here fall inside a word rather than between two?
+
+    Whisper emits "self-improvement" as " self" and "-improvement,", the second
+    with no leading space, and `_join` puts them back together. The absence of
+    that space is the only thing that says they are one word -- so a cue
+    boundary between them is a cue boundary inside a word, and the viewer reads
+    "...to commit to a policy of self" followed by "-improvement, self-change."
+    Numbers break the same way: "$12" and ",000".
+    """
+    if not style.join_with_space or not 0 < position < len(words):
+        return False
+    return not words[position].text[:1].isspace()
+
+
 def _best_break(words: list[Word], style: CueStyle) -> int:
     """Index to cut at, searching backwards for the most natural boundary."""
     # Do not strand a lone word at either end of the split.
     lowest = max(1, len(words) // 3)
     for pattern in (_SENTENCE_END, _CLAUSE_END):
         for position in range(len(words) - 1, lowest - 1, -1):
-            if pattern.search(words[position - 1].text.strip()):
+            if (
+                pattern.search(words[position - 1].text.strip())
+                and not _glued(words, position, style)
+            ):
                 return position
 
     # No punctuation to break on. Avoid stranding a preposition, article or
@@ -273,7 +291,10 @@ def _best_break(words: list[Word], style: CueStyle) -> int:
     # roughly $12,000 per / month" reads as a stumble. Stepping back one word
     # keeps the phrase together.
     for position in range(len(words) - 1, lowest - 1, -1):
-        if words[position - 1].text.strip().lower() not in _CLINGING_WORDS:
+        if (
+            words[position - 1].text.strip().lower() not in _CLINGING_WORDS
+            and not _glued(words, position, style)
+        ):
             return position
     return len(words)
 

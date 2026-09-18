@@ -113,6 +113,41 @@ def test_original_token_spacing_is_preserved():
     assert " ,000" not in text and " -time" not in text
 
 
+def test_a_cue_never_ends_in_the_middle_of_a_word():
+    """Regression, from a real five-minute talk.
+
+    The tokens are Whisper's own: it emits "self-improvement" as " self" and
+    "-improvement,", and only the missing leading space says they are one word.
+    The cue boundary landed between them, so the viewer read "...to commit to a
+    policy of self" and then "-improvement, self-change."
+
+    The timings are the measured ones, because the break is the product of the
+    7-second cue limit falling exactly there.
+    """
+    spoken = [
+        (" To", 207.83, 208.27), (" say", 208.27, 208.45),
+        (" you", 208.45, 208.61), (" are", 208.61, 208.75),
+        (" wrong", 208.75, 209.33), (" is", 209.33, 209.73),
+        (" also", 209.73, 210.13), (" to", 210.13, 210.41),
+        (" commit", 210.41, 210.87), (" to", 210.87, 211.79),
+        (" a", 211.79, 212.03), (" policy", 212.03, 212.61),
+        (" of", 212.61, 213.57), (" self", 213.57, 213.89),
+        ("-improvement,", 213.89, 214.49), (" self", 214.65, 215.19),
+        ("-change.", 215.19, 215.71),
+    ]
+    segment = Segment(
+        text="To say you are wrong is also to commit to a policy of"
+             " self-improvement, self-change.",
+        start=207.83, end=215.71, words=words(spoken),
+    )
+    result = build_cues(transcript([segment]))
+    assert len(result) > 1, "the fixture must be long enough to be split"
+    for cue in result:
+        assert not cue.flat_text.startswith("-"), cue.flat_text
+        assert not cue.flat_text.endswith("self"), cue.flat_text
+    assert any("self-improvement" in cue.flat_text for cue in result)
+
+
 def test_cues_ignore_whisper_segment_boundaries():
     """Regression: the model's window boundaries fell mid-phrase.
 
