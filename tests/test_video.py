@@ -232,3 +232,86 @@ def test_audio_only_files_are_not_offered_a_video_copy(tmp_path):
     path = tmp_path / "speech.wav"
     write_tone(path, 1.0)
     assert not probe(path).has_video
+
+
+# -- the order the pipeline writes things in ----------------------------
+
+def test_the_subtitles_exist_before_the_video_is_assembled(
+    source_video, tmp_path, monkeypatch
+):
+    """The assembler embeds one of them as a track.
+
+    Moving the subtitle writing to the end of the pipeline once cost exactly
+    that: the video came out with both soundtracks and no subtitles, and
+    nothing anywhere said so. What the muxer was handed is what this checks.
+    """
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from lt_core.asr.types import Segment, Transcript, Word
+    from lt_core.pipeline import batch as batch_module
+    from lt_core.subtitles.cues import Cue
+
+    seen: dict = {}
+
+    class FakeTranscriber:
+        def transcribe(self, *args, **kwargs):
+            words = tuple(
+                Word(text=f"word{i} ", start=i * 0.4, end=i * 0.4 + 0.4)
+                for i in range(6)
+            )
+            return Transcript(
+                segments=(Segment(text="word0 word1 word2 word3 word4 word5.",
+                                  start=0.0, end=2.4, words=words),),
+                language="en", language_probability=1.0, duration=3.0,
+                elapsed=0.1, model="fake",
+            )
+
+    class FakeProvider:
+        name, is_offline = "fake", True
+
+    class FakeTranslator:
+        provider = FakeProvider()
+
+        def translate(self, texts, source, target):
+            report = SimpleNamespace(
+                needs_review=False, summary=lambda: "", number_mismatches=[],
+                empty_results=[], risky_short=[], truncated=[], cache_hits=0,
+            )
+            return ["перевод этой фразы" for _ in texts], report
+
+    class FakeBank:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def for_gender(self, gender=""):
+            return SimpleNamespace(
+                pace=lambda: (17.0, 0.1),
+                say=lambda text: (np.zeros(1600, dtype=np.float32), 16_000),
+            )
+
+    def fake_mix(*args, **kwargs):
+        return SimpleNamespace(
+            samples=np.zeros(16_000, dtype=np.float32), rate=16_000,
+            cast=None, spoken=1, overran=0, rushed=[], utterances=[],
+        )
+
+    def spy(video, dub, destination, **kwargs):
+        seen["subtitles"] = kwargs.get("subtitles")
+        Path(str(destination) + ".mp4").write_bytes(b"x")
+        return SimpleNamespace(path=Path(str(destination) + ".mp4"))
+
+    monkeypatch.setattr("lt_core.tts.dub.mix", fake_mix)
+    monkeypatch.setattr("lt_core.tts.speaker.VoiceBank", FakeBank)
+    monkeypatch.setattr("lt_core.video.mux.replace_audio", spy)
+
+    result = batch_module.transcribe_file(
+        source_video, FakeTranscriber(), output_dir=tmp_path,
+        translator=FakeTranslator(), target_language="ru",
+        voice=True, condense=False,
+    )
+    assert seen.get("subtitles"), "муксер не получил файл субтитров"
+    assert Path(seen["subtitles"]).exists()
+    assert "srt.ru" in result.outputs

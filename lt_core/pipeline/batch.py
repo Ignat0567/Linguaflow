@@ -141,6 +141,33 @@ def _sentence_cues(cues, groups, sentences) -> tuple[Cue, ...]:
     return tuple(units)
 
 
+def _write_translated(
+    outputs, formats, destination, media, transcript, cues, translated_cues,
+    target_language: str, bilingual: bool,
+) -> None:
+    """Write the translated subtitle files.
+
+    Called before the video is assembled, because the assembler embeds one of
+    them as a track. Moving this to the end once cost exactly that: the video
+    came out with both soundtracks and no subtitles, and nothing said so.
+    """
+    for name in formats:
+        if name not in ("srt", "vtt"):
+            continue
+        stem = f"{media.path.stem}.{target_language}"
+        outputs[f"{name}.{target_language}"] = write(
+            destination / f"{stem}.{name}",
+            EXPORTERS[name](transcript, translated_cues),
+        )
+    if bilingual:
+        merged = merge_bilingual(cues, translated_cues)
+        outputs["srt.bilingual"] = write(
+            destination
+            / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
+            EXPORTERS["srt"](transcript, merged),
+        )
+
+
 def transcribe_file(
     target: str | Path,
     transcriber: Transcriber,
@@ -237,6 +264,13 @@ def transcribe_file(
         # and speech is not. See `_sentence_cues`.
         spoken_units = _sentence_cues(cues, groups, sentence_translations)
         sentence_groups = groups
+        if not voice:
+            # With a dub the text may still be shortened, so the files are
+            # written after that instead; without one it is already final.
+            _write_translated(
+                outputs, formats, destination, media, transcript, cues,
+                translated_cues, target_language, bilingual,
+            )
 
     dub = None
     condensed: list = []
@@ -305,6 +339,11 @@ def transcribe_file(
                 target_language, languages.joins_with_space(target_language),
             )
 
+        _write_translated(
+            outputs, formats, destination, media, transcript, cues,
+            translated_cues, target_language, bilingual,
+        )
+
         stage(tell("Озвучиваю перевод, голоса по говорящему") if pair
               else tell("Озвучиваю перевод"))
         # Spoken as sentences. A dub cut to subtitle timings speaks in
@@ -342,22 +381,6 @@ def transcribe_file(
                 stage(tell("Видео собрать не удалось: {reason}", reason=str(exc)))
             else:
                 outputs["video"] = muxed.path
-
-    if translated_cues is not None and target_language:
-        for name in formats:
-            if name not in ("srt", "vtt"):
-                continue
-            stem = f"{media.path.stem}.{target_language}"
-            outputs[f"{name}.{target_language}"] = write(
-                destination / f"{stem}.{name}",
-                EXPORTERS[name](transcript, translated_cues),
-            )
-        if bilingual:
-            merged = merge_bilingual(cues, translated_cues)
-            outputs["srt.bilingual"] = write(
-                destination / f"{media.path.stem}.{transcript.language}-{target_language}.srt",
-                EXPORTERS["srt"](transcript, merged),
-            )
 
     return BatchResult(
         media=media,
