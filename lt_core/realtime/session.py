@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .. import languages
 from ..asr.transcriber import TranscribeOptions, Transcriber
 from ..asr.types import Word
 from ..audio.types import TARGET_SAMPLE_RATE, AudioChunk
@@ -33,6 +34,22 @@ from ..mt.translator import Translator
 from .agreement import LocalAgreement
 
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]］】」』]*\s*$")
+_CLAUSE_END = re.compile(r"[,;:—–、，；：]['\"»”’)\]]*\s*$")
+
+#: How long a sentence may go unfinished before part of it is committed anyway.
+#:
+#: Long, because this is the safety valve and not the answer to latency: the
+#: provisional translation below is what keeps a reader current while a
+#: sentence is still being spoken. Cutting the committed translation at clauses
+#: instead was measured and costs meaning -- "mass times energy times
+#: coordination", handed over a clause at a time, came back as "масса во время
+#: энергии", because "times" without its sentence is the preposition.
+HOLD_LIMIT = 20.0
+
+#: Never hand the translator fewer than this many words on its own. A fragment
+#: is what makes the model invent -- measured on Day 3, "Yes." came back as
+#: "Нет, нет."
+MIN_CLAUSE_WORDS = 4
 
 
 @dataclass(frozen=True)
@@ -98,6 +115,10 @@ class LiveUpdate:
     partial: str = ""
     #: Translation of whatever sentences completed on this tick.
     translation: str = ""
+    #: The sentence still being spoken, translated provisionally. Replaced
+    #: wholesale on the next tick, exactly as `partial` is, and superseded by
+    #: `translation` once the sentence finishes.
+    partial_translation: str = ""
     #: Which side of a two-person conversation this belongs to.
     speaker: str | None = None
     #: Seconds of audio consumed by the session so far.
@@ -107,7 +128,10 @@ class LiveUpdate:
 
     @property
     def has_content(self) -> bool:
-        return bool(self.committed or self.partial or self.translation)
+        return bool(
+            self.committed or self.partial
+            or self.translation or self.partial_translation
+        )
 
 
 @dataclass
@@ -188,6 +212,9 @@ class LiveSession:
         self._consumed = 0.0
         self._last_run_at = 0.0
         self._untranslated: list[Word] = []
+        #: The last provisional translation, and the text it was made from, so
+        #: a sentence that has not grown is not translated again.
+        self._preview: tuple[str, str] = ("", "")
         self._lock = threading.Lock()
 
     # -- feeding ---------------------------------------------------------
@@ -312,6 +339,7 @@ class LiveSession:
             partial = self.agreement.pending_text()
             self._trim()
             translation = self._translate()
+            preview = self._provisional()
 
         latency = self._consumed - self.agreement.committed_until
         self.stats.lags.append(latency)
@@ -320,16 +348,90 @@ class LiveSession:
             committed="".join(word.text for word in committed).strip(),
             partial=partial,
             translation=translation,
+            partial_translation=preview,
             speaker=self.speaker,
             audio_time=self._consumed,
             latency=latency,
         )
 
+    def _provisional(self) -> str:
+        """The sentence still being spoken, translated as it stands.
+
+        Committed translations wait for a full stop, because a clause handed
+        over on its own loses what the sentence was doing with it. That is the
+        right rule for text nobody will revise -- and on its own it leaves a
+        reader with nothing while a long sentence is spoken: measured on a real
+        talk, the first translation arrived 40 seconds in.
+
+        So the unfinished sentence is translated too, and marked as
+        provisional. It is replaced on the next tick and then superseded by the
+        real thing, which is the same contract the original text already has.
+
+        Called with the lock held.
+        """
+        if self.translator is None or not self.target_language:
+            return ""
+        if not self._untranslated or not self.source_language:
+            self._preview = ("", "")
+            return ""
+
+        text = "".join(word.text for word in self._untranslated).strip()
+        if not text:
+            return ""
+        if text == self._preview[0]:
+            # Nothing was added this tick; do not pay for the same answer.
+            return self._preview[1]
+
+        started = time.perf_counter()
+        try:
+            results, _ = self.translator.translate(
+                [text], self.source_language, self.target_language
+            )
+        except Exception:  # noqa: BLE001 -- provisional text, never fatal
+            return ""
+        finally:
+            self.stats.mt_seconds += time.perf_counter() - started
+        answer = results[0] if results else ""
+        self._preview = (text, answer)
+        return answer
+
+    def _overdue_cut(self) -> int:
+        """Where to break a sentence that is taking too long to finish.
+
+        At a comma: the model translates a clause well, and a clause is not the
+        fragment that makes it invent. A run that has gone twice the limit with
+        no comma in it either is released whole rather than held any longer --
+        the translator splits long input at clause boundaries of its own.
+        """
+        held = self._untranslated
+        if not held:
+            return -1
+        waiting = self._consumed - held[0].start
+        if waiting < HOLD_LIMIT:
+            return -1
+        for index in range(len(held) - 1, MIN_CLAUSE_WORDS - 1, -1):
+            if _CLAUSE_END.search(held[index].text.strip()):
+                return index
+        return len(held) - 1 if waiting >= 2 * HOLD_LIMIT else -1
+
     def _prompt(self) -> str | None:
-        """The last few committed words, as context for the next pass."""
+        """Context for the next pass: a punctuated opening, then what was said.
+
+        The sample is the same device file mode uses, and for the same reason:
+        without a punctuated example this model transcribes continuous speech
+        as one unbroken run. Live that is worse than untidy -- a sentence is
+        what releases a translation, so a passage with no full stop in it is a
+        passage nobody reads until it ends. Measured on a five-minute talk, the
+        opening sentence ran 36 seconds.
+
+        It stays in front of the committed tail rather than seeding only the
+        first pass. The tail is what the model just produced, so if it comes
+        back unpunctuated once, a prompt made only of it keeps it that way.
+        """
+        opening = languages.punctuation_sample(self.source_language or "")
         tail = self.agreement.committed[-30:]
         text = "".join(word.text for word in tail).strip()
-        return text or None
+        return " ".join(part for part in (opening, text) if part) or None
 
     def _trim(self) -> None:
         """Drop audio that is settled, keeping a little for context.
@@ -367,6 +469,13 @@ class LiveSession:
         as "Нет, нет." A sentence that has not finished waits for the next
         tick; at end of session there is no next tick, so `force` takes
         whatever is there.
+
+        The sentences that *are* finished go now, and only the unfinished tail
+        waits. Asking whether the whole accumulation ends on a full stop meant
+        a completed sentence sat unread until a later commit happened to land
+        exactly on one: measured on a five-minute talk, the first translation
+        appeared at 40 s, they arrived a median of 10 s apart, and one of them
+        was 496 characters of text delivered at once.
         """
         if self.translator is None or not self.target_language:
             self._untranslated.clear()
@@ -374,11 +483,24 @@ class LiveSession:
         if not self._untranslated or not self.source_language:
             return ""
 
-        text = "".join(word.text for word in self._untranslated).strip()
-        if not force and not _SENTENCE_END.search(text):
-            return ""
+        if force:
+            ready, self._untranslated = self._untranslated, []
+        else:
+            last = -1
+            for index, word in enumerate(self._untranslated):
+                if _SENTENCE_END.search(word.text):
+                    last = index
+            if last < 0:
+                last = self._overdue_cut()
+            if last < 0:
+                return ""
+            ready = self._untranslated[: last + 1]
+            self._untranslated = self._untranslated[last + 1:]
 
-        self._untranslated = []
+        text = "".join(word.text for word in ready).strip()
+        if not text:
+            return ""
+        self._preview = ("", "")
         started = time.perf_counter()
         try:
             results, _ = self.translator.translate(

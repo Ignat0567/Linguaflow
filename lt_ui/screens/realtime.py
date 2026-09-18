@@ -25,6 +25,10 @@ class Line:
     translated: str = ""
     speaker: str | None = None
     partial: str = ""
+    #: The sentence still being spoken, translated provisionally. Shown in the
+    #: same lighter hand as `partial`, and replaced by `translated` when the
+    #: sentence finishes.
+    partial_translated: str = ""
 
 
 class RealtimeScreen(QWidget):
@@ -196,11 +200,13 @@ class RealtimeScreen(QWidget):
             current.partial = ""
         if update.partial:
             current.partial = update.partial
+        current.partial_translated = update.partial_translation
         if update.translation:
             current.translated = (
                 f"{current.translated} {update.translation}".strip()
                 if current.translated else update.translation
             )
+            current.partial_translated = ""
             if current.original:
                 self._lines.append(current)
                 self._current = Line(speaker=update.speaker)
@@ -214,7 +220,8 @@ class RealtimeScreen(QWidget):
             if widget is not None:
                 widget.deleteLater()
         visible = list(self._lines)
-        if self._current.original or self._current.partial:
+        if (self._current.original or self._current.partial
+                or self._current.partial_translated):
             visible.append(self._current)
         if not visible:
             placeholder = glass.label(
@@ -247,7 +254,7 @@ class RealtimeScreen(QWidget):
             line = self._lines[-1]
         overlay.set_caption(
             original=(line.original + " " + line.partial).strip(),
-            translated=line.translated,
+            translated=(line.translated + " " + line.partial_translated).strip(),
             speaker=line.speaker,
             listening=self._record.isChecked(),
         )
@@ -319,3 +326,9 @@ class _Caption(QWidget):
             translated = glass.label(line.translated, 15, 400, 0.72, wrap=True)
             translated.setAlignment(align)
             layout.addWidget(translated)
+        if line.partial_translated:
+            # Lighter than the settled translation, because it will change.
+            # The same hand the original's provisional tail is drawn in.
+            coming = glass.label(line.partial_translated, 15, 400, 0.45, wrap=True)
+            coming.setAlignment(align)
+            layout.addWidget(coming)
