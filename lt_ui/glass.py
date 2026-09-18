@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
     QLabel,
+    QLineEdit,
     QSizePolicy,
     QWidget,
 )
@@ -388,6 +389,50 @@ class GlassSelect(QComboBox):
         x, y = self.width() - 24, self.height() // 2 - 2
         painter.drawLine(x, y, x + 5, y + 5)
         painter.drawLine(x + 5, y + 5, x + 10, y)
+
+
+class GlassInput(QLineEdit):
+    """A text field on glass, for the few things that must be typed.
+
+    Like the picker, it is styled rather than painted: QLineEdit draws its
+    own text, selection and caret, and taking that over to gain a blurred
+    backdrop would cost more than the backdrop is worth on a field this size.
+    """
+
+    DARK = """
+    QLineEdit {
+        background: rgba(255,255,255,0.10);
+        border: 1px solid rgba(255,255,255,0.20);
+        border-radius: 17px;
+        padding: 0 16px;
+        color: rgba(255,255,255,0.95);
+        selection-background-color: rgba(127,164,255,0.45);
+    }
+    QLineEdit:focus { border: 1px solid rgba(127,164,255,0.85); }
+    """
+
+    LIGHT = """
+    QLineEdit {
+        background: rgba(255,255,255,0.72);
+        border: 1px solid rgba(13,15,26,0.14);
+        border-radius: 17px;
+        padding: 0 16px;
+        color: rgba(13,15,26,0.95);
+        selection-background-color: rgba(127,164,255,0.45);
+    }
+    QLineEdit:focus { border: 1px solid rgba(90,125,215,0.85); }
+    """
+
+    @classmethod
+    def style_for_mode(cls) -> str:
+        return cls.LIGHT if theme.is_light() else cls.DARK
+
+    def __init__(self, parent: QWidget | None = None, placeholder: str = "") -> None:
+        super().__init__(parent)
+        self.setFont(theme.font(13, 400))
+        self.setFixedHeight(34)
+        self.setPlaceholderText(placeholder)
+        self.setStyleSheet(self.style_for_mode())
 
 
 class RecordButton(QAbstractButton):

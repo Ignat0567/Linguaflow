@@ -21,6 +21,7 @@ from lt_core import languages
 from lt_core.mt.types import TranslationMode
 
 from .i18n import UI_LANGUAGES
+from .keys import KeyStore
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA = ROOT / "data"
@@ -206,6 +207,9 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         self.settings = Settings()
         self.entries: list[HistoryEntry] = []
+        #: Kept apart from the settings, and encrypted per user where the
+        #: platform allows it. See lt_ui.keys.
+        self.keys = KeyStore(self.root)
         self.load()
 
     @property

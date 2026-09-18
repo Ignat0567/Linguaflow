@@ -167,6 +167,37 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Чем сокращать": ("What does the shortening", "Womit gekürzt wird"),
     "Только правила": ("Rules only", "Nur Regeln"),
+    "Ключ доступа": ("API key", "API-Schlüssel"),
+    "Ключ сохранён: {key}": ("Key saved: {key}", "Schlüssel gespeichert: {key}"),
+    "Проверить": ("Test", "Testen"),
+    "Введите ключ в поле выше.": (
+        "Enter a key in the field above.",
+        "Geben Sie oben einen Schlüssel ein.",
+    ),
+    "Проверяю…": ("Testing…", "Wird getestet…"),
+    "Ключ работает, модель отвечает.": (
+        "The key works, the model answers.",
+        "Der Schlüssel funktioniert, das Modell antwortet.",
+    ),
+    "Сервис ответил, но ничего не прислал.": (
+        "The service answered but sent nothing back.",
+        "Der Dienst hat geantwortet, aber nichts zurückgeschickt.",
+    ),
+    "Ключ хранится только на этом компьютере и зашифрован вашей учётной "
+    "записью Windows.": (
+        "The key is kept on this computer only, encrypted with your Windows "
+        "account.",
+        "Der Schlüssel bleibt nur auf diesem Rechner und ist mit Ihrem "
+        "Windows-Konto verschlüsselt.",
+    ),
+    "Ключ хранится только на этом компьютере, открытым текстом — система не "
+    "предлагает шифрования.": (
+        "The key is kept on this computer only, in plain text — this system "
+        "offers no encryption for it.",
+        "Der Schlüssel bleibt nur auf diesem Rechner, im Klartext — dieses "
+        "System bietet dafür keine Verschlüsselung.",
+    ),
+    "Получить: {where}": ("Get one: {where}", "Erhalten: {where}"),
     "Формат субтитров": ("Subtitle format", "Untertitelformat"),
     "Где выполняется перевод": (
         "Where translating happens", "Wo übersetzt wird",

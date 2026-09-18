@@ -30,7 +30,7 @@ from lt_core.video.mux import MuxError
 from .store import MODEL_ROOT, ROOT, Settings, display_name
 
 
-def _shortener(settings: Settings):
+def _shortener(settings: Settings, keys=None):
     """The service that rewrites over-long lines, if one was chosen.
 
     A failure here must not cost the recording: without a key the provider
@@ -41,7 +41,10 @@ def _shortener(settings: Settings):
     try:
         from lt_core.mt.cloud import build_cloud_provider
 
-        return build_cloud_provider(service=settings.shorten_with)
+        key = keys.get(settings.shorten_with) if keys is not None else ""
+        return build_cloud_provider(
+            service=settings.shorten_with, **({"api_key": key} if key else {})
+        )
     except Exception:  # noqa: BLE001
         return None
 
@@ -51,9 +54,11 @@ class LoadWorker(QThread):
 
     failed = Signal(str)
 
-    def __init__(self, settings: Settings, parent: QObject | None = None) -> None:
+    def __init__(self, settings: Settings, keys=None,
+                 parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.settings = settings
+        self.keys = keys
         self.transcriber: Transcriber | None = None
         self.translator = None
 
@@ -64,6 +69,12 @@ class LoadWorker(QThread):
             options: dict = {}
             if self.settings.translation_mode == TranslationMode.ONLINE:
                 options["service"] = self.settings.online_service
+                key = (
+                    self.keys.get(self.settings.online_service)
+                    if self.keys is not None else ""
+                )
+                if key:
+                    options["api_key"] = key
             self.translator = build_translator(
                 self.settings.translation_mode,
                 model_root=MODEL_ROOT,
@@ -88,6 +99,7 @@ class BatchWorker(QThread):
         transcriber: Transcriber,
         translator,
         output_dir: Path,
+        keys=None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -96,6 +108,7 @@ class BatchWorker(QThread):
         self.transcriber = transcriber
         self.translator = translator
         self.output_dir = output_dir
+        self.keys = keys
 
     def run(self) -> None:
         settings = self.settings
@@ -129,7 +142,7 @@ class BatchWorker(QThread):
                 match_voices=settings.match_voices,
                 dub_video=settings.dub_video,
                 condense=settings.condense,
-                shortener=_shortener(settings),
+                shortener=_shortener(settings, self.keys),
             )
             self.progress.emit(1.0)
             self.done.emit(result)
@@ -289,8 +302,10 @@ class Engine(QObject):
     live_failed = Signal(str)
     live_stopped = Signal()
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, parent: QObject | None = None, keys=None) -> None:
         super().__init__(parent)
+        #: The user's own API keys, or None when nothing has been entered.
+        self.keys = keys
         self.transcriber: Transcriber | None = None
         self.translator = None
         self._loaded_for: tuple[str, str] | None = None
@@ -323,7 +338,7 @@ class Engine(QObject):
         if self._loader is not None and self._loader.isRunning():
             return
         self.status.emit("Загружаю модели…")
-        worker = LoadWorker(settings, self)
+        worker = LoadWorker(settings, self.keys, self)
         worker.failed.connect(self.failed)
         worker.finished.connect(lambda: self._on_loaded(worker, key))
         self._loader = worker
@@ -345,7 +360,8 @@ class Engine(QObject):
             self.batch_failed.emit("Уже идёт обработка файла.")
             return
         worker = BatchWorker(
-            path, settings, self.transcriber, self.translator, output_dir, self
+            path, settings, self.transcriber, self.translator, output_dir,
+            self.keys, self,
         )
         worker.stage.connect(self.batch_stage)
         worker.progress.connect(self.batch_progress)

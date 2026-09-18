@@ -4,20 +4,24 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFileDialog,
     QHBoxLayout,
+    QLineEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from lt_core import languages
-from lt_core.mt.cloud import ONLINE_SERVICES
+from lt_core.mt.cloud import LLM_SERVICES, ONLINE_SERVICES
 from lt_core.mt.types import TranslationMode
 
-from .. import glass, theme
+from .. import glass, keys as keys_module, theme
 from ..i18n import _, UI_LANGUAGE_NAMES, UI_LANGUAGES, language_name
 from ..store import ROOT, display_name
+from ..glass import GlassInput
+from ..keys import KeyStore
 from ..widgets import (
     AccentSwatch,
     ChipGroup,
@@ -34,7 +38,10 @@ from ..widgets import (
 #: reports nearly none -- so without a floor the toggle rows collapse onto
 #: their own captions, which is what a German interface exposed first because
 #: its captions are longer.
-_ROW_HEIGHT = 30
+#:
+#: Raised from 30 after adding the key field: at 30 the descenders were being
+#: shaved, and a comma clipped at the bottom reads as a full stop.
+_ROW_HEIGHT = 34
 
 
 def _service_labels() -> dict[str, str]:
@@ -111,6 +118,23 @@ class SettingsScreen(QWidget):
         )
         self._shortener.changed.connect(self._sync_shortener)
         voice.body.addWidget(self._shortener)
+
+        key_row = QHBoxLayout()
+        key_row.setSpacing(10)
+        self._key = GlassInput(voice, placeholder=_("Ключ доступа"))
+        self._key.setEchoMode(QLineEdit.Password)
+        self._key.editingFinished.connect(self._save_key)
+        key_row.addWidget(self._key, 1)
+        self._check = glass.GlassButton(_("Проверить"), voice, height=34)
+        self._check.clicked.connect(self._check_key)
+        key_row.addWidget(self._check)
+        self._key_wrap = QWidget()
+        clear_fill(self._key_wrap)
+        self._key_wrap.setMinimumHeight(_ROW_HEIGHT)
+        self._key_wrap.setLayout(key_row)
+        voice.body.addWidget(self._key_wrap)
+        self._key_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
+        voice.body.addWidget(self._key_note)
 
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
         voice.body.addWidget(self._voice_note)
@@ -286,6 +310,7 @@ class SettingsScreen(QWidget):
         self._light.blockSignals(False)
         self._ui_language.set_value(settings.ui_language)
         self._shortener.set_value(settings.shorten_with)
+        self._show_key()
         self._show_folder()
         self._format.set_value(settings.sub_format)
         self._mode.set_value(settings.translation_mode)
@@ -427,6 +452,74 @@ class SettingsScreen(QWidget):
     def _sync_shortener(self, service: str) -> None:
         self.app.store.settings.shorten_with = service
         self.app.store.save_settings()
+        self._show_key()
+
+    # -- the user's own key ----------------------------------------------
+    def _show_key(self) -> None:
+        """Show whether a key is stored, never the key itself."""
+        service = self.app.store.settings.shorten_with
+        visible = bool(service) and service != "local"
+        self._key_wrap.setVisible(visible)
+        self._key_note.setVisible(visible)
+        if not visible:
+            return
+
+        stored = self.app.store.keys.get(service)
+        self._key.setText(stored)
+        self._key.setPlaceholderText(
+            _("Ключ сохранён: {key}", key=KeyStore.masked(stored)) if stored
+            else _("Ключ доступа")
+        )
+        where = LLM_SERVICES.get(service)
+        if keys_module.protection() == "dpapi":
+            how = _("Ключ хранится только на этом компьютере и зашифрован "
+                    "вашей учётной записью Windows.")
+        else:
+            how = _("Ключ хранится только на этом компьютере, открытым текстом "
+                    "— система не предлагает шифрования.")
+        if where is not None:
+            how += " " + _("Получить: {where}", where=where.where_to_get_a_key)
+        self._key_note.setText(how)
+
+    def _save_key(self) -> None:
+        service = self.app.store.settings.shorten_with
+        if service:
+            self.app.store.keys.set(service, self._key.text())
+
+    def _check_key(self) -> None:
+        """Ask the service a real question, so the answer means something."""
+        service = self.app.store.settings.shorten_with
+        if not service:
+            return
+        self._save_key()
+        if service != "local" and not self.app.store.keys.get(service):
+            # Better than letting the provider refuse: its message names
+            # `--api-key` and an environment variable, which is the command
+            # line talking inside a window that has a field for this.
+            self._key_note.setText(_("Введите ключ в поле выше."))
+            return
+        self._key_note.setText(_("Проверяю…"))
+        self._check.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            from lt_core.mt.cloud import build_cloud_provider
+
+            key = self.app.store.keys.get(service)
+            provider = build_cloud_provider(
+                service=service, **({"api_key": key} if key else {})
+            )
+            answer = provider.shorten([("Это довольно длинная проверочная "
+                                        "строка, которую надо сократить.", 25)],
+                                      "ru")
+            ok = bool(answer and answer[0].strip())
+            self._key_note.setText(
+                _("Ключ работает, модель отвечает.") if ok
+                else _("Сервис ответил, но ничего не прислал.")
+            )
+        except Exception as error:  # noqa: BLE001 -- any failure is the answer
+            self._key_note.setText(str(error))
+        finally:
+            self._check.setEnabled(True)
 
     def _sync_condense(self, on: bool) -> None:
         self.app.store.settings.condense = on

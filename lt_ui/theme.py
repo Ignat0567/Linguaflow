@@ -213,10 +213,11 @@ def label_colour(alpha: float) -> str:
 
 def restyle(root: QWidget) -> None:
     """Re-apply text colours under `root` after the mode changed."""
-    from .glass import GlassSelect
+    from .glass import GlassInput, GlassSelect
 
-    for widget in root.findChildren(GlassSelect):
-        widget.setStyleSheet(GlassSelect.style_for_mode())
+    for kind in (GlassSelect, GlassInput):
+        for widget in root.findChildren(kind):
+            widget.setStyleSheet(kind.style_for_mode())
     for widget in root.findChildren(QLabel):
         alpha = widget.property(ALPHA_PROPERTY)
         if alpha is not None:
