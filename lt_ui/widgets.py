@@ -275,9 +275,10 @@ class Wordmark(QWidget):
     dark line that separates the face from its own side.
     """
 
-    #: Twice the size it was, which puts it taller than the bar beside it --
-    #: hence the centring rather than a shared top edge.
-    SIZE = 48
+    #: A script sits lower and smaller than a sans at the same pixel size --
+    #: most of its height is in the ascenders and the swashes -- so the number
+    #: is larger to arrive at the same presence on the screen.
+    SIZE = 58
 
     #: How far the letters stand off the surface, in pixels of offset. Small:
     #: past about four the lettering starts to read as a logo from 2004.
@@ -292,13 +293,16 @@ class Wordmark(QWidget):
         super().__init__(parent)
         clear_fill(self)
         self._text = "Linguaflow"
-        self._font = theme.font(size, 700, tracking=-2)
+        self._font = theme.mark_font(size)
         metrics = QFontMetrics(self._font)
         self._baseline = metrics.ascent() + 4
+        # A slanted face overhangs its own advance width on both sides; the
+        # tail of the w and the swash of the L fall outside it.
+        self._lead = 10.0
         # Room for the descender of the g, for the extrusion and for the
         # shadow under it: a band cut to the letters clips all three.
         self.setFixedSize(
-            metrics.horizontalAdvance(self._text) + self.DEPTH + 10,
+            int(metrics.horizontalAdvance(self._text) + self._lead * 2 + self.DEPTH),
             metrics.height() + self.DEPTH + 10,
         )
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -314,7 +318,7 @@ class Wordmark(QWidget):
 
     def _path(self) -> QPainterPath:
         path = QPainterPath()
-        path.addText(4.0, float(self._baseline), self._font, self._text)
+        path.addText(self._lead, float(self._baseline), self._font, self._text)
         return path
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -356,7 +360,9 @@ class Wordmark(QWidget):
 
         # 5. The line between the face and its own side.
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(theme.GOLD_EDGE, 1.0))
+        # 0.8 rather than 1: a full pixel of outline swallows the hairline
+        # strokes a script is half made of.
+        painter.setPen(QPen(theme.GOLD_EDGE, 0.8))
         painter.drawPath(letters)
 
 

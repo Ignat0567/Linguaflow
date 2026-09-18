@@ -308,3 +308,31 @@ def test_the_name_still_fits_its_own_shadow(window):
     metrics = QFontMetrics(mark._font)
     assert mark.width() > metrics.horizontalAdvance(mark._text)
     assert mark.height() > metrics.height()
+
+
+def test_the_wordmark_uses_an_ornate_face_that_is_installed():
+    """Asking for a font that is not there does not fail: Qt substitutes
+    something else, and a customer would get a sans-serif wordmark nobody
+    chose. The chain picks the first family actually present."""
+    from PySide6.QtGui import QFontDatabase
+
+    from lt_ui import theme
+
+    chosen = theme.mark_family()
+    assert chosen in QFontDatabase.families()
+    assert chosen in theme.MARK_FAMILIES or chosen == theme.FAMILY
+
+
+def test_the_fallback_chain_ends_somewhere_guaranteed():
+    """The last entries ship with Windows, so the chain cannot run out."""
+    from lt_ui import theme
+
+    assert "Segoe Script" in theme.MARK_FAMILIES
+    assert theme.MARK_FAMILIES[0] == "Script MT Bold"
+
+
+def test_the_wordmark_is_not_set_in_the_interface_face(window):
+    """It is the product's name, not a label."""
+    from lt_ui import theme
+
+    assert window._mark._font.family() != theme.FAMILY

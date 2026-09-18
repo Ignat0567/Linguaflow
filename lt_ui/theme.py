@@ -217,6 +217,46 @@ SATURATION = 1.7
 
 FAMILY = "Segoe UI"
 
+#: The wordmark's own face: an ornate connected script, heavy enough that a
+#: metallic ramp across it is visible at all. Thin scripts -- Edwardian,
+#: Kunstler, Palace -- look right in a specimen and lose the gradient
+#: entirely in a 2-pixel stroke.
+#:
+#: A list, not a name, because these are not all guaranteed. `Script MT Bold`
+#: arrives with Office rather than with Windows, and asking for a font that
+#: is not installed does not fail -- Qt quietly substitutes something else,
+#: which on a customer's machine would be a sans-serif wordmark nobody chose.
+#: The first family actually present is used, and `mark_family` says which.
+MARK_FAMILIES = (
+    "Script MT Bold",      # Office; the closest to the reference
+    "Vladimir Script",     # Office; lighter, still connected
+    "Brush Script MT",     # Office; a brush rather than a pen
+    "Segoe Script",        # ships with Windows
+    "Gabriola",            # ships with Windows
+)
+
+_mark_family: str | None = None
+
+
+def mark_family() -> str:
+    """The first ornate face this machine actually has."""
+    global _mark_family
+    if _mark_family is None:
+        from PySide6.QtGui import QFontDatabase
+
+        installed = set(QFontDatabase.families())
+        _mark_family = next(
+            (name for name in MARK_FAMILIES if name in installed), FAMILY
+        )
+    return _mark_family
+
+
+def mark_font(size: int) -> QFont:
+    value = QFont(mark_family())
+    value.setPixelSize(size)
+    value.setWeight(QFont.Weight.Bold)
+    return value
+
 
 def font(size: int, weight: int = 400, tracking: float = 0.0) -> QFont:
     """A font from the handoff's scale.
