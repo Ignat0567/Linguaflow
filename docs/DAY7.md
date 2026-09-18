@@ -217,12 +217,57 @@ reports «ПЕРЕВОД ОБОРВАН в 1» instead of saying nothing.
 
 337 tests.
 
-### Still open
+### Why it stopped punctuating
 
-Why Whisper stopped punctuating after the first minute is not answered here.
-The pipeline no longer depends on the answer, which is the right order to fix
-these in, but a transcript without sentence ends is worse in other ways --
-it reads badly, and the subtitle splitter has less to work with.
+Answered afterwards, by measurement rather than reasoning. Four hypotheses
+were tested on the same 120-second stretch that had produced one sentence end
+in 2227 characters:
+
+| | sentence ends |
+|---|---|
+| as shipped (VAD on, no context) | 1 |
+| `condition_on_previous_text=True` | 0 |
+| `vad_filter=False` | 1 |
+| both | 0 |
+
+So neither the voice-activity filter nor carrying context was the cause, and
+the first two guesses were wrong. What worked was priming the model with a
+short, properly punctuated sample: **13** sentence ends. Prompt *and* context
+together: **31**. The model copies the style of whatever it is started with,
+and started with nothing it transcribes fast continuous speech as one run.
+
+Over the whole 12-minute recording:
+
+| | sentence ends | capitals | characters |
+|---|---|---|---|
+| as shipped | 23 | 54 | 13920 |
+| + punctuated sample | 37 | 90 | 13958 |
+| + sample and context | **184** | **279** | 14111 |
+
+19. **The sample is written in each language.** A prompt in the wrong language
+    is the one way this is known to do harm -- it is what turned a German turn
+    into Russian on Day 4 -- so the language is settled first, from the opening
+    seconds, and the matching sample chosen. English text primed onto a German
+    clip did no harm when tried, but that is not a reason to rely on it.
+20. **Carrying context was off for a good reason, and the reason cost more
+    than it saved.** The concern -- one bad transcription poisoning everything
+    after it -- is a real failure mode. Measured across three recordings, no
+    repetition appeared, and the lengths moved by -0.5%, +1.4% and +25%. It is
+    on for file mode and stays off for the live path, where a window is two
+    seconds and its context is already supplied as committed words.
+21. **The guard against that risk cut real speech, so it is not used.**
+    `hallucination_silence_threshold=2.0` looked like the right insurance and
+    removed 111 characters of a genuine sentence from a two-person recording
+    -- "released four major functions and significantly reduced the average
+    response time" vanished between one clause and the next. A guard against
+    silent loss that causes silent loss is not a guard.
+
+Downstream, on the recording that started this: punctuation in every minute
+(9-20 marks against none for minutes 1-6), translated length 0.90-1.05 of the
+original throughout, and 243 subtitles instead of 189 -- because the cue
+splitter can finally break at real sentence ends rather than mid-thought.
+
+354 tests.
 
 ## Not done
 

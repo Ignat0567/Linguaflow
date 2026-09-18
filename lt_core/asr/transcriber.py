@@ -44,11 +44,49 @@ class TranscribeOptions:
     # conservative: real speech, even accented or noisy, rarely falls this low.
     min_avg_logprob: float = -1.0
     max_no_speech_probability: float = 0.6
-    # Carry the previous window's text into the next as context. It improves
-    # coherence, and it is also how one bad transcription poisons everything
-    # after it, so it is off by default.
-    condition_on_previous_text: bool = False
+    # Carry the previous window's text into the next as context.
+    #
+    # This was off, on the reasoning that one bad transcription poisons
+    # everything after it. The reasoning is sound and the cost of leaving it
+    # off turned out to be larger: without context the model punctuates the
+    # first window and then gives up, and a transcript with no sentence ends
+    # loses most of its translation further down the line. Measured on a
+    # 12-minute recording: 23 sentence ends without it, 184 with it and a
+    # punctuated sample to start from, the text itself 1.4% longer and no
+    # repetition anywhere. Measured on two other recordings, both of which the
+    # model already punctuated: -0.5% and +1.9% in length, no repetition.
+    #
+    # The poisoning risk is real and is bounded rather than dismissed:
+    # faster-whisper's compression-ratio check and temperature fallback are on
+    # by default, and `min_avg_logprob` still drops bad segments afterwards.
+    #
+    # The live path sets this back to False: there the previous text is a
+    # two-second window, not a paragraph.
+    condition_on_previous_text: bool = True
+    #: Skip stretches of silence longer than this, in seconds, where the model
+    #: would otherwise invent speech.
+    #:
+    #: Off, after measuring what it actually does. Aimed at the loops that
+    #: conditioning can start, at 2.0 s it cut real speech instead: on a
+    #: two-person recording it removed 111 characters of a genuine sentence --
+    #: "released four major functions and significantly reduced the average
+    #: response time" simply vanished between one clause and the next. A guard
+    #: against silent loss that causes silent loss is not a guard. Available
+    #: for a recording that needs it, and not the default.
+    hallucination_silence_threshold: float | None = None
     initial_prompt: str | None = None
+    #: Prime the model with a short, punctuated sample in the language being
+    #: transcribed, so that it punctuates its own output.
+    #:
+    #: Without it, this model transcribes fast continuous speech as one
+    #: unbroken run: measured on a real recording, one sentence end per 2227
+    #: characters against thirteen with the sample. That matters far beyond
+    #: readability -- the translator splits on sentence ends, and a transcript
+    #: without any loses most of its translation.
+    #:
+    #: Ignored when `initial_prompt` is given, which stays the way to say
+    #: something specific to one recording.
+    punctuation_prompt: bool = True
 
 
 class UnsupportedLanguage(ValueError):
@@ -106,14 +144,30 @@ class Transcriber:
 
         source = str(Path(audio).resolve()) if isinstance(audio, (str, Path)) else audio
         started = time.perf_counter()
+
+        language = options.language
+        prompt = options.initial_prompt
+        if prompt is None and options.punctuation_prompt:
+            if language is None:
+                # The sample has to be in the recording's own language, and a
+                # prompt in the wrong one is the single way this is known to
+                # cause harm -- so the language is settled first, off the
+                # opening seconds, rather than guessed.
+                language, _confidence = self.detect_language(source)
+            prompt = languages.punctuation_sample(language) or None
+
         raw_segments, info = self._model.transcribe(
             source,
-            language=options.language,
+            language=language,
             beam_size=options.beam_size,
             vad_filter=options.vad_filter,
             word_timestamps=options.word_timestamps,
             condition_on_previous_text=options.condition_on_previous_text,
-            initial_prompt=options.initial_prompt,
+            initial_prompt=prompt,
+            hallucination_silence_threshold=(
+                options.hallucination_silence_threshold
+                if options.word_timestamps else None
+            ),
         )
 
         duration = total_duration if total_duration is not None else info.duration

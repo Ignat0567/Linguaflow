@@ -55,6 +55,15 @@ class Language:
     #: `docs/DAY7.md`.
     piper_male: str = ""
     piper_female: str = ""
+    #: A short, properly punctuated sample, given to the recogniser as its
+    #: opening context.
+    #:
+    #: Whisper copies the style of whatever it is primed with, and given
+    #: nothing it transcribes fast continuous speech as one unpunctuated run.
+    #: Measured on a real recording: one sentence end per 2227 characters
+    #: without this, thirteen with it. It is written in each language because
+    #: a prompt in the wrong language is the one way this is known to do harm.
+    punctuation_sample: str = ""
 
 
 CATALOGUE: dict[str, Language] = {
@@ -63,39 +72,63 @@ CATALOGUE: dict[str, Language] = {
         piper_voice="ru_RU-dmitri-medium",
         piper_male="ru_RU-ruslan-medium",      # 128 Hz
         piper_female="ru_RU-irina-medium",     # 177 Hz
+        punctuation_sample=(
+            "Здравствуйте. Сегодня мы разберём несколько важных вопросов, а затем перейдём к примерам. Начнём?"
+        ),
     ),
     "en": Language(
         "en", "английский", "English", "eng_Latn", "eng", "EN", "EN-GB",
         piper_voice="en_US-lessac-medium",
         piper_male="en_US-hfc_male-medium",    # 114 Hz
         piper_female="en_US-lessac-medium",    # 198 Hz
+        punctuation_sample=(
+            "Hello, and welcome. Today we will go through a few important points, and then look at some examples. Shall we begin?"
+        ),
     ),
     "de": Language(
         "de", "немецкий", "German", "deu_Latn", "deu", "DE", "DE",
         piper_voice="de_DE-thorsten-medium",
         piper_male="de_DE-thorsten-medium",    # 131 Hz
         piper_female="de_DE-ramona-low",       # 191 Hz
+        punctuation_sample=(
+            "Guten Tag. Heute gehen wir einige wichtige Punkte durch, und danach sehen wir uns Beispiele an. Fangen wir an?"
+        ),
     ),
     # -- not offered yet; every path below is written and tested ----------
     "zh": Language(
         "zh", "китайский", "Chinese", "zho_Hans", "zho", "ZH", "ZH",
         scriptio_continua=True, piper_voice="zh_CN-huayan-medium",
+        punctuation_sample=(
+            "大家好。今天我们先看几个重点，然后再看一些例子。我们开始吧？"
+        ),
     ),
     "ja": Language(
         "ja", "японский", "Japanese", "jpn_Jpan", "jpn", "JA", "JA",
         scriptio_continua=True, piper_voice="ja_JA-hi_fi_captain-medium",
+        punctuation_sample=(
+            "こんにちは。今日はいくつかの重要な点を見てから、例を確認します。始めましょうか？"
+        ),
     ),
     "es": Language(
         "es", "испанский", "Spanish", "spa_Latn", "spa", "ES", "ES",
         piper_voice="es_ES-davefx-medium",
+        punctuation_sample=(
+            "Hola, y bienvenidos. Hoy veremos algunos puntos importantes, y después algunos ejemplos. ¿Empezamos?"
+        ),
     ),
     "it": Language(
         "it", "итальянский", "Italian", "ita_Latn", "ita", "IT", "IT",
         piper_voice="it_IT-paola-medium",
+        punctuation_sample=(
+            "Salve, e benvenuti. Oggi vedremo alcuni punti importanti, e poi qualche esempio. Cominciamo?"
+        ),
     ),
     "fr": Language(
         "fr", "французский", "French", "fra_Latn", "fra", "FR", "FR",
         piper_voice="fr_FR-siwis-medium",
+        punctuation_sample=(
+            "Bonjour, et bienvenue. Aujourd'hui, nous verrons quelques points importants, puis des exemples. Commençons ?"
+        ),
     ),
 }
 
@@ -192,6 +225,12 @@ def track_language(code: str) -> str:
     """The code a media container labels an audio or subtitle track with."""
     language = CATALOGUE.get(code)
     return language.iso3 if language else "und"
+
+
+def punctuation_sample(code: str) -> str:
+    """The opening context the recogniser is primed with, in `code`."""
+    language = CATALOGUE.get(code)
+    return language.punctuation_sample if language else ""
 
 
 def offered_list() -> str:

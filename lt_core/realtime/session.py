@@ -258,6 +258,16 @@ class LiveSession:
                 # nothing, but on a two-second window it can swallow a short
                 # word at the edge, so it is left off for the live path.
                 vad_filter=False,
+                # File mode primes the model with a punctuated sample, after
+                # detecting the language to pick the right one. Here that
+                # detection would run on every two-second window, and this
+                # path already carries its own context above.
+                punctuation_prompt=False,
+                # File mode carries the previous window's text forward, which
+                # is what makes it punctuate. Here a window is two seconds and
+                # the text before it is already supplied above, deliberately,
+                # as committed words only.
+                condition_on_previous_text=False,
             ),
             total_duration=len(audio) / TARGET_SAMPLE_RATE,
         )
