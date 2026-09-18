@@ -16,6 +16,12 @@ the middle of a file's own gap separates its speakers better than any fixed
 number can. A fixed number is still needed when only one person is talking,
 and 155 Hz is where that falls -- inside the empty band on every file
 measured, and the classical ceiling of the male modal range.
+
+Which voice per line is decided only where the recording showed two people.
+Where it showed one, that fixed number chooses the voice for the recording and
+then stays out of the way: a single speaker's pitch crosses any threshold you
+care to name in the course of a talk, and a line-by-line comparison turns that
+into a narrator who changes sex mid-paragraph.
 """
 
 from __future__ import annotations
@@ -37,6 +43,23 @@ DEFAULT_SPLIT = 155.0
 #: people. Measured separations between a real pair ran 40-80 Hz; a single
 #: speaker's own spread across a recording stayed well under this.
 MIN_SEPARATION = 35.0
+
+#: How wide the band between the two groups must be before it counts as two
+#: people.
+#:
+#: Two-means will cut any list of numbers in half, including one speaker's own
+#: spread, and the halves it produces are always a little apart -- so "the
+#: groups are separated" is not evidence of anything. What is evidence is an
+#: *empty* band: nothing measured in the middle at all. Across every recording
+#: on hand, genuine pairs left 63-88 Hz empty, while one person talking left
+#: 0.2-2.0 Hz, the two halves touching, which is what a continuous spread looks
+#: like after it has been cut. 25 Hz sits an order of magnitude above the false
+#: ones and well below the narrowest true one.
+#:
+#: Without this a 5-minute talk by one man came out with 16 of its 74 lines
+#: read by a woman: his pitch ran 115-231 Hz, two-means put the boundary at
+#: 167, and every animated sentence crossed it.
+MIN_EMPTY_BAND = 25.0
 
 #: Within this much of the split, a line is not decided on its own. It takes
 #: the decision of the lines around it, because a speaker does not change sex
@@ -75,10 +98,14 @@ class Cast:
         male = self.genders.count(MALE)
         female = self.genders.count(FEMALE)
         source = "по записи" if self.from_recording else "по умолчанию"
-        text = (
-            f"Голоса: {male} мужских, {female} женских "
-            f"(порог {self.split:.0f} Гц, {source})"
-        )
+        if not self.is_mixed:
+            voice = "мужской" if male else "женский"
+            text = f"Один голос: {voice} (порог {self.split:.0f} Гц, {source})"
+        else:
+            text = (
+                f"Голоса: {male} мужских, {female} женских "
+                f"(порог {self.split:.0f} Гц, {source})"
+            )
         if self.unmeasured:
             text += f"; {self.unmeasured} без различимого тона"
         return text
@@ -120,7 +147,7 @@ def choose_split(pitches: list[float]) -> tuple[float, bool]:
         return DEFAULT_SPLIT, False
 
     low, high, gap = _cluster(values)
-    if high - low < MIN_SEPARATION or gap <= 0.0:
+    if high - low < MIN_SEPARATION or gap < MIN_EMPTY_BAND:
         # One speaker, or two of the same register. A single voice reads it.
         return DEFAULT_SPLIT, False
 
@@ -162,14 +189,25 @@ def analyse(
     else:
         majority = default or MALE
 
-    genders: list[str] = []
-    for pitch in measured:
-        if pitch is None:
-            cast.unmeasured += 1
-            genders.append(majority)
-        else:
-            genders.append(MALE if pitch.median < cast.split else FEMALE)
+    cast.unmeasured = sum(1 for pitch in measured if pitch is None)
 
+    if not cast.from_recording:
+        # Nothing in this recording says there are two people in it, so the
+        # threshold only decides which voice reads the whole of it -- never
+        # which voice reads a line. One person's pitch wanders a long way
+        # over five minutes: an animated sentence from the same man can
+        # measure 230 Hz where his calm ones measure 120, and comparing each
+        # line against a fixed number turns that wandering into a cast
+        # change. A register that is wrong throughout is a smaller fault than
+        # a narrator who keeps changing sex.
+        cast.genders = [majority] * len(measured)
+        return cast
+
+    genders = [
+        majority if pitch is None
+        else (MALE if pitch.median < cast.split else FEMALE)
+        for pitch in measured
+    ]
     cast.genders = _smooth(genders, measured, cast.split)
     return cast
 

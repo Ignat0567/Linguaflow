@@ -96,6 +96,48 @@ def test_one_speaker_does_not_get_split_in_half():
     assert split == casting.DEFAULT_SPLIT
 
 
+#: Every line of a real five-minute talk by one man, measured: the file the
+#: complaint was about. Unimodal, peaking at 140-150 Hz, with a tail up to 231
+#: where he becomes animated -- and nothing empty anywhere in it.
+ONE_MAN = [
+    185.8, 175.1, 140.1, 145.4, 137.0, 130.3, 124.3, 195.8, 157.7, 176.7,
+    220.3, 172.6, 127.3, 152.4, 140.3, 147.0, 124.2, 213.1, 146.5, 149.9,
+    122.9, 146.5, 168.5, 139.4, 148.1, 161.2, 151.0, 147.1, 114.6, 174.7,
+    131.8, 200.7, 164.9, 147.1, 138.0, 190.2, 210.5, 170.2, 158.4, 146.3,
+    145.4, 135.7, 230.6, 178.9, 168.0, 131.0, 124.1, 214.1, 150.7, 166.6,
+    154.1, 156.3, 142.3, 135.1, 146.0, 152.3, 158.4, 172.3, 149.1, 173.9,
+    141.2, 151.0, 145.5, 135.4, 165.1, 147.5, 146.6, 150.0, 156.4, 163.4,
+    166.4, 176.6, 126.0, 146.7,
+]
+
+
+def test_a_wide_spread_with_nothing_empty_in_it_is_still_one_speaker():
+    """Two-means cuts any list in half and the halves always end up a little
+    apart, so "the groups are separated" proves nothing. This man's own range
+    is 116 Hz wide and its two halves touch within 2 Hz."""
+    split, from_recording = choose_split(ONE_MAN)
+    assert not from_recording
+    assert split == casting.DEFAULT_SPLIT
+
+
+def test_a_lone_speaker_keeps_one_voice_for_the_whole_recording():
+    """The complaint that started this: 16 of 74 lines of one man's talk came
+    back read by a woman, because each line was compared against a threshold
+    his own pitch crosses whenever he becomes animated."""
+    cues = cues_of(len(ONE_MAN))
+    audio = np.concatenate([tone(hz, 1.0) for hz in ONE_MAN])
+    cast = casting.analyse(cues, audio, 16_000)
+    assert not cast.is_mixed
+    assert set(cast.genders) == {MALE}
+
+
+def test_the_empty_band_a_real_pair_leaves_is_wide(): 
+    """Measured across every recording on hand: genuine pairs left 63-88 Hz of
+    the scale untouched. The threshold has to fit under that and over the 2 Hz
+    a single speaker leaves, which is a wide place to stand."""
+    assert 2.0 < casting.MIN_EMPTY_BAND < 63.0
+
+
 def test_too_few_measurements_fall_back_rather_than_invent_a_split():
     split, from_recording = choose_split([95, 190])
     assert not from_recording
