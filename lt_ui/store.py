@@ -82,6 +82,11 @@ class Settings:
     #: Trim filler out of a translated line when it cannot be spoken in the
     #: time the original took.
     condense: bool = True
+    #: Which service rewrites the lines the rules could not shorten. Empty
+    #: means rules only, and nothing leaves the machine. Its key is read from
+    #: the service's environment variable rather than stored here: a settings
+    #: file is not a place to keep someone's API key.
+    shorten_with: str = ""
     sub_format: str = "srt"
     notify: bool = True
     translation_mode: str = TranslationMode.OFFLINE
@@ -134,6 +139,8 @@ class Settings:
             self.translation_mode = TranslationMode.OFFLINE
         if self.capture_kind not in {"microphone", "system"}:
             self.capture_kind = "microphone"
+        if self.shorten_with not in {"", "groq", "openai", "nvidia", "local"}:
+            self.shorten_with = ""
         if self.appearance not in {"dark", "light"}:
             self.appearance = "dark"
         if self.ui_language not in UI_LANGUAGES:

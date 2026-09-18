@@ -101,6 +101,17 @@ class SettingsScreen(QWidget):
             )
         )
 
+        voice.body.addWidget(glass.label(
+            _("Чем сокращать"), 12, 500, theme.TERTIARY
+        ))
+        self._shortener = ChipGroup(
+            (("", _("Только правила")), ("nvidia", "NVIDIA"), ("groq", "Groq"),
+             ("openai", "OpenAI"), ("local", _("Свой сервер"))),
+            voice,
+        )
+        self._shortener.changed.connect(self._sync_shortener)
+        voice.body.addWidget(self._shortener)
+
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
         voice.body.addWidget(self._voice_note)
 
@@ -274,6 +285,7 @@ class SettingsScreen(QWidget):
         self._light.setChecked(settings.appearance == theme.LIGHT)
         self._light.blockSignals(False)
         self._ui_language.set_value(settings.ui_language)
+        self._shortener.set_value(settings.shorten_with)
         self._show_folder()
         self._format.set_value(settings.sub_format)
         self._mode.set_value(settings.translation_mode)
@@ -411,6 +423,10 @@ class SettingsScreen(QWidget):
         self.app.store.settings.match_voices = on
         self.app.store.save_settings()
         self._update_voice_note()
+
+    def _sync_shortener(self, service: str) -> None:
+        self.app.store.settings.shorten_with = service
+        self.app.store.save_settings()
 
     def _sync_condense(self, on: bool) -> None:
         self.app.store.settings.condense = on

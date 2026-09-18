@@ -165,6 +165,8 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Shorten the translation so it fits the line",
         "Übersetzung kürzen, damit sie in die Zeile passt",
     ),
+    "Чем сокращать": ("What does the shortening", "Womit gekürzt wird"),
+    "Только правила": ("Rules only", "Nur Regeln"),
     "Формат субтитров": ("Subtitle format", "Untertitelformat"),
     "Где выполняется перевод": (
         "Where translating happens", "Wo übersetzt wird",

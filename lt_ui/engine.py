@@ -30,6 +30,22 @@ from lt_core.video.mux import MuxError
 from .store import MODEL_ROOT, ROOT, Settings, display_name
 
 
+def _shortener(settings: Settings):
+    """The service that rewrites over-long lines, if one was chosen.
+
+    A failure here must not cost the recording: without a key the provider
+    refuses to construct, and the job goes ahead with the rules alone.
+    """
+    if not settings.shorten_with:
+        return None
+    try:
+        from lt_core.mt.cloud import build_cloud_provider
+
+        return build_cloud_provider(service=settings.shorten_with)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class LoadWorker(QThread):
     """Load the recogniser and translator once, keep them for the session."""
 
@@ -113,6 +129,7 @@ class BatchWorker(QThread):
                 match_voices=settings.match_voices,
                 dub_video=settings.dub_video,
                 condense=settings.condense,
+                shortener=_shortener(settings),
             )
             self.progress.emit(1.0)
             self.done.emit(result)
