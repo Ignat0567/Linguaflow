@@ -253,8 +253,29 @@ class NavItem(glass.Hoverable):
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
+class Wordmark(glass.GlassPanel):
+    """The name, top left, on the same band as the nav.
+
+    Its own panel rather than a passenger inside the nav pill: the nav is
+    centred and the name is not, so sharing one surface put the name wherever
+    the centre happened to fall. Here it sits against the left gutter, the
+    same distance from that edge as from the top, and level with the bar.
+    """
+
+    def __init__(self, parent: QWidget | None = None, size: int = 24) -> None:
+        super().__init__(parent, radius=theme.RADIUS_PILL,
+                         tint=theme.tint(raised=True))
+        self.setFixedHeight(theme.NAV_HEIGHT + 16)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        label = glass.label("Linguaflow", size, 700, tracking=-2)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(22, 8, 22, 8)
+        row.setSpacing(0)
+        row.addWidget(label)
+
+
 class NavBar(glass.GlassPanel):
-    """The floating pill: wordmark on the left, five destinations after it."""
+    """The floating pill: the five destinations, centred."""
 
     chosen = Signal(str)
 
@@ -279,15 +300,11 @@ class NavBar(glass.GlassPanel):
         self.setFixedHeight(theme.NAV_HEIGHT + 16)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
-        mark = glass.label("Linguaflow", 19, 700, tracking=-2)
-        mark.setContentsMargins(10, 0, 8, 0)
-
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 8, 10, 8)
         row.setSpacing(4)
-        row.addWidget(mark)
         self._items: dict[str, NavItem] = {}
         for index, (key, text) in enumerate(self.captions()):
             item = NavItem(text, key, self)

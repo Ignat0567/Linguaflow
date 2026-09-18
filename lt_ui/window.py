@@ -35,7 +35,7 @@ from .screens.realtime import RealtimeScreen
 from .screens.settings import SettingsScreen
 from .screens.upload import UploadScreen
 from .store import MODEL_ROOT, HistoryEntry, Store
-from .widgets import NavBar, clear_fill
+from .widgets import NavBar, Wordmark, clear_fill
 
 
 class _Scroll(QScrollArea):
@@ -82,7 +82,9 @@ class Window(QWidget):
         self.overlay = OverlayWindow(self.store)
 
         self._frame = QVBoxLayout(self)
-        self._frame.setContentsMargins(24, 20, 24, 28)
+        # Left and top are the same: the name sits the same distance from
+        # each edge, which is what «with an inset from both» means.
+        self._frame.setContentsMargins(24, 24, 24, 28)
         self._frame.setSpacing(0)
         self._shell: QWidget | None = None
         self._build_shell()
@@ -117,10 +119,17 @@ class Window(QWidget):
         for screen in self._pages.values():
             self._stack.addWidget(_Scroll(screen))
 
+        self._mark = Wordmark(self)
         nav_row = QHBoxLayout()
-        nav_row.addStretch()
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(0)
+        nav_row.addWidget(self._mark, 0, Qt.AlignLeft)
+        nav_row.addStretch(1)
         nav_row.addWidget(self._nav)
-        nav_row.addStretch()
+        nav_row.addStretch(1)
+        # The nav is centred on the window, not on what is left of it, so the
+        # name's width is given back on the other side.
+        nav_row.addSpacing(self._mark.sizeHint().width())
 
         shell = QWidget(self)
         shell.setAttribute(Qt.WA_TranslucentBackground, True)

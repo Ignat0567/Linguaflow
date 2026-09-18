@@ -208,3 +208,47 @@ def test_the_key_row_is_taller_than_the_field_in_it(window):
     field = window._settings._key
     assert window._settings._key_wrap.minimumHeight() > field.height()
     assert _ROW_HEIGHT >= 34
+
+
+# -- the name, where it was asked to be ---------------------------------
+
+def test_the_name_sits_in_the_top_left_corner(window):
+    """Asked for plainly: top left, inset from both edges, level with the bar.
+    It had been riding inside the centred nav pill, which put it wherever the
+    centre happened to fall.
+    """
+    window.resize(1280, 860)
+    window.show()
+    window.goto("home")
+    corner = window._mark.mapTo(window, window._mark.rect().topLeft())
+    assert corner.x() > 0 and corner.y() > 0
+    assert corner.x() == corner.y(), "отступ слева и сверху должен совпадать"
+
+
+def test_the_name_is_level_with_the_nav(window):
+    window.resize(1280, 860)
+    window.show()
+    window.goto("home")
+    mark = window._mark.mapTo(window, window._mark.rect().topLeft())
+    nav = window._nav.mapTo(window, window._nav.rect().topLeft())
+    assert mark.y() == nav.y()
+    assert window._mark.height() == window._nav.height()
+
+
+def test_the_nav_stays_centred_on_the_window(window):
+    """The name takes room on the left, so the same room is given back on the
+    right -- otherwise the bar drifts off centre by the width of a word."""
+    window.resize(1280, 860)
+    window.show()
+    window.goto("home")
+    nav = window._nav.mapTo(window, window._nav.rect().topLeft())
+    centre = nav.x() + window._nav.width() / 2
+    assert abs(centre - window.width() / 2) <= 2
+
+
+def test_the_nav_no_longer_carries_the_name(window):
+    """One surface, one job."""
+    from PySide6.QtWidgets import QLabel
+
+    labels = [w.text() for w in window._nav.findChildren(QLabel)]
+    assert "Linguaflow" not in labels
