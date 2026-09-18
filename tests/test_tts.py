@@ -22,6 +22,12 @@ def cue(index, start, end, text):
     return Cue(index=index, start=start, end=end, lines=(text,))
 
 
+def spoken(start, seconds, rate=16_000):
+    """An utterance of a given length, for testing what it is ducked over."""
+    samples = np.zeros(int(seconds * rate), dtype=np.float32)
+    return Utterance(samples, rate, start, seconds, 1.0)
+
+
 class FakeSpeaker:
     """Speaks at a fixed number of seconds per character."""
 
@@ -166,8 +172,7 @@ def test_empty_cues_are_skipped():
 def test_the_original_is_turned_down_under_the_dub():
     rate = 16_000
     original = np.ones(10 * rate, dtype=np.float32) * 0.5
-    cues = (cue(1, 2.0, 4.0, "spoken here"),)
-    ducked = dubbing.duck(original, cues, rate)
+    ducked = dubbing.duck(original, [(2.0, 4.0)], rate)
 
     under = np.abs(ducked[int(2.5 * rate):int(3.5 * rate)]).mean()
     clear = np.abs(ducked[int(7.0 * rate):int(8.0 * rate)]).mean()
@@ -179,16 +184,55 @@ def test_the_original_is_not_silenced():
     translation the numeric audit has flagged."""
     rate = 16_000
     original = np.ones(6 * rate, dtype=np.float32) * 0.5
-    ducked = dubbing.duck(original, (cue(1, 0.0, 6.0, "x"),), rate)
+    ducked = dubbing.duck(original, [(0.0, 6.0)], rate)
     assert np.abs(ducked).mean() > 0.0
 
 
 def test_ducking_fades_rather_than_steps():
     rate = 16_000
     original = np.ones(10 * rate, dtype=np.float32) * 0.5
-    ducked = dubbing.duck(original, (cue(1, 5.0, 7.0, "x"),), rate)
+    ducked = dubbing.duck(original, [(5.0, 7.0)], rate)
     edge = np.abs(np.diff(ducked[int(4.8 * rate):int(5.2 * rate)]))
     assert edge.max() < 0.05, "a level jump is audible as a click"
+
+
+def test_the_original_comes_back_up_where_the_dub_has_finished():
+    """The dub is shorter than the line it translates more often than not, and
+    holding the original down until the caption ends leaves dead air. Measured
+    on a five-minute talk before this: twelve holes, up to 2.0 s, 13.9 s in
+    all, with nothing audible in them at all."""
+    rate = 16_000
+    original = np.ones(10 * rate, dtype=np.float32) * 0.5
+    spans = dubbing.spoken_spans([spoken(start=2.0, seconds=1.0, rate=rate)])
+    ducked = dubbing.duck(original, spans, rate)
+
+    under = np.abs(ducked[int(2.4 * rate):int(2.8 * rate)]).mean()
+    after = np.abs(ducked[int(4.0 * rate):int(4.5 * rate)]).mean()
+    assert under < after / 4
+
+
+def test_a_breath_between_two_lines_does_not_pump_the_level():
+    """Opening the original for every pause is its own fault: a half-second of
+    silence between two sentences would swell and duck again."""
+    rate = 16_000
+    spans = dubbing.spoken_spans([
+        spoken(start=0.0, seconds=1.0, rate=rate),
+        spoken(start=1.4, seconds=1.0, rate=rate),
+    ])
+    assert spans == [(0.0, 2.4)]
+
+
+def test_a_long_silence_between_lines_is_opened():
+    rate = 16_000
+    spans = dubbing.spoken_spans([
+        spoken(start=0.0, seconds=1.0, rate=rate),
+        spoken(start=4.0, seconds=1.0, rate=rate),
+    ])
+    assert len(spans) == 2
+
+
+def test_nothing_spoken_ducks_nothing():
+    assert dubbing.spoken_spans([]) == []
 
 
 # -- resampling ----------------------------------------------------------
