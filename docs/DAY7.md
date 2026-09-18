@@ -435,7 +435,40 @@ own things belong.
     history entries and the key arrived; four job folders and every file they
     point at stayed where they were.
 
-417 tests.
+37. **Two-means will split anything, including one person.** A five-minute
+    talk by one man came back with 16 of its 74 lines read by a woman. The
+    guard was "the clusters are far enough apart", which two-means satisfies
+    on any list of numbers. The guard that works is an *empty band*: measured
+    across every recording on hand, genuine pairs leave 63-88 Hz of the scale
+    untouched, one speaker leaves 0.2-2.0 Hz. And when a recording holds one
+    speaker, the fallback threshold now picks the voice for the recording
+    instead of being applied line by line -- his own pitch ran 115 to 231 Hz,
+    so a line-by-line comparison against any fixed number changes voices.
+38. **Ducking followed the subtitle, and the subtitle outlives the line.** A
+    translated line is usually shorter than the line it translates, so the
+    original stayed 18 dB down after the dub had stopped speaking. Measured on
+    that same file: **111 stretches, 77.5 s of a 297 s video, the longest 8.0
+    s**, with nothing audible in them at all -- which is what the person
+    watching reported as "gaps". Ducking now follows the utterances the dub
+    actually produced: 12.2 s remain and the longest is 0.65 s, every one of
+    them inside the deliberate 0.7 s bridge that stops the level pumping
+    between two sentences.
+39. **A cue boundary fell inside a word.** Whisper emits "self-improvement" as
+    " self" and "-improvement,", and the missing leading space is the only
+    thing that says they are one word. `_join` honours that -- it is why
+    "$12,000" survives -- and `_best_break` did not, so the viewer read "...a
+    policy of self" and then "-improvement, self-change."
+40. **Priming the second pass with the first pass's own words was measured and
+    dropped.** The recogniser heard "coordination" as "coronation" four times
+    in the first four minutes, correctly seven times later. A second pass
+    primed with sentences from the first fixed all four and fixed the garbled
+    closing line -- and turned "loss of face" into "loss of faith" twice and
+    digits into spelled-out numerals. `avg_logprob` does not tell the two
+    apart: it preferred "coronation" in two of the four places and rated the
+    primed pass worse overall. A change that trades one class of error for
+    another with no way to tell which is which is not an improvement.
+
+483 tests.
 
 ## Not done
 
