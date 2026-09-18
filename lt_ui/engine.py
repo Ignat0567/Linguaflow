@@ -262,13 +262,18 @@ class LiveWorker(QThread):
             source.stop()
             self._source = None
 
-        if isinstance(session, LiveSession):
-            final = session.finish()
-            if final.has_content:
-                self.captions.append(final)
-                self.update.emit(final)
-                if speak and final.translation and speaker is not None:
-                    _speak(speaker, final.translation, gate)
+        # Both kinds of session have a tail: the last words are transcribed
+        # and then held for the sentence that never comes. Conversation mode
+        # was not asked for its, so the last thing either person said was
+        # dropped every time the button was pressed.
+        closing = session.finish()
+        for final in closing if isinstance(closing, list) else [closing]:
+            if not final.has_content:
+                continue
+            self.captions.append(final)
+            self.update.emit(final)
+            if speak and final.translation and speaker is not None:
+                _speak(speaker, final.translation, gate)
         self.stopped.emit()
 
 

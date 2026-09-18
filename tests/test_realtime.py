@@ -394,6 +394,54 @@ def test_conversation_routes_each_side_to_the_other():
     assert session._route("de") is None
 
 
+def test_the_window_does_not_ask_only_one_kind_of_session_for_its_tail():
+    """The bug was in the caller, not in either session: the worker closed the
+    stream and then asked for the tail only `if isinstance(session,
+    LiveSession)`. Both kinds have one."""
+    from pathlib import Path as _Path
+
+    worker = (_Path(__file__).resolve().parent.parent
+              / "lt_ui" / "engine.py").read_text(encoding="utf-8")
+    assert "isinstance(session, LiveSession)" not in worker
+    assert callable(getattr(ConversationSession, "finish", None))
+    assert callable(getattr(LiveSession, "finish", None))
+
+
+class FakeConversationTranscriber(FakeTranscriber):
+    """A transcriber that also answers "which of these two languages"."""
+
+    def __init__(self, script, language="en", heard=None):
+        super().__init__(script, language)
+        self.heard = heard or language
+
+    def detect_between(self, audio, languages):
+        return self.heard, 0.99, 0.9
+
+
+def test_the_last_thing_said_is_not_lost_when_the_conversation_is_stopped():
+    """The window feeds chunks itself so that it can stop on a button, and it
+    used to ask only a single-speaker session for its tail. A conversation's
+    last words were transcribed, held for the sentence that never came, and
+    dropped."""
+    script = [
+        words((" Good", 0.0, 0.5), (" morning", 0.5, 1.0)),
+        words((" Good", 0.0, 0.5), (" morning", 0.5, 1.0), (" there", 1.0, 1.5)),
+    ]
+    session = ConversationSession(
+        FakeConversationTranscriber(script), _EchoTranslator(),
+        Side("en", "A"), Side("ru", "B"), pace=Pace(window=1.0),
+    )
+    for chunk in chunks(3.0):
+        session.feed(chunk)
+    closing = session.finish()
+    assert isinstance(closing, list)
+    spoken = " ".join(
+        part for update in closing
+        for part in (update.committed, update.translation) if part
+    )
+    assert "morning" in spoken, spoken
+
+
 def test_a_turn_is_routed_by_the_alphabet_it_came_out_in():
     """Committed text trails the audio by seconds, so at a handover the window
     has already changed hands while the words still belong to whoever was

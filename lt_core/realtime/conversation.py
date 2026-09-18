@@ -386,31 +386,56 @@ class ConversationSession:
         self._preview = ("", "")
         return self._say(text, source, target)
 
+    def finish(self) -> list[LiveUpdate]:
+        """End the conversation: close the last turn and translate what is left.
+
+        A separate method rather than only the tail of `run`, because the
+        window does not use `run` -- it feeds chunks itself so that it can stop
+        on a button. Without this the last thing either person said was
+        transcribed, held for the sentence that never came, and dropped.
+        """
+        produced: list[LiveUpdate] = []
+        final = self._session.finish()
+        leftover_speaker = self._previous_speaker
+        leftover = self._flush_holding()
+
+        if not final.committed:
+            if leftover:
+                produced.append(LiveUpdate(
+                    translation=leftover, speaker=leftover_speaker,
+                    audio_time=final.audio_time,
+                ))
+            return produced
+
+        spoken = (self._by_script(final.committed)
+                  or self._session.source_language)
+        route = self._route(spoken) if spoken else None
+        if route is not None:
+            speaker, listener = route
+            self._holding.append(final.committed)
+            self._holding_for = (speaker.language, listener.language)
+            final = LiveUpdate(
+                committed=final.committed,
+                translation=" ".join(
+                    part for part in (leftover, self._flush_holding()) if part
+                ),
+                speaker=speaker.label,
+                audio_time=final.audio_time,
+            )
+        elif leftover:
+            produced.append(LiveUpdate(
+                translation=leftover, speaker=leftover_speaker,
+                audio_time=final.audio_time,
+            ))
+        self._history.append(final)
+        produced.append(final)
+        return produced
+
     def run(self, chunks: Iterator[AudioChunk]) -> Iterator[LiveUpdate]:
         for chunk in chunks:
             for update in self.feed(chunk):
                 if update.has_content:
                     yield update
-        final = self._session.finish()
-        leftover_speaker = self._previous_speaker
-        leftover = self._flush_holding()
-        if not final.committed and leftover:
-            yield LiveUpdate(translation=leftover, speaker=leftover_speaker,
-                             audio_time=final.audio_time)
-        if final.committed:
-            heard = self._session.source_language
-            route = self._route(heard) if heard else None
-            if route is not None:
-                speaker, listener = route
-                self._holding.append(final.committed)
-                self._holding_for = (speaker.language, listener.language)
-                final = LiveUpdate(
-                    committed=final.committed,
-                    translation=" ".join(
-                        part for part in (leftover, self._flush_holding()) if part
-                    ),
-                    speaker=speaker.label,
-                    audio_time=final.audio_time,
-                )
-            self._history.append(final)
-            yield final
+        for update in self.finish():
+            if update.has_content:
+                yield update
