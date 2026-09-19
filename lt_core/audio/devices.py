@@ -202,6 +202,24 @@ def list_capture_devices(prefer_dshow: bool = True) -> list[DeviceInfo]:
     )
 
 
+def default_playback_name() -> str | None:
+    """The output device synthesised speech will be played into.
+
+    Cleaned the same way the loopback devices' names are, so the two can be
+    compared. `check_routing` exists to tell somebody, before they start, that
+    the voice they are about to hear is the voice they are about to record --
+    and it cannot do that if nobody tells it where the voice will play.
+    """
+    try:
+        import sounddevice as sd
+
+        info = sd.query_devices(kind="output")
+    except Exception:  # noqa: BLE001 -- no output device is not a crash
+        return None
+    name = info.get("name") if isinstance(info, dict) else None
+    return _clean_name(str(name)) if name else None
+
+
 def default_device(kind: str) -> DeviceInfo | None:
     candidates = [d for d in list_capture_devices() if d.kind == kind]
     if not candidates:

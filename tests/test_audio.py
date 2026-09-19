@@ -384,3 +384,27 @@ def test_device_exposes_every_way_to_open_it():
     device = DeviceInfo("sounddevice", 23, "Webcam", "microphone", 48_000, 2,
                         alternates=((10, 44_100, 2), (1, 44_100, 2)))
     assert device.openings == ((23, 48_000, 2), (10, 44_100, 2), (1, 44_100, 2))
+
+
+# -- where the spoken translation will play ------------------------------
+
+def test_the_playback_device_is_named_the_way_the_loopbacks_are():
+    """`check_routing` compares the two names to find the feedback loop, so
+    they have to be cleaned the same way or it never matches."""
+    from lt_core.audio.devices import _clean_name, default_playback_name
+
+    name = default_playback_name()
+    assert name is None or (isinstance(name, str) and name == _clean_name(name))
+
+
+def test_the_routing_check_is_told_where_the_voice_will_play():
+    """It used to be handed None, which answers "the output device is not
+    chosen; routing will be checked when the voice starts" -- and nothing ever
+    checked. Capturing system audio while speaking into the same device is the
+    loop the whole module exists to prevent."""
+    from pathlib import Path as _Path
+
+    worker = (_Path(__file__).resolve().parent.parent
+              / "lt_ui" / "engine.py").read_text(encoding="utf-8")
+    assert "check_routing(device, None)" not in worker
+    assert "default_playback_name()" in worker

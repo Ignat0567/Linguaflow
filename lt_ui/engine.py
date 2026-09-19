@@ -13,10 +13,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from lt_core import languages
 from lt_core.asr.transcriber import Transcriber, TranscribeOptions, UnsupportedLanguage
 from lt_core.audio.capture import CaptureError, open_source
-from lt_core.audio.devices import default_device, list_capture_devices
-from lt_core import languages
+from lt_core.audio.devices import (
+    default_device,
+    default_playback_name,
+    list_capture_devices,
+)
 from lt_core.audio.echo_gate import EchoGate, check_routing
 from lt_core.media import MediaError
 from lt_core.mt.translator import build_translator
@@ -218,7 +222,7 @@ class LiveWorker(QThread):
             except VoiceError as error:
                 self.failed.emit(str(error))
                 return
-            advice = check_routing(device, None)
+            advice = check_routing(device, default_playback_name())
             if not advice.safe:
                 self.failed.emit(
                     advice.reason + ((" " + advice.remedy) if advice.remedy else "")
