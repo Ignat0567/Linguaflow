@@ -142,6 +142,28 @@ class SettingsScreen(QWidget):
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
         voice.body.addWidget(self._voice_note)
 
+        words = SettingsGroup(_("Слова из записи"))
+        words.body.addWidget(glass.label(
+            _("Имена, термины, названия — через запятую. Распознавание "
+              "подсказки не выдумывает, но с ними реже ошибается в том, "
+              "что слышит впервые."),
+            12, 400, theme.TERTIARY, wrap=True,
+        ))
+        self._terms = GlassInput(
+            words, placeholder=_("например: Kubernetes, Anthropic")
+        )
+        self._terms.editingFinished.connect(self._save_terms)
+        terms_row = QHBoxLayout()
+        terms_row.setContentsMargins(0, 0, 0, 0)
+        terms_row.addWidget(self._terms, 1)
+        self._terms_wrap = QWidget()
+        clear_fill(self._terms_wrap)
+        # The field's border is drawn on its edge; a row of exactly its height
+        # clips the bottom line off, the same way the key row did.
+        self._terms_wrap.setMinimumHeight(_ROW_HEIGHT + 8)
+        self._terms_wrap.setLayout(terms_row)
+        words.body.addWidget(self._terms_wrap)
+
         fmt = SettingsGroup(_("Формат субтитров"))
         self._format = ChipGroup((
             ("srt", "SRT"), ("vtt", "VTT"), ("txt", "TXT"),
@@ -293,7 +315,7 @@ class SettingsScreen(QWidget):
         column.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         column.addWidget(title)
         column.addSpacing(28)
-        for group in (langs, voice, fmt, where_files, where, capture,
+        for group in (langs, voice, words, fmt, where_files, where, capture,
                       overlay, notify, look, accent):
             group.setMaximumWidth(700)
             column.addWidget(group)
@@ -319,6 +341,7 @@ class SettingsScreen(QWidget):
         self._shortener.set_value(settings.shorten_with)
         self._show_key()
         self._show_folder()
+        self._terms.setText(settings.terms)
         self._format.set_value(settings.sub_format)
         self._show_format()
         self._mode.set_value(settings.translation_mode)
@@ -353,6 +376,10 @@ class SettingsScreen(QWidget):
 
     def _sync_voice(self, on: bool) -> None:
         self.app.store.settings.voiceover = on
+        self._save()
+
+    def _save_terms(self) -> None:
+        self.app.store.settings.terms = self._terms.text().strip()
         self._save()
 
     def _sync_format(self, value: str) -> None:

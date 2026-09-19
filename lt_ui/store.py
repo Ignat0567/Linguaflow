@@ -67,6 +67,21 @@ def format_date(iso: str) -> str:
     return f"{moment.day} {_MONTHS[moment.month - 1]} {moment.year}"
 
 
+def split_terms(text: str) -> tuple[str, ...]:
+    """The words a user typed, however they chose to separate them.
+
+    Commas, semicolons and new lines all mean the same thing to somebody
+    typing a handful of names into a box, and a list that only works one way
+    is a list that silently does nothing half the time.
+    """
+    import re
+
+    parts = re.split(r"[,;\n\r\t]+", text or "")
+    return tuple(dict.fromkeys(
+        part.strip() for part in parts if part and part.strip()
+    ))
+
+
 @dataclass
 class Settings:
     from_lang: str = "ru"
@@ -74,6 +89,9 @@ class Settings:
     #: File mode only. When true, Whisper identifies the source language
     #: instead of using `from_lang`. Live mode still needs an explicit pair.
     detect_language: bool = True
+    #: Words this recording uses that the recogniser will not guess: names,
+    #: jargon, a product nobody has heard of. Comma-separated, as typed.
+    terms: str = ""
     #: What kind of live session: one speaker, or two who share no language.
     realtime_mode: str = "subtitles"  # subtitles | conversation
     #: Read the translation out loud as well as showing it. Orthogonal to the

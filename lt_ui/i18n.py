@@ -353,6 +353,20 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
 
     "Озвучивать": ("Read aloud", "Vorlesen"),
+    "Слова из записи": ("Words in the recording", "Wörter in der Aufnahme"),
+    "Имена, термины, названия — через запятую. Распознавание подсказки не "
+    "выдумывает, но с ними реже ошибается в том, что слышит впервые.": (
+        "Names, terms and titles, separated by commas. Recognition does not "
+        "invent from a hint, but it misreads unfamiliar words less often "
+        "with one.",
+        "Namen, Fachbegriffe und Titel, durch Kommas getrennt. Die Erkennung "
+        "erfindet nichts aus einem Hinweis, verhört sich damit aber seltener "
+        "bei Unbekanntem.",
+    ),
+    "например: Kubernetes, Anthropic": (
+        "for example: Kubernetes, Anthropic",
+        "zum Beispiel: Kubernetes, Anthropic",
+    ),
 
     # -- what the core reports when a job cannot go on ------------------
     "Файл не найден: {path}": (

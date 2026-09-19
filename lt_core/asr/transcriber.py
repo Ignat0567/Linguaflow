@@ -91,6 +91,21 @@ class TranscribeOptions:
     #: Discard segments that are only the credits this model invents over
     #: silence. See `_HALLUCINATIONS`.
     drop_hallucinations: bool = True
+    #: Words this recording uses that the model is unlikely to guess: names,
+    #: jargon, a product nobody has heard of.
+    #:
+    #: Named in the prompt, which is the only lever this model offers for it.
+    #: Measured on a five-minute talk about "mass times energy times
+    #: coordination": the recogniser heard "coronation" four times in the first
+    #: seventy seconds and got it right seven times afterwards, so the term at
+    #: the centre of the talk came out as a crowning ceremony. Naming the one
+    #: word fixed all four and left the transcript the same length -- nothing
+    #: was swallowed to make room for it.
+    #:
+    #: A short, deliberate list. Twenty-four words harvested automatically from
+    #: the recording's own first pass changed nothing at all, which is what
+    #: makes this the user's field rather than something guessed for them.
+    terms: tuple[str, ...] = ()
 
 
 #: Text this model produces when what it is listening to is not speech.
@@ -139,6 +154,22 @@ def is_hallucinated(text: str) -> bool:
     """Whether a segment is the model's idea of a subtitle file with no speech."""
     cleaned = re.sub(r"\s+", " ", text).strip().strip("\"'«»„“”")
     return any(pattern.fullmatch(cleaned) for pattern in _HALLUCINATIONS)
+
+
+def _with_terms(prompt: str | None, terms: tuple[str, ...]) -> str | None:
+    """Name the recording's own words at the end of the prompt.
+
+    After the punctuated sample rather than instead of it: the sample is what
+    makes the model punctuate, and losing that to gain a spelling would be a
+    poor trade. Written as a plain list -- measured against two wordier shapes
+    on the same recording, all three fixed it and the list is the one that
+    needs no phrasing in every supported language.
+    """
+    wanted = [term.strip() for term in terms if term and term.strip()]
+    if not wanted:
+        return prompt
+    listed = ", ".join(dict.fromkeys(wanted)) + "."
+    return f"{prompt} {listed}" if prompt else listed
 
 
 class UnsupportedLanguage(ValueError):
@@ -207,6 +238,7 @@ class Transcriber:
                 # opening seconds, rather than guessed.
                 language, _confidence = self.detect_language(source)
             prompt = languages.punctuation_sample(language) or None
+        prompt = _with_terms(prompt, options.terms)
 
         raw_segments, info = self._model.transcribe(
             source,

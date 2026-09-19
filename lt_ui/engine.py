@@ -32,7 +32,7 @@ from lt_core.runtime import bootstrap
 from lt_core.tts.speaker import Playback, Speaker, VoiceError
 from lt_core.video.mux import MuxError
 
-from .store import MODEL_ROOT, ROOT, Settings, display_name
+from .store import MODEL_ROOT, ROOT, Settings, display_name, split_terms
 
 
 def _shortener(settings: Settings, keys=None):
@@ -137,7 +137,8 @@ class BatchWorker(QThread):
                 output_dir=self.output_dir,
                 formats=tuple(formats),
                 options=TranscribeOptions(
-                    language=None if settings.detect_language else settings.from_lang
+                    language=None if settings.detect_language else settings.from_lang,
+                    terms=split_terms(settings.terms),
                 ),
                 on_stage=self.stage.emit,
                 on_progress=on_progress,

@@ -252,3 +252,73 @@ def test_a_dropped_segment_takes_its_words_with_it():
     transcript = Transcript(segments=(kept,), language="en",
                             language_probability=1.0, duration=1.0)
     assert [word.text for word in transcript.words] == [" Good", " morning."]
+
+
+# -- words the recording uses that the model will not guess --------------
+
+def test_a_term_is_named_after_the_punctuated_sample_not_instead_of_it():
+    """The sample is what makes the model punctuate, and a transcript with no
+    sentence ends loses most of its translation further down the line. Trading
+    that away to fix one spelling would be a poor bargain."""
+    from lt_core.asr.transcriber import _with_terms
+
+    prompt = _with_terms("Hello, and welcome. Shall we begin?", ("coordination",))
+    assert prompt.startswith("Hello, and welcome. Shall we begin?")
+    assert prompt.endswith("coordination.")
+
+
+def test_terms_are_listed_once_each_and_emptiness_is_ignored():
+    from lt_core.asr.transcriber import _with_terms
+
+    assert _with_terms("Hi.", ("  ", "Piper", "Piper", "NLLB")) == "Hi. Piper, NLLB."
+    assert _with_terms("Hi.", ()) == "Hi."
+    assert _with_terms("Hi.", ("  ",)) == "Hi."
+
+
+def test_terms_alone_are_still_a_prompt():
+    """A language with no punctuated sample of its own still gets the words."""
+    from lt_core.asr.transcriber import _with_terms
+
+    assert _with_terms(None, ("Kubernetes",)) == "Kubernetes."
+    assert _with_terms(None, ()) is None
+
+
+def test_the_recogniser_is_actually_given_them(monkeypatch):
+    """Through the option, not by the caller assembling a prompt itself --
+    otherwise the punctuation sample and the terms would each overwrite the
+    other depending on who called."""
+    from lt_core.asr.transcriber import TranscribeOptions, Transcriber
+
+    seen = {}
+
+    class Model:
+        def transcribe(self, source, **kwargs):
+            seen.update(kwargs)
+            return iter(()), SimpleNamespace(
+                language="en", language_probability=1.0, duration=1.0
+            )
+
+    transcriber = Transcriber.__new__(Transcriber)
+    transcriber._model = Model()
+    transcriber.model_name = "test"
+    transcriber.transcribe(
+        "clip.wav",
+        TranscribeOptions(language="en", terms=("coordination", "Anthropic")),
+    )
+    assert "coordination, Anthropic." in seen["initial_prompt"]
+
+
+@pytest.mark.parametrize("typed,expected", [
+    ("coordination", ("coordination",)),
+    ("Kubernetes, Anthropic; Piper", ("Kubernetes", "Anthropic", "Piper")),
+    ("Lingua Flow, DimaTorzok", ("Lingua Flow", "DimaTorzok")),
+    ("  spaced  ,  out  ", ("spaced", "out")),
+    ("same, same", ("same",)),
+    ("", ()),
+])
+def test_however_somebody_chose_to_separate_them(typed, expected):
+    """A list that only works one way is a list that silently does nothing
+    half the time."""
+    from lt_ui.store import split_terms
+
+    assert split_terms(typed) == expected
