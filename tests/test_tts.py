@@ -145,6 +145,47 @@ def test_a_line_never_starts_before_the_one_before_it_has_finished():
     assert second.start >= first.start + first.duration - 1e-6
 
 
+def test_silence_before_a_line_is_spent_before_the_line_is_rushed():
+    """"Перевод иногда получается быстрее, чем голос говорящего" -- and it was,
+    because the allowance was only reached once a line had already been
+    squeezed as far as it would go. A listener notices a line that starts early
+    far less than one that is gabbled, and the silence in front of it is time
+    nothing else is using.
+    """
+    speaker = FakeSpeaker()
+    # A shade too long for its slot: the kind of line that used to be read
+    # faster when there was a clear five seconds of silence in front of it.
+    cues = (cue(1, 0.0, 1.0, "short"), cue(2, 6.0, 7.0, "a line too long"))
+    squeezed = speaker.fit("a line too long", 6.0, 1.0)
+    assert squeezed.compressed, "the fixture no longer needs any help"
+
+    result = dubbing.synthesise_track(cues, speaker, 12.0, rate=16_000)
+    spoken = result.utterances[1]
+    assert spoken.start < 6.0, "the silence in front of it was left unused"
+    assert spoken.length_scale > squeezed.length_scale, "it was rushed anyway"
+
+
+def test_a_line_that_fits_is_still_left_where_it_was_said():
+    """Moving those too would walk the whole dub forward for no reason, which
+    is what the first version of this did."""
+    cues = (cue(1, 0.0, 1.0, "short"), cue(2, 6.0, 9.0, "also short"))
+    result = dubbing.synthesise_track(cues, FakeSpeaker(), 12.0, rate=16_000)
+    assert result.utterances[1].start == pytest.approx(6.0)
+
+
+def test_room_that_does_not_help_is_not_taken():
+    """A line with nowhere to grow into stays at its own timestamp rather than
+    starting early for nothing."""
+    speaker = FakeSpeaker()
+    crowded = "a line far too long for the moment it was given here"
+    cues = (cue(1, 0.0, 5.9, "a first line that runs right up to the second"),
+            cue(2, 6.0, 6.5, crowded))
+    result = dubbing.synthesise_track(cues, speaker, 10.0, rate=16_000)
+    second = result.utterances[1]
+    first = result.utterances[0]
+    assert second.start >= first.start + first.duration - 1e-6
+
+
 def test_an_overrunning_line_overlaps_rather_than_being_cut():
     """A person talking over the end of a sentence is what this sounds like;
     a line chopped mid-word is not."""

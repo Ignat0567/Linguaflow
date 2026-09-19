@@ -133,17 +133,28 @@ def synthesise_track(
         begin = cue.start
         utterance = voice.fit(text, begin, slot)
 
-        if utterance.overran:
-            # Only now, and only as far as the silence before it allows. A
-            # line that fits stays exactly where it was said -- moving those
-            # too would walk the whole dub forward for no reason, which is
-            # what the first version of this did.
+        if utterance.compressed:
+            # The line does not fit at a natural pace. Before reading it
+            # faster, spend the silence in front of it: that silence is time
+            # nothing else is using, and a listener notices a line that starts
+            # early far less than one that is gabbled.
+            #
+            # Only lines that would otherwise be squeezed. A line that fits
+            # stays exactly where it was said -- moving those too would walk
+            # the whole dub forward for no reason, which is what the first
+            # version of this did.
             earlier = max(spoken_until, cue.start - EARLY_START)
             if earlier < cue.start - 1e-3:
                 begin = earlier
-                utterance = voice.fit(
+                roomier = voice.fit(
                     text, begin, max(0.05, cue.start + slot - begin)
                 )
+                # Keep it only if the extra room actually bought a gentler
+                # pace; otherwise the line may as well stay where it was said.
+                if roomier.length_scale > utterance.length_scale + 1e-3:
+                    utterance = roomier
+                else:
+                    begin = cue.start
         if utterance.samples.size == 0:
             continue
 
