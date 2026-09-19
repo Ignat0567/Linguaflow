@@ -11,6 +11,7 @@ minutes. Compute is not the constraint here.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -87,6 +88,57 @@ class TranscribeOptions:
     #: Ignored when `initial_prompt` is given, which stays the way to say
     #: something specific to one recording.
     punctuation_prompt: bool = True
+    #: Discard segments that are only the credits this model invents over
+    #: silence. See `_HALLUCINATIONS`.
+    drop_hallucinations: bool = True
+
+
+#: Text this model produces when what it is listening to is not speech.
+#:
+#: Whisper was trained on a corpus of subtitle files, credits and all, so given
+#: silence or room noise it does not return nothing -- it returns the most
+#: likely thing to appear in a subtitle file with no dialogue in it, which is
+#: the translator's own credit. A user testing the microphone saw "Субтитры
+#: сделал DimaTorzok" arrive as a turn, get routed to a speaker and translated
+#: into "Subtitles made".
+#:
+#: File mode rarely shows it because the VAD filter removes silence before the
+#: model sees any of it. The live path leaves that filter off deliberately --
+#: on a two-second window it swallows a short word at the edge -- so silence
+#: reaches the model directly, and this is where it is caught instead.
+#:
+#: Matched against the whole segment and nothing less. A line that merely
+#: mentions subtitles is speech; a line that is only a credit is not.
+#: A credit names somebody, and a name is capitalised. Requiring one is what
+#: separates "Редактор субтитров А.Синецкая" from "Редактор субтитров
+#: подготовил отчёт", and "Subtitles by Stephanie Geiges" from "Subtitles by
+#: themselves are not enough". The case is checked case-sensitively inside an
+#: otherwise case-insensitive pattern, which is what `(?-i:...)` is for.
+_NAME = r"(?-i:[A-ZА-ЯЁÄÖÜ])"
+
+_HALLUCINATIONS = tuple(re.compile(pattern, re.IGNORECASE | re.UNICODE) for pattern in (
+    r"субтитры\s*(?:и\s*перевод\s*)?"
+    r"(?:сделал|сделала|создавал|создал|делал|подготовил|выполнил|автор)\s+"
+    + _NAME + r".*",
+    r"(?:редактор|корректор)\s+субтитров\s+" + _NAME + r".*",
+    r"(?:субтитр\w*|перевод)\s*[:\-–—]\s*" + _NAME + r".*",
+    r"продолжение\s+следует\W*",
+    r"спасибо\s+за\s+(?:просмотр|подписку)\W*",
+    r"(?:подписывайтесь|подпишись|подпишитесь)\s+на\s+(?:наш\s+)?канал\W*",
+    r"subtitles?\s+(?:by|created\s+by|made\s+by)\s+" + _NAME + r".*",
+    r"thanks?\s*(?:you)?\s*for\s+watching\W*",
+    r"please\s+(?:subscribe|like\s+and\s+subscribe)\W*",
+    r"untertitel(?:ung)?\s+(?:von|im\s+auftrag|aufgrund|der)\s+" + _NAME + r".*",
+    r"vielen\s+dank\s+f(?:ü|u)rs?\s+(?:zuschauen|zusehen)\W*",
+    r".*\bamara\.org\b.*",
+    r".*\bdimatorzok\b.*",
+))
+
+
+def is_hallucinated(text: str) -> bool:
+    """Whether a segment is the model's idea of a subtitle file with no speech."""
+    cleaned = re.sub(r"\s+", " ", text).strip().strip("\"'«»„“”")
+    return any(pattern.fullmatch(cleaned) for pattern in _HALLUCINATIONS)
 
 
 class UnsupportedLanguage(ValueError):
@@ -233,6 +285,8 @@ class Transcriber:
             if raw.avg_logprob < options.min_avg_logprob:
                 continue
             if raw.no_speech_prob > options.max_no_speech_probability:
+                continue
+            if options.drop_hallucinations and is_hallucinated(text):
                 continue
 
             words = tuple(

@@ -12,7 +12,11 @@ from types import SimpleNamespace
 import pytest
 
 from lt_core import languages
-from lt_core.asr.transcriber import TranscribeOptions, Transcriber
+from lt_core.asr.transcriber import (
+    TranscribeOptions,
+    Transcriber,
+    is_hallucinated,
+)
 
 
 class FakeModel:
@@ -174,3 +178,77 @@ def test_a_sample_is_short_enough_to_be_context_not_content(code):
     """Whisper's prompt window is limited, and a long sample would crowd out
     the audio's own context."""
     assert len(languages.punctuation_sample(code)) < 200
+
+
+# -- the credits this model invents over silence -------------------------
+
+@pytest.mark.parametrize("text", [
+    "Субтитры сделал DimaTorzok",
+    "Субтитры создавал DimaTorzok",
+    "Субтитры сделал DimaTorzok.",
+    "Субтитры: DimaTorzok",
+    "DimaTorzok",
+    "Редактор субтитров А.Синецкая Корректор А.Кулакова",
+    "Продолжение следует...",
+    "Спасибо за просмотр!",
+    "Подписывайтесь на канал",
+    "Subtitles by the Amara.org community",
+    "Subtitles by Stephanie Geiges",
+    "Thanks for watching!",
+    "Please subscribe!",
+    "Untertitel von Stephanie Geiges",
+    "Vielen Dank fürs Zuschauen",
+])
+def test_a_subtitle_credit_is_not_something_anybody_said(text):
+    """Whisper was trained on subtitle files, credits and all, so given silence
+    or room noise it returns the likeliest line in a subtitle file with no
+    dialogue in it. Live, with the VAD filter deliberately off, that reaches
+    the screen: a user testing the microphone watched "Субтитры сделал
+    DimaTorzok" arrive as a turn, get attributed to a speaker, and be
+    translated into "Subtitles made".
+    """
+    assert is_hallucinated(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "Мы обсудим субтитры на следующей встрече",
+    "Редактор субтитров подготовил отчёт вчера вечером",
+    "Субтитры сделал наш редактор за вечер",
+    "Перевод занял три недели",
+    "Subtitles are useful for learning",
+    "Subtitles by themselves are not enough here",
+    "Please subscribe your team to the newsletter by Friday",
+    "Thanks for watching the demo and telling me what broke",
+    "Спасибо за внимание, вопросы?",
+    "Продолжение следует за этим разделом",
+])
+def test_speech_that_merely_mentions_subtitles_is_still_speech(text):
+    """Deleting what somebody actually said is the worse failure of the two, so
+    a credit has to name somebody: a capitalised name is what separates
+    "Редактор субтитров А.Синецкая" from "Редактор субтитров подготовил
+    отчёт"."""
+    assert not is_hallucinated(text), text
+
+
+def test_the_whole_segment_has_to_be_the_credit():
+    """Matching a fragment would take a sentence with a stray "продолжение
+    следует" inside it down with the credit."""
+    assert not is_hallucinated(
+        "Продолжение следует, и мы вернёмся к этому в третьем разделе"
+    )
+
+
+def test_a_dropped_segment_takes_its_words_with_it():
+    """`Transcript.words` is built from the segments, and the live path reads
+    words rather than text -- a segment filtered out of one and left in the
+    other would put the credit back on screen."""
+    from lt_core.asr.types import Segment, Transcript, Word
+
+    kept = Segment(
+        text="Good morning.", start=0.0, end=1.0,
+        words=(Word(text=" Good", start=0.0, end=0.5),
+               Word(text=" morning.", start=0.5, end=1.0)),
+    )
+    transcript = Transcript(segments=(kept,), language="en",
+                            language_probability=1.0, duration=1.0)
+    assert [word.text for word in transcript.words] == [" Good", " morning."]
