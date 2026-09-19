@@ -25,8 +25,11 @@ import numpy as np
 
 from .. import languages
 from ..asr.transcriber import Transcriber
-from ..audio.types import AudioChunk
+from ..audio.pitch import estimate
+from ..audio.types import TARGET_SAMPLE_RATE, AudioChunk
 from ..mt.translator import Translator
+from ..tts import casting
+from ..tts.casting import FEMALE, MALE
 from .session import BALANCED, LiveSession, LiveUpdate, Pace
 
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]]*\s*$")
@@ -138,6 +141,13 @@ class ConversationSession:
         #: The last provisional translation and the text it was made from, so
         #: a sentence that has not grown is not translated again.
         self._preview: tuple[str, str] = ("", "")
+        #: The language the last released turn was translated into, so the
+        #: voice reading it out knows which one to use.
+        self._released_language: str | None = None
+        self._released_from: str | None = None
+        #: Pitch measured per side, and the voice register each is fixed to.
+        self._pitch: dict[str, list[float]] = {}
+        self._registers: dict[str, str] = {}
         self._left_script = _script_for_language(left.language)
         self._right_script = _script_for_language(right.language)
 
@@ -167,6 +177,7 @@ class ConversationSession:
             return []
 
         heard = self._decide_language()
+        self._listen_for_register(heard)
         self._recent = None
 
         if heard and self._last_heard and heard != self._last_heard:
@@ -236,6 +247,8 @@ class ConversationSession:
                 # an English speaker's name.
                 produced.append(LiveUpdate(
                     translation=released,
+                    translation_language=self._released_language or "",
+                    speaker_language=self._released_from or "",
                     speaker=self._previous_speaker,
                     audio_time=update.audio_time,
                 ))
@@ -244,6 +257,8 @@ class ConversationSession:
                 partial=update.partial if last else "",
                 translation=translation,
                 partial_translation=provisional if last else "",
+                translation_language=listener.language,
+                speaker_language=speaker.language,
                 speaker=speaker.label,
                 audio_time=update.audio_time,
                 latency=update.latency,
@@ -252,6 +267,54 @@ class ConversationSession:
 
         self._history.extend(produced)
         return produced
+
+    def _listen_for_register(self, heard: str | None) -> None:
+        """Pool the pitch of each side's own audio, for the voice reading it.
+
+        Called with the window that has just been attributed to somebody, so
+        each measurement lands on the right person. Pitch over a whole turn is
+        a far steadier reading than pitch over one line, which is what the file
+        dub has to work with.
+        """
+        if heard is None or self._recent is None or self._recent.size < 8000:
+            return
+        pitch = estimate(self._recent, TARGET_SAMPLE_RATE)
+        if pitch.confident:
+            self._pitch.setdefault(heard, []).append(pitch.median)
+
+    def register_of(self, language: str) -> str:
+        """Which voice should read this side: the low one or the high one.
+
+        Fixed the first time it is asked for and never revisited -- a voice
+        that changes halfway through a conversation is worse than one that is
+        wrong about somebody's register from the start.
+
+        The two sides are always given different registers. A conversation is
+        followed by hearing who is talking, and two voices a few Hz apart are
+        one voice: measured on a real dialogue, the defaults came out at 179
+        and 182 Hz. So where both people measure the same way, the lower of
+        them takes the low voice.
+        """
+        if language in self._registers:
+            return self._registers[language]
+
+        other = (self.right.language if language == self.left.language
+                 else self.left.language)
+        mine = self._pitch.get(language, [])
+        theirs = self._pitch.get(other, [])
+        if not mine:
+            # Nothing heard from this side yet; do not freeze a guess.
+            return self._registers.get(other) == MALE and FEMALE or MALE
+
+        median = float(np.median(mine))
+        if other in self._registers:
+            choice = (MALE if self._registers[other] == FEMALE else FEMALE)
+        elif theirs:
+            choice = MALE if median <= float(np.median(theirs)) else FEMALE
+        else:
+            choice = MALE if median < casting.DEFAULT_SPLIT else FEMALE
+        self._registers[language] = choice
+        return choice
 
     def _split_by_side(
         self, text: str, heard: str | None
@@ -424,6 +487,7 @@ class ConversationSession:
             return ""
         text = " ".join(self._holding).strip()
         source, target = self._holding_for
+        self._released_language, self._released_from = target, source
         self._holding = []
         self._holding_for = None
         self._preview = ("", "")
@@ -446,6 +510,7 @@ class ConversationSession:
             if leftover:
                 produced.append(LiveUpdate(
                     translation=leftover, speaker=leftover_speaker,
+                    translation_language=self._released_language or "",
                     audio_time=final.audio_time,
                 ))
             return produced
@@ -462,12 +527,15 @@ class ConversationSession:
                 translation=" ".join(
                     part for part in (leftover, self._flush_holding()) if part
                 ),
+                translation_language=listener.language,
+                speaker_language=speaker.language,
                 speaker=speaker.label,
                 audio_time=final.audio_time,
             )
         elif leftover:
             produced.append(LiveUpdate(
                 translation=leftover, speaker=leftover_speaker,
+                translation_language=self._released_language or "",
                 audio_time=final.audio_time,
             ))
         self._history.append(final)

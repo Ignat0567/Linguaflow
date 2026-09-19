@@ -235,6 +235,37 @@ def test_nothing_spoken_ducks_nothing():
     assert dubbing.spoken_spans([]) == []
 
 
+# -- reading a live translation out loud ---------------------------------
+
+def test_a_line_read_on_time_leaves_nothing_to_catch_up():
+    from lt_core.tts.speaker import Playback
+
+    play = Playback()
+    assert play.behind(10.0) == 0.0
+    play.done(10.0, 2.0)
+    assert play.behind(14.0) == 0.0
+
+
+def test_a_long_line_pushes_the_next_one_late():
+    """Lines are read one after another and a translation is often longer than
+    what it translates, so the reading falls behind the person speaking."""
+    from lt_core.tts.speaker import Playback
+
+    play = Playback()
+    play.done(10.0, 8.0)
+    assert play.behind(12.0) == pytest.approx(6.0)
+
+
+def test_being_behind_is_measured_in_the_session_clock_not_the_wall_clock():
+    """It says how much speech there is, not how fast the machine is."""
+    from lt_core.tts.speaker import Playback
+
+    play = Playback()
+    play.done(0.0, 5.0)
+    play.done(1.0, 5.0)
+    assert play.until == pytest.approx(10.0)
+
+
 # -- resampling ----------------------------------------------------------
 
 def test_resampling_preserves_duration():

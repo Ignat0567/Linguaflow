@@ -74,7 +74,13 @@ class Settings:
     #: File mode only. When true, Whisper identifies the source language
     #: instead of using `from_lang`. Live mode still needs an explicit pair.
     detect_language: bool = True
-    realtime_mode: str = "subtitles"  # subtitles | voice | conversation
+    #: What kind of live session: one speaker, or two who share no language.
+    realtime_mode: str = "subtitles"  # subtitles | conversation
+    #: Read the translation out loud as well as showing it. Orthogonal to the
+    #: mode -- a conversation is where hearing it matters most, and it used to
+    #: be the one place it could not be turned on, because "Текст + озвучка"
+    #: was a third value of the mode itself.
+    realtime_voice: bool = False
     voiceover: bool = True
     #: Read a man in a male voice and a woman in a female one, deciding per
     #: line from the pitch of the original.
@@ -134,7 +140,10 @@ class Settings:
             self.to_lang = next(
                 (code for code in offered if code != self.from_lang), offered[0]
             )
-        if self.realtime_mode not in {"subtitles", "voice", "conversation"}:
+        if self.realtime_mode == "voice":
+            # It was a mode before it was an option; carry the choice across.
+            self.realtime_mode, self.realtime_voice = "subtitles", True
+        if self.realtime_mode not in {"subtitles", "conversation"}:
             self.realtime_mode = "subtitles"
         if self.sub_format not in {"srt", "vtt", "txt"}:
             self.sub_format = "srt"

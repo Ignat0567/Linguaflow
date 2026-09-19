@@ -46,7 +46,6 @@ class RealtimeScreen(QWidget):
         self._pair.changed.connect(self._sync_pair)
         self._modes = ChipGroup((
             ("subtitles", _("Субтитры")),
-            ("voice", _("Текст + озвучка")),
             ("conversation", _("Разговор")),
         ), self, stretch=False)
         self._modes.changed.connect(self._sync_mode)
@@ -57,11 +56,25 @@ class RealtimeScreen(QWidget):
         mode_row.setSpacing(0)
         mode_row.addWidget(self._modes)
 
+        # Reading the translation out loud is an option, not a third kind of
+        # session. It used to be one, which meant a conversation -- where
+        # hearing it matters most -- was the one place it could not be had.
+        self._speak = glass.Toggle(self)
+        self._speak.toggled.connect(self._sync_voice)
+        speak_pill = glass.GlassPanel(self, radius=theme.RADIUS_PILL)
+        speak_pill.setFixedHeight(42)
+        speak_row = QHBoxLayout(speak_pill)
+        speak_row.setContentsMargins(16, 4, 10, 4)
+        speak_row.setSpacing(12)
+        speak_row.addWidget(glass.label(_("Озвучивать"), 13, 500, 0.82))
+        speak_row.addWidget(self._speak)
+
         controls = QHBoxLayout()
         controls.setSpacing(16)
         controls.addStretch()
         controls.addWidget(self._pair)
         controls.addWidget(mode_pill)
+        controls.addWidget(speak_pill)
         controls.addStretch()
 
         self._record = glass.RecordButton(self)
@@ -126,6 +139,9 @@ class RealtimeScreen(QWidget):
         settings = self.app.store.settings
         self._pair.set_pair(settings.from_lang, settings.to_lang)
         self._modes.set_value(settings.realtime_mode)
+        self._speak.blockSignals(True)
+        self._speak.setChecked(settings.realtime_voice)
+        self._speak.blockSignals(False)
 
     def hideEvent(self, event) -> None:  # noqa: N802
         if self._record.isChecked():
@@ -142,6 +158,10 @@ class RealtimeScreen(QWidget):
         self.app.store.settings.realtime_mode = mode
         self.app.store.save_settings()
         self._render()
+
+    def _sync_voice(self, on: bool) -> None:
+        self.app.store.settings.realtime_voice = on
+        self.app.store.save_settings()
 
     def _toggled(self, on: bool) -> None:
         if on:

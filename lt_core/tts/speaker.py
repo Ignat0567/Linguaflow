@@ -81,6 +81,31 @@ class Utterance:
         return self.length_scale < 0.999
 
 
+@dataclass
+class Playback:
+    """How far a spoken translation has fallen behind the person speaking.
+
+    Lines are read one after another and a translation is often longer than
+    what it translates, so a long line pushes the next one late and the next
+    one later. Measured on a five-minute talk read aloud: most lines started on
+    time, one started 9.2 seconds late, and the reading finished 3 seconds past
+    the end of the recording.
+
+    Kept in the audio clock the session already counts in, so it says nothing
+    about how fast the machine is -- only about how much speech there is.
+    """
+
+    #: When the reading will be free again, in session seconds.
+    until: float = 0.0
+
+    def behind(self, ready_at: float) -> float:
+        """How long this line will have to wait before it can be read."""
+        return max(0.0, self.until - ready_at)
+
+    def done(self, ready_at: float, seconds: float) -> None:
+        self.until = max(ready_at, self.until) + seconds
+
+
 class Speaker:
     """A loaded Piper voice.
 

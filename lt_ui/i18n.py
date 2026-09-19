@@ -103,7 +103,6 @@ CATALOGUE: dict[str, tuple[str, str]] = {
 
     # -- realtime ------------------------------------------------------
     "Субтитры": ("Subtitles", "Untertitel"),
-    "Текст + озвучка": ("Text + voice", "Text + Stimme"),
     "Разговор": ("Conversation", "Gespräch"),
     "Нажмите, чтобы начать запись": (
         "Press to start recording", "Zum Aufnehmen drücken",
@@ -352,6 +351,8 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Finished, but the result cannot be shown: {reason}",
         "Fertig, aber das Ergebnis kann nicht angezeigt werden: {reason}",
     ),
+
+    "Озвучивать": ("Read aloud", "Vorlesen"),
 
     # -- what the core reports when a job cannot go on ------------------
     "Файл не найден: {path}": (

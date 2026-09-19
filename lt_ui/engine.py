@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from lt_core.asr.transcriber import Transcriber, TranscribeOptions, UnsupportedLanguage
 from lt_core.audio.capture import CaptureError, open_source
 from lt_core.audio.devices import default_device, list_capture_devices
+from lt_core import languages
 from lt_core.audio.echo_gate import EchoGate, check_routing
 from lt_core.media import MediaError
 from lt_core.mt.translator import build_translator
@@ -24,7 +25,7 @@ from lt_core.pipeline.batch import BatchResult, transcribe_file
 from lt_core.realtime.conversation import ConversationSession, Side
 from lt_core.realtime.session import BALANCED, LiveSession, LiveUpdate
 from lt_core.runtime import bootstrap
-from lt_core.tts.speaker import Speaker, VoiceError
+from lt_core.tts.speaker import Playback, Speaker, VoiceError
 from lt_core.video.mux import MuxError
 
 from .store import MODEL_ROOT, ROOT, Settings, display_name
@@ -197,14 +198,23 @@ class LiveWorker(QThread):
             )
             return
 
-        speak = settings.realtime_mode == "voice"
+        speak = settings.realtime_voice
         gate = EchoGate() if speak else None
-        speaker = None
+        # One voice per language that will be read out. A conversation needs
+        # both: what A says is read to B in B's language and the other way
+        # round, so a single voice would read half the session in the wrong
+        # one.
+        voices: dict[str, Speaker] = {}
+        playback = Playback()
         if speak:
+            wanted = [settings.to_lang]
+            if settings.realtime_mode == "conversation":
+                wanted.append(settings.from_lang)
             try:
-                speaker = Speaker(
-                    settings.to_lang, voices_dir=MODEL_ROOT / "piper"
-                )
+                for code in wanted:
+                    # Loaded up front so a missing model is a refusal now
+                    # rather than silence in the middle of a conversation.
+                    voices[code] = Speaker(code, voices_dir=MODEL_ROOT / "piper")
             except VoiceError as error:
                 self.failed.emit(str(error))
                 return
@@ -253,8 +263,8 @@ class LiveWorker(QThread):
                     if item.has_content:
                         self.captions.append(item)
                         self.update.emit(item)
-                        if speak and item.translation and speaker is not None:
-                            _speak(speaker, item.translation, gate)
+                        if speak:
+                            _read_out(item, voices, gate, session, playback)
         except CaptureError as error:
             self.failed.emit(str(error))
             return
@@ -272,18 +282,83 @@ class LiveWorker(QThread):
                 continue
             self.captions.append(final)
             self.update.emit(final)
-            if speak and final.translation and speaker is not None:
-                _speak(speaker, final.translation, gate)
+            if speak:
+                _read_out(final, voices, gate, session, playback)
         self.stopped.emit()
 
 
-def _speak(speaker: Speaker, text: str, gate: EchoGate | None) -> None:
-    """Play a line. Blocks this worker, which is the point: capture continues
-    on its own thread, and the echo gate keeps our voice out of the transcript.
+#: How far the reading may fall behind before it is read faster.
+#:
+#: Honest about what this buys. Measured on a five-minute talk read aloud, it
+#: moved the worst wait from 9.2 s to 8.6 s -- because that wait is one long
+#: line being read while the next is already ready, and nothing that keeps the
+#: voice human takes more than about 15% off a line.
+#:
+#: What it does do is keep a session stable. Speech ran to 68% of the audio
+#: there, so the queue drained on its own; a pair where the translation is
+#: longer than the original, or a speaker who never pauses, would otherwise
+#: fall further behind with every line and never recover.
+CATCH_UP_AFTER = 1.0
+
+
+def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
+              session, playback: Playback) -> None:
+    """Read a settled line out in the language it was translated into.
+
+    Only settled lines: a provisional translation is replaced on the next tick,
+    and there is no way to unsay one.
+
+    In a conversation the two sides are read in different registers, so that a
+    listener can hear which of them is talking. Two voices a few Hz apart are
+    one voice -- measured on a real dialogue, the two languages' default voices
+    came out at 179 and 182 Hz.
     """
-    samples, rate = speaker.say(text)
-    if samples.size == 0:
+    if not update.translation:
         return
+    language = update.translation_language
+    voice = voices.get(language) or next(iter(voices.values()), None)
+    if voice is None:
+        return
+
+    register = ""
+    if hasattr(session, "register_of") and update.speaker_language:
+        register = session.register_of(update.speaker_language)
+    wanted = languages.voice_for(language, register) if register else ""
+    if wanted and wanted != voice.voice_name:
+        chosen = voices.get(wanted)
+        if chosen is None:
+            try:
+                chosen = Speaker(language, voice=wanted,
+                                 voices_dir=MODEL_ROOT / "piper")
+            except VoiceError:
+                # A pair this build does not ship. The language's own voice
+                # reads it, which is the fallback everywhere else too.
+                chosen = voice
+            voices[wanted] = chosen
+        voice = chosen
+
+    behind = playback.behind(update.audio_time)
+    spoken = _speak(voice, update.translation, gate, hurry=behind > CATCH_UP_AFTER)
+    playback.done(update.audio_time, spoken)
+
+
+def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
+           hurry: bool = False) -> float:
+    """Play a line; return how long it took. Blocks this worker, which is the
+    point: capture continues on its own thread, and the echo gate keeps our
+    voice out of the transcript.
+
+    `hurry` asks for the line as fast as it can still be said, which is how a
+    backlog is worked off. `fit` clamps that at the point where the voice stops
+    sounding human, so asking for the impossible is safe.
+    """
+    if hurry:
+        utterance = speaker.fit(text, 0.0, 0.01)
+        samples, rate = utterance.samples, utterance.rate
+    else:
+        samples, rate = speaker.say(text)
+    if samples.size == 0:
+        return 0.0
     import sounddevice as sd
 
     duration = len(samples) / rate
@@ -293,6 +368,7 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None) -> None:
             sd.play(samples, rate, blocking=True)
     else:
         sd.play(samples, rate, blocking=True)
+    return duration
 
 
 class Engine(QObject):

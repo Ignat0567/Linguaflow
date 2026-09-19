@@ -9,6 +9,7 @@ from lt_core.asr.types import Word
 from lt_core.audio.types import TARGET_SAMPLE_RATE, AudioChunk
 from lt_core.realtime.agreement import LocalAgreement
 from lt_core.realtime.conversation import ConversationSession, Side
+from lt_core.tts.casting import FEMALE, MALE
 from lt_core.realtime.session import BALANCED, FAST, STEADY, LiveSession, Pace
 
 
@@ -480,6 +481,40 @@ def test_a_turn_is_routed_by_the_alphabet_it_came_out_in():
 
     assert session._by_script("four major features.") == "en"
     assert session._by_script("За последние три месяца.") == "ru"
+
+
+def _with_pitch(left_hz, right_hz):
+    session = ConversationSession.__new__(ConversationSession)
+    session.left, session.right = Side("en", "A"), Side("ru", "B")
+    session._pitch = {"en": list(left_hz), "ru": list(right_hz)}
+    session._registers = {}
+    return session
+
+
+def test_each_side_of_a_conversation_is_read_in_its_own_register():
+    session = _with_pitch([95.0, 97.0, 92.0], [198.0, 201.0, 194.0])
+    assert session.register_of("en") == MALE
+    assert session.register_of("ru") == FEMALE
+
+
+def test_two_sides_that_measure_alike_are_still_told_apart():
+    """A conversation is followed by hearing who is talking, and two voices a
+    few Hz apart are one voice. Measured on a real dialogue, the two languages'
+    default voices came out at 179 and 182 Hz -- indistinguishable."""
+    session = _with_pitch([180.0, 182.0], [188.0, 191.0])
+    first = session.register_of("en")
+    second = session.register_of("ru")
+    assert first != second
+    assert first == MALE, "the lower of the two takes the low voice"
+
+
+def test_a_register_once_chosen_is_never_revisited():
+    """A voice that changes halfway through is worse than one that is wrong
+    about somebody's register from the start."""
+    session = _with_pitch([95.0], [198.0])
+    assert session.register_of("en") == MALE
+    session._pitch["en"] = [210.0] * 20
+    assert session.register_of("en") == MALE
 
 
 def _two_sided():

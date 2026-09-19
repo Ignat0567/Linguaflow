@@ -124,6 +124,13 @@ class LiveUpdate:
     #: wholesale on the next tick, exactly as `partial` is, and superseded by
     #: `translation` once the sentence finishes.
     partial_translation: str = ""
+    #: What language `translation` is in. Constant for one speaker; in a
+    #: conversation it changes with every turn, and whoever reads the line out
+    #: loud has no other way to know which voice to use.
+    translation_language: str = ""
+    #: What language was actually spoken -- which, in a conversation, is which
+    #: of the two people this line belongs to.
+    speaker_language: str = ""
     #: Which side of a two-person conversation this belongs to.
     speaker: str | None = None
     #: Seconds of audio consumed by the session so far.
@@ -264,6 +271,8 @@ class LiveSession:
                 committed="".join(word.text for word in tail).strip(),
                 partial="",
                 translation=translation,
+                translation_language=self.target_language or "",
+                speaker_language=self.source_language or "",
                 speaker=self.speaker,
                 audio_time=self._consumed,
             )
@@ -358,6 +367,8 @@ class LiveSession:
             partial=partial,
             translation=translation,
             partial_translation=preview,
+            translation_language=self.target_language or "",
+            speaker_language=self.source_language or "",
             speaker=self.speaker,
             audio_time=self._consumed,
             latency=latency,
