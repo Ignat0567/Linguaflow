@@ -51,6 +51,7 @@ def paint_glass(
     tint: float | None = None,
     accent_fill: bool = False,
     border: float | None = None,
+    lift: float = 0.0,
 ) -> QPainterPath:
     """Paint the handoff's glass recipe into `rect` of `widget`.
 
@@ -58,6 +59,12 @@ def paint_glass(
     are resolved here rather than in the signature: a default argument is
     bound once at import, which would freeze the app in the mode it started
     in.
+
+    `lift` is the pointer's answer, laid over whichever fill was used. It was
+    once added to `tint` by each caller, which worked on a plain surface and
+    did nothing at all on an accent one, because the accent gradient never
+    reads `tint` -- so the home screen's first card, the one filled with the
+    accent, was the only card on it that ignored the mouse.
     """
     if tint is None:
         tint = theme.tint()
@@ -84,6 +91,9 @@ def paint_glass(
         painter.fillPath(path, QBrush(gradient))
     else:
         painter.fillPath(path, theme.surface(tint))
+
+    if lift:
+        painter.fillPath(path, theme.white(lift))
 
     # The inset highlight along the top edge. Without it a panel reads as a
     # flat wash; with it, as something with a lit edge.
@@ -115,6 +125,8 @@ class GlassPanel(QWidget):
         self.radius = radius
         self.tint = tint
         self.accent_fill = accent_fill
+        #: Raised while the pointer is over it; see `clickable`.
+        self.lift = 0.0
 
     def paintEvent(self, event) -> None:  # noqa: N802 -- Qt spells it this way
         painter = QPainter(self)
@@ -125,6 +137,7 @@ class GlassPanel(QWidget):
             self.radius,
             self.tint,
             self.accent_fill,
+            lift=self.lift,
         )
 
 
@@ -189,7 +202,7 @@ class GlassButton(Hoverable):
         else:
             paint_glass(
                 self, painter, rect, theme.RADIUS_PILL,
-                theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
+                lift=theme.HOVER_LIFT if self._hover else 0.0,
             )
             painter.setPen(theme.ink(theme.PRIMARY))
         if self.hasFocus():
@@ -227,7 +240,7 @@ class TextLink(Hoverable):
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
-class Toggle(QAbstractButton):
+class Toggle(Hoverable):
     """The 38x21 pill switch, knob sliding from 2px to 19px."""
 
     def __init__(self, parent: QWidget | None = None, on: bool = False) -> None:
@@ -235,7 +248,6 @@ class Toggle(QAbstractButton):
         self.setCheckable(True)
         self.setChecked(on)
         self.setFixedSize(38, 21)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
         self._position = 19.0 if on else 2.0
         self._animation = QPropertyAnimation(self, b"knob", self)
         self._animation.setDuration(140)
@@ -261,12 +273,15 @@ class Toggle(QAbstractButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(0, 0, -1, -1)
+        lift = theme.HOVER_LIFT if self._hover else 0.0
         if self.isChecked():
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
             painter.fillPath(path, theme.accent(0.95))
+            if lift:
+                painter.fillPath(path, theme.white(lift))
         else:
-            paint_glass(self, painter, rect, theme.RADIUS_PILL)
+            paint_glass(self, painter, rect, theme.RADIUS_PILL, lift=lift)
         # On the accent fill a white knob reads; on a pale glass panel in
         # light mode it disappears into the panel.
         lit = self.isChecked() or not theme.is_light()
@@ -302,7 +317,9 @@ class Chip(Hoverable):
             painter.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
-            painter.fillPath(path, theme.ink(0.94))
+            # A chosen chip is already solid, so it brightens by going fully
+            # opaque rather than by taking more white.
+            painter.fillPath(path, theme.ink(1.0 if self._hover else 0.94))
             painter.setPen(theme.base())
         else:
             painter.setPen(theme.ink(theme.text_alpha(
@@ -408,6 +425,7 @@ class GlassInput(QLineEdit):
         color: rgba(255,255,255,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
+    QLineEdit:hover { background: rgba(255,255,255,0.14); }
     QLineEdit:focus { border: 1px solid rgba(127,164,255,0.85); }
     """
 
@@ -420,6 +438,7 @@ class GlassInput(QLineEdit):
         color: rgba(13,15,26,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
+    QLineEdit:hover { background: rgba(255,255,255,0.86); }
     QLineEdit:focus { border: 1px solid rgba(90,125,215,0.85); }
     """
 
@@ -435,7 +454,7 @@ class GlassInput(QLineEdit):
         self.setStyleSheet(self.style_for_mode())
 
 
-class RecordButton(QAbstractButton):
+class RecordButton(Hoverable):
     """The 96px circle, with the handoff's two expanding rings while live."""
 
     RING_PERIOD_MS = 1800
@@ -445,7 +464,6 @@ class RecordButton(QAbstractButton):
         super().__init__(parent)
         self.setCheckable(True)
         self.setFixedSize(150, 150)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
         self._phase = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(self.FRAME_MS)
@@ -480,17 +498,26 @@ class RecordButton(QAbstractButton):
                 painter.drawEllipse(centre, radius, radius)
 
         body = QRect(int(centre.x()) - 48, int(centre.y()) - 48, 96, 96)
+        # The widget is 150px and the circle 96, and the whole 150 is what a
+        # click lands on -- so the whole 150 is what answers the pointer.
+        lift = theme.HOVER_LIFT if self._hover else 0.0
         if self.isChecked():
             painter.setBrush(theme.accent(0.95))
             painter.setPen(QPen(theme.ink(0.30), 1))
             painter.drawEllipse(body)
+            if lift:
+                painter.setBrush(theme.white(lift))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(body)
+                painter.setPen(QPen(theme.ink(0.30), 1))
             painter.setBrush(theme.on_accent())
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(
                 QRect(body.center().x() - 10, body.center().y() - 10, 22, 22), 5, 5
             )
         else:
-            paint_glass(self, painter, body, body.height() // 2, theme.tint(raised=True))
+            paint_glass(self, painter, body, body.height() // 2,
+                        theme.tint(raised=True), lift=lift)
             painter.setBrush(theme.ink(0.92))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPointF(body.center()), 17, 17)
@@ -568,12 +595,29 @@ def eyebrow(text: str, alpha: float = theme.SECONDARY) -> QLabel:
 
 
 def clickable(widget: QWidget, action: Callable[[], None]) -> QWidget:
-    """Make a panel behave like the card the handoff draws it as."""
+    """Make a panel behave like the card the handoff draws it as.
+
+    Including under the pointer: a cursor that turns into a hand over a
+    surface that then does nothing reads as a card that failed to load, not
+    as one waiting to be clicked.
+    """
     widget.setCursor(QCursor(Qt.PointingHandCursor))
+    widget.setAttribute(Qt.WA_Hover, True)
 
     def press(event) -> None:
         if event.button() == Qt.LeftButton:
             action()
 
+    def enter(event) -> None:
+        widget.lift = theme.HOVER_LIFT
+        widget.update()
+
+    def leave(event) -> None:
+        widget.lift = 0.0
+        widget.update()
+
     widget.mousePressEvent = press  # type: ignore[method-assign]
+    if hasattr(widget, "lift"):
+        widget.enterEvent = enter  # type: ignore[method-assign]
+        widget.leaveEvent = leave  # type: ignore[method-assign]
     return widget

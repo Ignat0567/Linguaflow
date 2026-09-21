@@ -211,8 +211,8 @@ class GlassCard(glass.Hoverable):
         glass.paint_glass(
             self, painter, self.rect().adjusted(0, 0, -1, -1),
             theme.RADIUS_CARD,
-            theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
             accent_fill=self._accent,
+            lift=theme.HOVER_LIFT if self._hover else 0.0,
         )
 
 
@@ -230,9 +230,14 @@ class AccentSwatch(glass.Hoverable):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
         painter.setBrush(QColor(self.colour))
-        painter.setPen(
-            QPen(theme.ink(0.95), 2) if self.isChecked() else QPen(theme.ink(0.25), 1)
-        )
+        # Unchosen swatches sit behind a hairline; under the pointer that line
+        # comes forward, so the one being considered is visibly the one the
+        # click would take.
+        if self.isChecked():
+            painter.setPen(QPen(theme.ink(0.95), 2))
+        else:
+            painter.setPen(QPen(theme.ink(0.55 if self._hover else 0.25),
+                                2 if self._hover else 1))
         painter.drawEllipse(rect)
 
 
