@@ -678,3 +678,48 @@ def test_the_request_carries_the_chosen_model_and_endpoint(monkeypatch):
     assert captured["url"].startswith("https://api.groq.com/openai/v1")
     assert captured["model"] == "llama-3.3-70b-versatile"
     assert captured["auth"] == "Bearer secret"
+
+
+# -- scale words as they are actually written ---------------------------
+
+@pytest.mark.parametrize("source, target", [
+    ("Here is another one with just 1.5 million views",
+     "Вот еще один с 1,5 миллионами просмотров"),
+    ("with 2 million people", "с 2 миллионами человек"),
+    ("in 5 thousand cities", "в 5 тысячах городов"),
+    ("4 billion views", "4 миллиардами просмотров"),
+    ("about 3 million subscribers", "около 3 миллионов подписчиков"),
+    ("a 1.5 million budget", "бюджет в 1,5 миллиона"),
+    ("1 billion euros", "1 Milliarde Euro"),
+    ("3 billion dollars", "3 miliardi di dollari"),
+    ("7 billion people", "7 milliards de personnes"),
+])
+def test_an_inflected_scale_word_is_not_a_changed_number(source, target):
+    """Russian declines a noun through six cases in two numbers, and the
+    table held the nominative. Measured on a twelve-minute recording:
+    "1.5 million views" came back as "1,5 миллионами просмотров" and was
+    reported as 1500000 becoming 1.5. Six of twelve ordinary sentences were
+    flagged the same way, and the cues a warning flags are exactly the ones
+    somebody is asked to stop and check by hand.
+    """
+    from lt_core.mt.numbers import compare
+
+    assert compare(source, target) == ((), ())
+
+
+def test_a_word_that_merely_begins_like_a_scale_is_not_one():
+    """Why the table holds whole forms and not stems: the five-millionth
+    subscriber is five, not five million."""
+    from lt_core.mt.numbers import extract
+
+    assert extract("5 миллионный подписчик") == [Decimal("5")]
+
+
+def test_the_corruption_this_audit_exists_for_is_still_caught():
+    """From the Day 0 spike: twelve thousand dollars became 12万美元, which
+    is a hundred and twenty thousand."""
+    from lt_core.mt.numbers import compare
+
+    missing, added = compare("cut costs by 12,000 dollars", "削减了12万美元")
+    assert missing == ("12000",)
+    assert added == ("120000",)
