@@ -318,8 +318,41 @@ def test_translation_does_not_move_timings():
 
 
 def test_translated_cue_keeps_the_original_when_translation_is_empty():
+    """A failed translation of the whole cue. The source is better than a blank."""
     original = (cue(1, 0.0, 2.0, "Hello there"),)
     assert translate_cues(original, [""])[0].lines == ("Hello there",)
+
+
+def test_an_empty_share_does_not_put_the_source_language_back():
+    """Fewer translated words than cues used to leak the original into the
+    leftover slots. A German lecture's "Bewegung." sat untranslated at the
+    end of a Russian sentence because of it."""
+    original = (
+        cue(1, 0.0, 1.0, "Das ist"),
+        cue(2, 1.0, 2.0, "eine"),
+        cue(3, 2.0, 3.0, "schlechte"),
+        cue(4, 3.0, 4.0, "Bewegung."),
+    )
+    translated = translate_cues(original, ["Это", "плохое", "движение.", ""])
+    texts = [c.flat_text for c in translated]
+    assert "Bewegung" not in " ".join(texts)
+    assert " ".join(texts) == "Это плохое движение."
+    assert translated[-1].end == 4.0
+
+
+def test_bilingual_survives_absorbed_empty_shares():
+    """The lecture run died here: 122 original cues, 120 after absorption."""
+    original = (
+        cue(1, 0.0, 1.0, "Das ist"),
+        cue(2, 1.0, 2.0, "eine"),
+        cue(3, 2.0, 3.0, "schlechte"),
+        cue(4, 3.0, 4.0, "Bewegung."),
+    )
+    translated = translate_cues(original, ["Это", "плохое", "движение.", ""])
+    merged = merge_bilingual(original, translated)
+    assert len(merged) == len(translated)
+    assert "Bewegung" in merged[-1].text
+    assert "движение" in merged[-1].text
 
 
 def test_mismatched_translation_count_is_refused():

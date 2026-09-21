@@ -164,7 +164,9 @@ def build_cues(
             Cue(index=position, start=start, end=end, lines=_wrap(text, style))
         )
 
-    return tuple(_fix_timing(_merge_runts(cues, style), style))
+    return tuple(_fix_timing(
+        _collapse_repeats(_merge_runts(cues, style)), style
+    ))
 
 
 # -- splitting -----------------------------------------------------------
@@ -200,6 +202,7 @@ def _speech_runs(
         if owner is None:
             owner = segment
         for word in segment.words:
+            word = _spoken_span(word)
             if current and word.start - current[-1].end >= style.pause_break:
                 runs.append((current, owner))
                 current, owner = [], segment
@@ -497,9 +500,13 @@ def _merge_runts(cues: list[Cue], style: CueStyle) -> list[Cue]:
             combined_text = cue.flat_text + joiner + following.flat_text
             combined_end = following.end
             duration = combined_end - cue.start
+            # max_duration exists to stop packing more *text* onto the screen,
+            # not to refuse a four-word sentence whose words Whisper stretched
+            # across pauses. A short line can sit as long as the speech lasts.
+            short_enough = len(combined_text) <= style.max_chars_per_line
             fits = (
                 len(combined_text) <= style.max_chars
-                and duration <= style.max_duration
+                and (duration <= style.max_duration or short_enough)
                 and following.start - cue.end <= 1.0
                 and (style.max_cps <= 0 or len(combined_text) / duration <= style.max_cps)
             )
@@ -516,6 +523,52 @@ def _merge_runts(cues: list[Cue], style: CueStyle) -> list[Cue]:
         )
         position += 1
     return merged
+
+
+def _collapse_repeats(cues: list[Cue]) -> list[Cue]:
+    """The same line two or three times in a row is one subtitle.
+
+    Measured on a German lecture: Whisper emitted "Und dann aber auch in
+    der Ukraine." three times over 3.8 seconds. Three flashes of the same
+    words are not three thoughts.
+    """
+    collapsed: list[Cue] = []
+    for cue in cues:
+        text = cue.flat_text.strip()
+        if (
+            collapsed
+            and text
+            and text.casefold() == collapsed[-1].flat_text.strip().casefold()
+            and cue.start - collapsed[-1].end <= 1.5
+        ):
+            prev = collapsed[-1]
+            collapsed[-1] = Cue(prev.index, prev.start, cue.end, prev.lines)
+            continue
+        collapsed.append(
+            Cue(index=len(collapsed) + 1, start=cue.start, end=cue.end,
+                lines=cue.lines)
+        )
+    return collapsed
+
+
+#: A character of real speech is never this slow. Words Whisper has stretched
+#: across the pause that followed them exceed it by an order of magnitude --
+#: measured on a 19-minute German lecture, "eine" timed at 13.3 s and
+#: "schlechte" at another 13.3 s, so "Das ist eine schlechte Bewegung."
+#: arrived as four one-word subtitles.
+_MAX_SECONDS_PER_CHAR = 0.60
+_WORD_PAD = 0.80
+
+
+def _spoken_span(word: Word) -> Word:
+    """Keep the start, give back the silence Whisper folded into the word."""
+    letters = len(word.text.strip())
+    if letters == 0:
+        return word
+    budget = max(1.0, letters * _MAX_SECONDS_PER_CHAR) + _WORD_PAD
+    if word.duration <= budget:
+        return word
+    return Word(word.text, word.start, word.start + budget, word.probability)
 
 
 # -- timing --------------------------------------------------------------

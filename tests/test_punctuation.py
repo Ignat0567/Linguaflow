@@ -16,6 +16,7 @@ from lt_core.asr.transcriber import (
     TranscribeOptions,
     Transcriber,
     is_hallucinated,
+    is_prompt_echo,
 )
 
 
@@ -269,6 +270,29 @@ def test_speech_that_merely_mentions_subtitles_is_still_speech(text):
     "Редактор субтитров А.Синецкая" from "Редактор субтитров подготовил
     отчёт"."""
     assert not is_hallucinated(text), text
+
+
+def test_the_german_closer_is_a_prompt_echo():
+    """The 19-minute lecture: «Fangen wir an?» twenty-eight times, then speech."""
+    prompt = languages.punctuation_sample("de")
+    assert is_prompt_echo("Fangen wir an?", prompt)
+    assert is_prompt_echo("Fangen wir an? Fangen wir an?", prompt)
+    assert is_prompt_echo("Fangen wir", prompt)
+
+
+def test_real_german_speech_is_not_the_prompt():
+    assert not is_prompt_echo(
+        "Das ist eine schlechte Bewegung.",
+        languages.punctuation_sample("de"),
+    )
+
+
+def test_the_english_closer_is_a_prompt_echo():
+    prompt = languages.punctuation_sample("en")
+    assert is_prompt_echo("Shall we begin?", prompt)
+    assert not is_prompt_echo(
+        "So what I just figured out might break the game.", prompt
+    )
 
 
 def test_the_whole_segment_has_to_be_the_credit():

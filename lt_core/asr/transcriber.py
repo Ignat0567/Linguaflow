@@ -167,6 +167,44 @@ def is_hallucinated(text: str) -> bool:
     return any(pattern.fullmatch(cleaned) for pattern in _HALLUCINATIONS)
 
 
+def is_prompt_echo(text: str, prompt: str | None) -> bool:
+    """Whether this segment is the priming sample coming back as speech.
+
+    Whisper copies the style of the prompt, and on silence it copies the
+    words too. Measured on a 19-minute German lecture: the closer
+    «Fangen wir an?» arrived twenty-eight times in the first seven minutes,
+    then real speech began. A recording that happens to open with the same
+    greeting loses a line; seven minutes of the prompt is worse.
+    """
+    if not prompt or not text.strip():
+        return False
+    sentences = [
+        re.sub(r"[.!?…,;:]+$", "", piece).strip().casefold()
+        for piece in re.split(r"[.!?]+", text)
+        if piece.strip()
+    ]
+    if not sentences:
+        return False
+    unique = list(dict.fromkeys(sentences))
+    body = unique[0] if len(unique) == 1 else " ".join(unique)
+    if len(body.split()) < 2:
+        return False
+    parts = [
+        re.sub(r"[.!?…,;:]+$", "", piece).strip().casefold()
+        for piece in re.split(r"[.!?]+", prompt)
+        if piece.strip()
+    ]
+    if not parts:
+        return False
+    closer = parts[-1]
+    sample = " ".join(parts)
+    if body == closer:
+        return True
+    if closer and (body in closer or closer in body):
+        return True
+    return len(body.split()) >= 3 and body in sample
+
+
 def _with_terms(prompt: str | None, terms: tuple[str, ...]) -> str | None:
     """Name the recording's own words at the end of the prompt.
 
@@ -275,7 +313,7 @@ class Transcriber:
 
         duration = total_duration if total_duration is not None else info.duration
         segments = tuple(
-            self._collect(raw_segments, options, duration, on_progress)
+            self._collect(raw_segments, options, duration, on_progress, prompt)
         )
         return Transcript(
             segments=segments,
@@ -327,6 +365,7 @@ class Transcriber:
         options: TranscribeOptions,
         duration: float,
         on_progress: Callable[[float, float], None] | None,
+        prompt: str | None = None,
     ):
         for raw in raw_segments:
             if on_progress is not None:
@@ -340,6 +379,8 @@ class Transcriber:
             if raw.no_speech_prob > options.max_no_speech_probability:
                 continue
             if options.drop_hallucinations and is_hallucinated(text):
+                continue
+            if options.punctuation_prompt and is_prompt_echo(text, prompt):
                 continue
 
             words = tuple(

@@ -180,15 +180,74 @@ def translate_cues(
             f"соответствие нарушено."
         )
     style = style or CueStyle()
-    return tuple(
-        Cue(
-            index=cue.index,
+    built: list[Cue] = []
+    for cue, text in zip(cues, translations):
+        cleaned = text.strip()
+        if not cleaned:
+            # An empty share means the sentence's words were used up on
+            # earlier cues, not that this cue should fall back to the
+            # source language. Measured on a German lecture: "Das ist
+            # eine schlechte Bewegung." became four one-word cues, the
+            # Russian had three words, and the fourth cue stayed
+            # "Bewegung." -- German in a Russian subtitle file.
+            if built:
+                prev = built[-1]
+                built[-1] = Cue(
+                    prev.index, prev.start, max(prev.end, cue.end), prev.lines
+                )
+            else:
+                built.append(Cue(
+                    index=len(built) + 1, start=cue.start, end=cue.end,
+                    lines=cue.lines,
+                ))
+            continue
+        built.append(Cue(
+            index=len(built) + 1,
             start=cue.start,
             end=cue.end,
-            lines=_wrap(text.strip(), style) if text.strip() else cue.lines,
+            lines=_wrap(cleaned, style),
+        ))
+    return tuple(built)
+
+
+def fold_original(
+    original: tuple[Cue, ...], translated: tuple[Cue, ...]
+) -> tuple[Cue, ...]:
+    """Merge source cues so they share the translated list's timings.
+
+    Empty translation shares are absorbed into the previous cue, so the
+    translated list can be shorter. Bilingual output still needs one original
+    per translated cue; leftovers fold into the cue that ate their time.
+    """
+    folded: list[Cue] = []
+    position = 0
+    for target in translated:
+        chunk: list[str] = []
+        while position < len(original) and original[position].start < target.end - 1e-4:
+            if original[position].end > target.start + 1e-4:
+                text = original[position].flat_text.strip()
+                if text:
+                    chunk.append(text)
+            position += 1
+        folded.append(
+            Cue(
+                index=target.index,
+                start=target.start,
+                end=target.end,
+                lines=((" ".join(chunk),) if chunk else ("",)),
+            )
         )
-        for cue, text in zip(cues, translations)
-    )
+    if position < len(original) and folded:
+        extra = " ".join(
+            cue.flat_text.strip() for cue in original[position:] if cue.flat_text.strip()
+        )
+        if extra:
+            last = folded[-1]
+            text = f"{last.flat_text} {extra}".strip()
+            folded[-1] = Cue(
+                last.index, last.start, max(last.end, original[-1].end), (text,)
+            )
+    return tuple(folded)
 
 
 def merge_bilingual(
@@ -197,6 +256,13 @@ def merge_bilingual(
     translation_first: bool = True,
 ) -> tuple[Cue, ...]:
     """One cue per timing, holding both languages."""
+    if not translated:
+        raise ValueError(
+            f"{len(original)} и {len(translated)} субтитров — "
+            f"их нельзя совместить."
+        )
+    if len(original) != len(translated):
+        original = fold_original(original, translated)
     if len(original) != len(translated):
         raise ValueError(
             f"{len(original)} и {len(translated)} субтитров — "
