@@ -480,3 +480,70 @@ def test_a_recording_that_agrees_says_nothing(window):
     settings = SimpleNamespace(detect_language=False, to_lang="ru")
     done.show_result(_finished("en", 1.0), settings)
     assert i18n._("Проверьте язык").casefold() not in _texts(done)
+
+
+# -- nothing clickable stays silent -------------------------------------
+
+def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
+    """The complaint that started this was one card on one screen. This is
+    the same question asked of every control the app actually builds, which
+    is the only way the answer stays true as screens are added.
+
+    The pointer is delivered as a real enter and leave, so a control is
+    judged by what it draws rather than by which base class it inherits.
+    """
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import (
+        QAbstractButton, QApplication, QComboBox, QLineEdit, QWidget,
+    )
+
+    def painted(widget) -> bytes:
+        image = QImage(widget.size(), QImage.Format_ARGB32)
+        image.fill(0)
+        widget.render(image)
+        return image.constBits().tobytes()
+
+    def answers(widget) -> bool:
+        QApplication.sendEvent(widget, QEvent(QEvent.Leave))
+        resting = painted(widget)
+        QApplication.sendEvent(widget, QEvent(QEvent.Enter))
+        hovered = painted(widget)
+        QApplication.sendEvent(widget, QEvent(QEvent.Leave))
+        return bool(resting) and resting != hovered
+
+    window.resize(1280, 860)
+    window.show()
+    silent: list[str] = []
+    checked = 0
+    try:
+        for screen in ("home", "upload", "realtime", "settings", "history"):
+            window.goto(screen)
+            QApplication.processEvents()
+            for widget in window.findChildren(QWidget):
+                if isinstance(widget, (QComboBox, QLineEdit)):
+                    # Drawn by Qt's style sheets rather than the shared
+                    # painter; theirs is checked as CSS in test_appearance.
+                    continue
+                if widget.testAttribute(Qt.WA_TransparentForMouseEvents):
+                    # A label inside a card inherits the card's hand cursor
+                    # and cannot receive the mouse; the card answers for it.
+                    continue
+                clickable = (
+                    isinstance(widget, QAbstractButton)
+                    or widget.cursor().shape() == Qt.PointingHandCursor
+                )
+                if not clickable or not widget.isVisible():
+                    continue
+                checked += 1
+                if not answers(widget):
+                    label = getattr(widget, "text", lambda: "")() or ""
+                    silent.append(f"{screen}: {type(widget).__name__} {label!r}")
+    finally:
+        window.hide()
+
+    assert checked > 30, (
+        f"only {checked} controls were reached; a sweep that finds nothing "
+        f"to look at passes for the wrong reason"
+    )
+    assert silent == [], silent

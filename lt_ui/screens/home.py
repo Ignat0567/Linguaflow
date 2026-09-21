@@ -144,5 +144,4 @@ class _RecentCard(glass.GlassPanel):
         layout.addWidget(line)
         layout.addSpacing(10)
         layout.addWidget(meta)
-        self.setCursor(self.cursor())
         glass.clickable(self, lambda: app.goto("history"))

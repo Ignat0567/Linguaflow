@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPainter
+from PySide6.QtGui import QCursor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -231,12 +231,26 @@ class _Dropzone(glass.GlassPanel):
         super().__init__(radius=28)
         self.screen = screen
         self.setAcceptDrops(True)
-        self.setCursor(self.cursor())
+        # Clicking it opens the file picker, so it is a control, and a
+        # control shows a hand. `setCursor(self.cursor())` -- what stood here
+        # -- sets the cursor to whatever it already was, which is nothing.
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.setAttribute(Qt.WA_Hover, True)
         self.setMinimumHeight(280)
+        self._hover = False
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover = False
+        self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        dashed_panel(self, painter, 28)
+        dashed_panel(self, painter, 28,
+                     theme.HOVER_LIFT if self._hover else 0.0)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:

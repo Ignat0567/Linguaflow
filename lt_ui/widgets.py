@@ -234,7 +234,7 @@ class AccentSwatch(glass.Hoverable):
         # comes forward, so the one being considered is visibly the one the
         # click would take.
         if self.isChecked():
-            painter.setPen(QPen(theme.ink(0.95), 2))
+            painter.setPen(QPen(theme.ink(0.95), 3 if self._hover else 2))
         else:
             painter.setPen(QPen(theme.ink(0.55 if self._hover else 0.25),
                                 2 if self._hover else 1))
@@ -259,7 +259,9 @@ class NavItem(glass.Hoverable):
         path = QPainterPath()
         path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
         if self.isChecked():
-            painter.fillPath(path, theme.ink(0.96))
+            # The page already open: the capsule is solid, so it answers by
+            # going fully opaque rather than by taking more white.
+            painter.fillPath(path, theme.ink(1.0 if self._hover else 0.96))
             painter.setPen(theme.base())
         else:
             painter.setPen(theme.ink(theme.text_alpha(
@@ -457,12 +459,14 @@ class SettingsGroup(glass.GlassPanel):
         self.body = layout
 
 
-def dashed_panel(widget: QWidget, painter: QPainter, radius: int = 28) -> None:
+def dashed_panel(
+    widget: QWidget, painter: QPainter, radius: int = 28, lift: float = 0.0
+) -> None:
     """The upload dropzone: glass fill, dashed rather than solid edge."""
     rect = widget.rect().adjusted(1, 1, -2, -2)
     path = glass.paint_glass(
-        widget, painter, rect, radius, None, border=0.0
+        widget, painter, rect, radius, None, border=0.0, lift=lift
     )
-    painter.setPen(QPen(theme.ink(0.35), 1.5, Qt.DashLine))
+    painter.setPen(QPen(theme.ink(0.55 if lift else 0.35), 1.5, Qt.DashLine))
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(path)
