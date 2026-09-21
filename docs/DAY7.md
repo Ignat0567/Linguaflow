@@ -541,7 +541,47 @@ own things belong.
     undone deliberately, and measured so that it is not built again by
     accident.
 
-553 tests.
+48. **A live commit stopped handing over half a word.** Whisper emits "31%" as
+    two tokens, `" 31"` and `"%"`, and the missing leading space is the only
+    thing that says they are one word. Committed text is translated the moment
+    it settles, so a commit boundary falling between them sent "…by 31" to the
+    translator and the viewer read "задержка на 31". Traced on a live run:
+    both halves were in the same hypothesis — the boundary simply fell inside
+    the word. A commit now gives back any token glued to what follows it, and
+    a token of bare punctuation travels with the word in front of it rather
+    than waiting for a forced commit. On the same audio `31%` and `$12,000`
+    now commit whole. Lag unchanged at a median of 2.2 s and 5.0 s at worst;
+    forced commits 7 → 6.
+49. **A translation stopped wandering away from the speech under it.** A
+    translated sentence is put back across the cues its source occupied in
+    proportion to their length, and nothing re-anchors that split: an error on
+    the third cue is still there on the ninetieth. It never showed while a
+    sentence end closed the group every two or three cues — and no sentence
+    end arrives at all when the recogniser stops punctuating, which it does
+    for minutes at a time. On a 21-minute recording one "sentence" ran 106
+    cues and eight thousand characters with no full stop in it, and twelve
+    consecutive cues carried one Russian word each: "хотите, | то, | что | вы |
+    хотите,".
+
+    A group is now closed at forty words as well as at a sentence end. Forty
+    because that is the largest piece the translator hands the model in any
+    case, so this changes what is translated hardly at all — on a
+    well-punctuated recording the model reads 138 pieces before and 137 after,
+    and the cap has to divide 11 of 103 sentence groups — and changes entirely
+    where the answer is put back. Measured on a 276-cue recording with its
+    sentence ends removed, against the same cues grouped by sentence: **the
+    translation ran a median of 7.4 s away from the speech under it, 23.5 s at
+    worst, 234 of 276 cues more than two seconds out of step. After: a median
+    of zero, 7.5 s at worst, 47 cues.** On the 21-minute recording the largest
+    group falls from 106 cues to 3 and the one-word cues to none.
+
+    Worth recording separately: the *first* half of this defect — the same
+    unpunctuated run losing 60% of its translation outright, 13 732 source
+    characters coming back as 5 189 — was already fixed on 18 September, and
+    the output files in `data/jobs` predate that fix. An audit corpus is only
+    as current as the code that produced it.
+
+560 tests.
 
 ## Not done
 
