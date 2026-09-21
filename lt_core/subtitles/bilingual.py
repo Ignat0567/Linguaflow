@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from ..subtitles.cues import Cue, CueStyle, _wrap
+from ..subtitles.cues import _CLINGING_WORDS, Cue, CueStyle, _wrap
 
 _ENDS_SENTENCE = re.compile(r"[.!?…。！？]['\"»”’)\]］】」』]*$")
 
@@ -42,6 +42,56 @@ def group_into_sentences(cues: tuple[Cue, ...]) -> list[list[int]]:
     if current:
         groups.append(current)
     return groups
+
+
+#: How far a proportional split may move to land on a boundary a reader would
+#: choose.
+#:
+#: Two words. Enough to step off a preposition or onto a comma, small enough
+#: that the text stays in step with the speech under it -- at an ordinary pace
+#: two words is about half a second.
+NUDGE = 2
+
+#: A unit that ends a clause is the best place to cut: the reader is already
+#: pausing there.
+_ENDS_CLAUSE = re.compile(r"[,;:—–]$")
+
+
+def _cut_near(units: list[str], consumed: int, wanted: int, most: int) -> int:
+    """Move a proportional split onto a boundary, if one is close enough.
+
+    Splitting purely by proportion puts cue boundaries wherever the arithmetic
+    lands, and the arithmetic knows nothing about phrases. Measured on an hour
+    of real output: 42 of 1462 Russian cues ended on a word that governs the
+    next one -- "...масса это количество людей, умноженное на" and then, a cue
+    later, "энергию". The source language has been avoiding this since Day 2;
+    its translation had not.
+
+    A clause end wins over anything, because the reader is already pausing
+    there. Failing that, anything but a word left dangling from what it
+    governs. Failing both, the proportional point stands -- a boundary that
+    cannot be improved is better than text that has drifted from its speech.
+    """
+    options = sorted(
+        (candidate for candidate in range(wanted - NUDGE, wanted + NUDGE + 1)
+         if 1 <= candidate <= most),
+        key=lambda candidate: (abs(candidate - wanted), candidate),
+    )
+    if not options:
+        return wanted
+
+    for acceptable in (
+        lambda unit: bool(_ENDS_CLAUSE.search(unit)),
+        lambda unit: unit.strip(_TRAILING).casefold() not in _CLINGING_WORDS,
+    ):
+        for candidate in options:
+            if acceptable(units[consumed + candidate - 1].strip()):
+                return candidate
+    return wanted
+
+
+#: Punctuation to look past when asking what word this is.
+_TRAILING = ".,!?;:»\"'()[]…—–"
 
 
 def distribute(text: str, weights: list[int], join_with_space: bool = True) -> list[str]:
@@ -76,7 +126,10 @@ def distribute(text: str, weights: list[int], join_with_space: bool = True) -> l
         wanted = max(1, round(share * len(units)))
         # Leave at least one unit for every cue still to come.
         remaining_cues = len(weights) - position - 1
-        wanted = min(wanted, len(units) - consumed - remaining_cues)
+        most = len(units) - consumed - remaining_cues
+        wanted = min(wanted, most)
+        if join_with_space:
+            wanted = _cut_near(units, consumed, wanted, most)
         parts.append(joiner.join(units[consumed:consumed + wanted]))
         consumed += wanted
     return parts
