@@ -408,3 +408,97 @@ def test_the_routing_check_is_told_where_the_voice_will_play():
               / "lt_ui" / "engine.py").read_text(encoding="utf-8")
     assert "check_routing(device, None)" not in worker
     assert "default_playback_name()" in worker
+
+
+# -- page audio (embedded browser) ---------------------------------------
+
+def _collect(source, seconds: float) -> list:
+    """Chunks the source emits within `seconds`, then stop it."""
+    chunks = []
+    deadline = time.monotonic() + seconds
+    source.start()
+    try:
+        while time.monotonic() < deadline:
+            try:
+                item = source._queue.get(timeout=0.05)
+            except Exception:  # noqa: BLE001 -- queue.Empty
+                continue
+            if item is None:
+                break
+            chunks.append(item)
+    finally:
+        source.stop()
+    # What stop() flushed: the last part-block and the resampler's tail.
+    while True:
+        item = source._queue.get(timeout=1.0)
+        if item is None:
+            break
+        chunks.append(item)
+    return chunks
+
+
+def test_page_audio_is_resampled_to_the_pipeline_rate():
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.push(tone(440, 1.0, 44_100), 44_100)
+    chunks = _collect(source, 0.6)
+    total = sum(c.samples.size for c in chunks)
+    # One second in, one second out (the resampler holds back a filter length).
+    assert abs(total - TARGET_SAMPLE_RATE) < 0.02 * TARGET_SAMPLE_RATE
+    assert all(c.samples.size == BLOCK_SAMPLES for c in chunks[:-1])
+
+
+def test_page_audio_accepts_pcm16_as_the_page_sends_it():
+    from lt_core.audio.capture import PageAudioSource
+
+    pcm = (tone(440, 0.5, 48_000) * 32767).astype(np.int16)
+    source = PageAudioSource()
+    source.push(pcm, 48_000)
+    chunks = _collect(source, 0.5)
+    peak = max(float(np.abs(c.samples).max()) for c in chunks)
+    assert 0.4 < peak < 0.6, "int16 must be scaled, not read as floats in the thousands"
+
+
+def test_an_ad_is_heard_as_silence_but_keeps_its_time():
+    """Ads play in the same <video>. Heard, they would be translated and
+    read out; dropped, every later subtitle would come early by their length."""
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.set_gated(True)
+    source.push(tone(440, 1.0, 16_000), 16_000)
+    chunks = _collect(source, 0.5)
+    total = sum(c.samples.size for c in chunks)
+    assert total == TARGET_SAMPLE_RATE
+    assert max(float(np.abs(c.samples).max()) for c in chunks) == 0.0
+    assert source.gated_seconds == pytest.approx(1.0)
+
+
+def test_the_clock_runs_on_while_the_page_sends_nothing():
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    chunks = _collect(source, source.SILENCE_AFTER + 0.8)
+    made_up = sum(c.samples.size for c in chunks) / TARGET_SAMPLE_RATE
+    assert made_up > 0.5
+    assert source.silence_blocks > 0
+
+
+def test_the_gap_between_two_drains_is_not_filled_with_silence():
+    """The page is drained in bursts. Silence made up between two of them
+    would push every later word late by the gap."""
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.start()
+    try:
+        # What a drain returns is audio that has already played: the burst
+        # arrives after its own quarter second, never before it.
+        for _ in range(4):
+            time.sleep(0.25)
+            source.push(tone(440, 0.25, 16_000), 16_000)
+        time.sleep(0.1)
+    finally:
+        source.stop()
+    assert source.silence_blocks == 0

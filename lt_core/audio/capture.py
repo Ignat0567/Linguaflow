@@ -1,6 +1,6 @@
 """Audio capture.
 
-Three sources, one interface. Whatever the origin, a source yields AudioChunks
+Every source, one interface. Whatever the origin, a source yields AudioChunks
 of mono float32 at 16 kHz with session-relative timestamps, so the ASR stage
 never learns where its audio came from.
 
@@ -448,6 +448,128 @@ class DshowMicrophoneSource(AudioSource):
                     f"Обычно это значит, что устройство занято другой программой.",
                     detail=stderr,
                 )
+
+
+class PageAudioSource(AudioSource):
+    """Audio handed over by the embedded browser: one page's own <video>.
+
+    Nothing here opens a device. The page taps its video element through Web
+    Audio and the browser code calls `push` with what it drained, at whatever
+    rate the page's audio context runs (44.1 or 48 kHz). That is the point of
+    this source: it hears the video and only the video, so the translation
+    read aloud through the speakers can never come back in as speech -- no
+    echo gate, no second output device.
+
+    Two things are the page's to say and this source's to honour:
+
+    * An ad is playing. It plays in the same element as the video, and an
+      ad that is heard is an ad that is translated and read out. While
+      `set_gated(True)`, what arrives is replaced by silence of the same
+      length, so the timeline still moves.
+    * Nothing is arriving -- the tab went to a page without video, or the
+      browser code stopped draining. Like the loopback source, this one then
+      keeps its own clock and makes the silence up.
+
+    The page is drained in bursts a few hundred milliseconds apart, so the
+    made-up silence starts only well past one burst's worth of waiting;
+    anything shorter would fill the gap between two bursts and push every
+    later word late by that much.
+    """
+
+    #: How far behind the wall clock before silence is made up.
+    SILENCE_AFTER = 1.0
+
+    #: Bursts kept while the consumer is busy: tens of seconds at 250 ms.
+    INBOX = 120
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._inbox: queue.Queue[tuple[np.ndarray, int]] = queue.Queue(maxsize=self.INBOX)
+        self._gated = threading.Event()
+        self._silence_blocks = 0
+        self._gated_seconds = 0.0
+
+    @property
+    def silence_blocks(self) -> int:
+        """Blocks made up because the page sent nothing."""
+        return self._silence_blocks
+
+    @property
+    def gated_seconds(self) -> float:
+        """Seconds of page audio replaced by silence while an ad played."""
+        return self._gated_seconds
+
+    @property
+    def gated(self) -> bool:
+        return self._gated.is_set()
+
+    def set_gated(self, gated: bool) -> None:
+        if gated:
+            self._gated.set()
+        else:
+            self._gated.clear()
+
+    def push(self, samples: np.ndarray, rate: int) -> None:
+        """Hand over mono audio from the page. Safe from any thread.
+
+        int16 is taken as PCM and scaled; floats are taken as they are.
+        """
+        data = np.asarray(samples)
+        if data.size == 0:
+            return
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32768.0
+        item = (data.astype(np.float32, copy=False).reshape(-1), int(rate))
+        try:
+            self._inbox.put_nowait(item)
+        except queue.Full:
+            try:
+                self._inbox.get_nowait()
+                self._dropped_blocks += 1
+                self._inbox.put_nowait(item)
+            except (queue.Empty, queue.Full):
+                self._dropped_blocks += 1
+
+    def _run(self) -> None:
+        import time
+
+        block_seconds = BLOCK_SAMPLES / TARGET_SAMPLE_RATE
+        silence = np.zeros(BLOCK_SAMPLES, dtype=np.float32)
+        resampler: StreamResampler | None = None
+        rate = 0
+        carry = np.zeros(0, dtype=np.float32)
+        started = time.monotonic()
+        while not self._stop.is_set():
+            try:
+                samples, source_rate = self._inbox.get(timeout=block_seconds)
+            except queue.Empty:
+                behind = (time.monotonic() - started) - (
+                    self._samples_emitted / TARGET_SAMPLE_RATE
+                )
+                while behind >= self.SILENCE_AFTER and not self._stop.is_set():
+                    self._emit(silence)
+                    self._silence_blocks += 1
+                    behind -= block_seconds
+                continue
+            if resampler is None or source_rate != rate:
+                resampler = StreamResampler(source_rate, 1)
+                rate = source_rate
+            converted = resampler.process(samples)
+            if self._gated.is_set():
+                self._gated_seconds += converted.size / TARGET_SAMPLE_RATE
+                converted = np.zeros_like(converted)
+            carry = np.concatenate([carry, converted])
+            whole = (carry.size // BLOCK_SAMPLES) * BLOCK_SAMPLES
+            for offset in range(0, whole, BLOCK_SAMPLES):
+                self._emit(carry[offset:offset + BLOCK_SAMPLES])
+            carry = carry[whole:]
+        if resampler is not None:
+            tail = resampler.flush()
+            if self._gated.is_set():
+                tail = np.zeros_like(tail)
+            carry = np.concatenate([carry, tail])
+        if carry.size:
+            self._emit(carry)
 
 
 def open_source(device: DeviceInfo) -> AudioSource:

@@ -177,12 +177,16 @@ class LiveWorker(QThread):
         transcriber: Transcriber,
         translator,
         parent: QObject | None = None,
+        source=None,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
         self.transcriber = transcriber
         self.translator = translator
         self._stop = threading.Event()
+        #: A source someone else opened -- the embedded browser's page audio.
+        #: None means the device the settings name.
+        self._given = source
         self._source = None
         self.captions: list[LiveUpdate] = []
         self.audio_seconds = 0.0
@@ -195,8 +199,9 @@ class LiveWorker(QThread):
 
     def run(self) -> None:
         settings = self.settings
-        device = default_device(settings.capture_kind)
-        if device is None:
+        given = self._given
+        device = None if given is not None else default_device(settings.capture_kind)
+        if given is None and device is None:
             available = ", ".join(d.label for d in list_capture_devices()[:4]) or "нет"
             self.failed.emit(
                 f"Не найдено устройство захвата «{settings.capture_kind}». "
@@ -205,7 +210,9 @@ class LiveWorker(QThread):
             return
 
         speak = settings.realtime_voice
-        gate = EchoGate() if speak else None
+        # A page's own audio never contains what the speakers play, so there
+        # is no loop to break: no gate, and no refusal over a shared device.
+        gate = EchoGate() if speak and given is None else None
         # One voice per language that will be read out. A conversation needs
         # both: what A says is read to B in B's language and the other way
         # round, so a single voice would read half the session in the wrong
@@ -224,8 +231,11 @@ class LiveWorker(QThread):
             except VoiceError as error:
                 self.failed.emit(str(error))
                 return
-            advice = check_routing(device, default_playback_name())
-            if not advice.safe:
+            advice = (
+                check_routing(device, default_playback_name())
+                if device is not None else None
+            )
+            if advice is not None and not advice.safe:
                 self.failed.emit(
                     advice.reason + ((" " + advice.remedy) if advice.remedy else "")
                 )
@@ -247,11 +257,14 @@ class LiveWorker(QThread):
                 pace=BALANCED,
             )
 
-        try:
-            source = open_source(device)
-        except CaptureError as error:
-            self.failed.emit(str(error))
-            return
+        if given is not None:
+            source = given
+        else:
+            try:
+                source = open_source(device)
+            except CaptureError as error:
+                self.failed.emit(str(error))
+                return
         self._source = source
 
         try:
@@ -464,13 +477,17 @@ class Engine(QObject):
         self._batch = worker
         worker.start()
 
-    def start_live(self, settings: Settings) -> None:
+    def start_live(self, settings: Settings, source=None) -> None:
+        """Start a live session on the device the settings name, or on
+        `source` when one is given (the embedded browser's page audio)."""
         if not self.models_ready:
             self.live_failed.emit("Модели ещё не загружены.")
             return
         if self.live_running:
             return
-        worker = LiveWorker(settings, self.transcriber, self.translator, self)
+        worker = LiveWorker(
+            settings, self.transcriber, self.translator, self, source=source
+        )
         worker.update.connect(self.live_update)
         worker.failed.connect(self.live_failed)
         worker.stopped.connect(self.live_stopped)

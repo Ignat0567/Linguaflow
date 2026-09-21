@@ -17,3 +17,5 @@ imageio-ffmpeg==0.6.0           # bundled ffmpeg binary
 numpy==2.5.3
 # UI
 PySide6==6.11.2
+# Network half of the embedded browser's ad blocker (Brave's adblock-rust).
+adblock==0.6.0

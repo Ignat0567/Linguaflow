@@ -55,6 +55,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     # -- navigation ----------------------------------------------------
     "Главная": ("Home", "Start"),
     "Реальное время": ("Live", "Echtzeit"),
+    "Браузер": ("Browser", "Browser"),
     "Загрузка": ("Upload", "Datei"),
     "История": ("History", "Verlauf"),
     "Настройки": ("Settings", "Einstellungen"),
@@ -126,6 +127,31 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Сохранить транскрипт": ("Save transcript", "Transkript speichern"),
     "Окно субтитров": ("Subtitle window", "Untertitelfenster"),
+    # -- browser ---------------------------------------------------------
+    "Адрес или поиск на YouTube": (
+        "Address or YouTube search", "Adresse oder YouTube-Suche",
+    ),
+    "Включите перевод и запустите видео": (
+        "Turn on translation and play a video",
+        "Übersetzung einschalten und ein Video abspielen",
+    ),
+    "Переводить видео": ("Translate video", "Video übersetzen"),
+    "Жду, когда заиграет видео": (
+        "Waiting for a video to play", "Warte, bis ein Video läuft",
+    ),
+    "Слушаю видео": ("Listening to the video", "Höre das Video"),
+    "Идёт реклама — её не перевожу": (
+        "An ad is playing — not translating it",
+        "Werbung läuft — wird nicht übersetzt",
+    ),
+    "Сейчас идёт живой перевод на экране «Реальное время».": (
+        "A live translation is running on the Live screen.",
+        "Auf dem Bildschirm „Echtzeit“ läuft gerade eine Übersetzung.",
+    ),
+    "Сейчас переводится видео на экране «Браузер».": (
+        "A video is being translated on the Browser screen.",
+        "Auf dem Bildschirm „Browser“ wird gerade ein Video übersetzt.",
+    ),
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),

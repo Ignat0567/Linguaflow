@@ -210,11 +210,11 @@ def test_window_opens_on_home_and_nav_switches(qapp, tmp_path):
 
     window = Window(Store(tmp_path))
     window.resize(960, 640)
-    assert window._stack.currentIndex() == 0
+    assert window.current_screen == "home"
     window.goto("settings")
-    assert window._stack.currentIndex() == 4
+    assert window.current_screen == "settings"
     window.goto("history")
-    assert window._stack.currentIndex() == 3
+    assert window.current_screen == "history"
     window.close()
 
 

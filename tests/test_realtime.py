@@ -690,3 +690,34 @@ def test_a_turn_change_releases_the_unfinished_sentence():
     assert released == "[ru] An unfinished thought"
 
 
+
+
+# -- joining committed text across ticks ----------------------------------
+
+def test_committed_text_from_two_ticks_is_spaced_as_spoken():
+    """Measured in the browser screen: "with you today" and "for your
+    commencement" arrived on two ticks, both stripped, and read «todayfor»."""
+    from lt_core.asr.types import Word
+    from lt_core.realtime.session import LiveUpdate, _starts_word, append_committed
+
+    words = [Word(" for", 1.0, 1.2, 0.9), Word(" your", 1.2, 1.4, 0.9)]
+    update = LiveUpdate(committed="for your", committed_space=_starts_word(words))
+    assert append_committed("with you today", update) == "with you today for your"
+
+
+def test_a_word_continued_on_the_next_tick_stays_joined():
+    """Whisper can split "$12,000" into " $12" and ",000". A space between
+    them is a different number to anyone reading it."""
+    from lt_core.asr.types import Word
+    from lt_core.realtime.session import LiveUpdate, _starts_word, append_committed
+
+    words = [Word(",000", 2.0, 2.3, 0.9)]
+    update = LiveUpdate(committed=",000", committed_space=_starts_word(words))
+    assert append_committed("It cost $12", update) == "It cost $12,000"
+
+
+def test_the_first_committed_text_needs_no_joiner():
+    from lt_core.realtime.session import LiveUpdate, append_committed
+
+    assert append_committed("", LiveUpdate(committed="Hello")) == "Hello"
+    assert append_committed("Hello", LiveUpdate(committed="")) == "Hello"

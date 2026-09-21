@@ -442,7 +442,7 @@ class Wordmark(QWidget):
 
 
 class NavBar(glass.GlassPanel):
-    """The floating pill: the five destinations, centred."""
+    """The floating pill: the six destinations, centred."""
 
     chosen = Signal(str)
 
@@ -450,13 +450,14 @@ class NavBar(glass.GlassPanel):
     #: here: a class body runs at import, before the stored interface
     #: language has been applied, and the nav would stay in Russian while
     #: every other caption changed.
-    SCREENS = ("home", "realtime", "upload", "history", "settings")
+    SCREENS = ("home", "realtime", "browser", "upload", "history", "settings")
 
     @staticmethod
     def captions() -> tuple[tuple[str, str], ...]:
         return (
             ("home", _("Главная")),
             ("realtime", _("Реальное время")),
+            ("browser", _("Браузер")),
             ("upload", _("Загрузка")),
             ("history", _("История")),
             ("settings", _("Настройки")),

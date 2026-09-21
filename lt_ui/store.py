@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #: installation rather than being copied into each profile.
 MODEL_ROOT = ROOT / "models"
 
-SCREENS = ("home", "realtime", "upload", "history", "settings")
+SCREENS = ("home", "realtime", "browser", "upload", "history", "settings")
 
 _MONTHS = {
     "ru": (

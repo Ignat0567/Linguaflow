@@ -30,6 +30,7 @@ from . import theme
 from .backdrop import Backdrop
 from .engine import Engine
 from .overlay import OverlayWindow
+from .screens.browser import BrowserScreen
 from .screens.history import HistoryScreen
 from .screens.home import HomeScreen
 from .screens.realtime import RealtimeScreen
@@ -110,7 +111,7 @@ class Window(QWidget):
         self.goto("home")
 
     def _build_shell(self) -> None:
-        """Build the nav and the five screens.
+        """Build the nav and the six screens.
 
         Called again when the interface language changes. Every caption is
         read from the catalogue when its widget is created, so the honest way
@@ -123,12 +124,14 @@ class Window(QWidget):
 
         self._home = HomeScreen(self)
         self._realtime = RealtimeScreen(self)
+        self._browser = BrowserScreen(self)
         self._upload = UploadScreen(self)
         self._history = HistoryScreen(self)
         self._settings = SettingsScreen(self)
         self._pages = {
             "home": self._home,
             "realtime": self._realtime,
+            "browser": self._browser,
             "upload": self._upload,
             "history": self._history,
             "settings": self._settings,
@@ -136,7 +139,11 @@ class Window(QWidget):
         self._stack = QStackedWidget()
         self._stack.setStyleSheet("background: transparent;")
         for screen in self._pages.values():
-            self._stack.addWidget(_Scroll(screen))
+            # The browser fills the height it is given; a scroll area would
+            # hand it only its minimum.
+            self._stack.addWidget(
+                screen if screen is self._browser else _Scroll(screen)
+            )
 
         self._mark = Wordmark(self)
         nav_row = QHBoxLayout()
@@ -178,6 +185,7 @@ class Window(QWidget):
         i18n.set_language(self.store.settings.ui_language)
         messages.install(i18n.t)
         current = self.current_screen
+        self._browser.shutdown()
         if self._shell is not None:
             self._frame.removeWidget(self._shell)
             self._shell.setParent(None)
@@ -196,6 +204,7 @@ class Window(QWidget):
         return names[index] if 0 <= index < len(names) else "home"
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._browser.shutdown()
         self.overlay.hide()
         self.overlay.close()
         super().closeEvent(event)
