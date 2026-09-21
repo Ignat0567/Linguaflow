@@ -762,13 +762,36 @@ def test_leaving_one_destination_for_the_next_does_not_put_it_out(window):
 # -- how much of the window there is ------------------------------------
 
 def test_the_window_itself_is_translucent(window):
-    """Asked for at a half. Everything the window draws goes through this,
-    text included, so it is the one appearance setting that can cost
-    legibility rather than only looks."""
+    """Everything the window draws goes through this, text included, so it is
+    the one appearance setting that can cost legibility rather than only
+    looks.
+
+    Not `setWindowOpacity`, which was the first attempt: it makes the whole
+    window a layered one blended against the literal desktop, so the frosted
+    sheet the compositor composes behind it is never seen. Measured at 0.5
+    with the backdrop asked for and granted -- a page of text behind the
+    window was readable through it, word for word.
+    """
+    from PySide6.QtCore import Qt
+
     from lt_ui import theme
 
-    assert theme.WINDOW_OPACITY == 0.50
-    assert window.windowOpacity() == pytest.approx(theme.WINDOW_OPACITY, abs=0.01)
+    assert 0.0 < theme.WINDOW_OPACITY < 1.0
+    assert window.testAttribute(Qt.WA_TranslucentBackground), (
+        "the surface has to carry alpha for anything to come through it"
+    )
+
+
+def test_the_window_asks_for_the_desktop_behind_it_to_be_blurred(window):
+    """Without it the desktop shows through exactly as it is -- text, icons,
+    other windows -- competing with the interface over it."""
+    import inspect
+
+    from lt_ui import system_backdrop
+
+    assert hasattr(window, "blurred_behind")
+    source = inspect.getsource(system_backdrop.blur_behind)
+    assert "SetWindowCompositionAttribute" in source
 
 
 @pytest.mark.parametrize("mode, fill", [("dark", "TINT_DARK"), ("light", "TINT_LIGHT")])

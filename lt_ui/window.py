@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
+from . import system_backdrop
 from lt_core import messages
 
 from . import i18n
@@ -65,7 +66,18 @@ class Window(QWidget):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Linguaflow")
-        self.setWindowOpacity(theme.WINDOW_OPACITY)
+        # The window lets the desktop through, and the compositor is asked to
+        # frost it on the way, so that what shows through is a surface rather
+        # than somebody's browser. Two things are needed and only together:
+        # a window surface that really carries alpha, and the backdrop drawn
+        # into it at less than full strength. `setWindowOpacity` looks like
+        # the shorter road and is not -- it makes the whole window a layered
+        # one blended against the literal desktop, so the frosted sheet is
+        # composed behind an opaque surface and never seen. Measured: at 0.5
+        # opacity with the backdrop asked for and granted, a page of text
+        # behind the window was readable through it, word for word.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.blurred_behind = system_backdrop.blur_behind(self)
         self.setMinimumSize(1020, 700)
         self.resize(1280, 800)
         self.store = store or Store()
@@ -200,6 +212,16 @@ class Window(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
+        # The surface has to be cleared to nothing first and then painted
+        # over at less than full strength. Painting straight in `Source` mode
+        # at an opacity writes an opaque surface however low the opacity is,
+        # which is a window that looks right and lets nothing through --
+        # measured against a sheet of strong colour behind it, and the sheet
+        # did not show at all.
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        painter.setOpacity(theme.WINDOW_OPACITY)
         if not self._backdrop.plain.isNull():
             painter.drawPixmap(0, 0, self._backdrop.plain)
         else:

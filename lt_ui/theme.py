@@ -154,10 +154,10 @@ def text_alpha(alpha: float) -> float:
 # -- surfaces ------------------------------------------------------------
 #: How opaque the window itself is.
 #:
-#: Asked for at a half. Everything the window draws goes through it, text
-#: included, so this is the one setting here that can cost legibility rather
-#: than only looks.
-WINDOW_OPACITY = 0.50
+#: Everything the window draws goes through it, text included, so this is the
+#: one setting here that can cost legibility rather than only looks. A half
+#: was tried and read as the interface dissolving into the desktop.
+WINDOW_OPACITY = 0.75
 
 #: Glass tint in dark mode: the rgba(255,255,255,0.07-0.10) of the recipe.
 TINT_DARK, TINT_DARK_RAISED = 0.05, 0.08
