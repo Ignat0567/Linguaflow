@@ -9,3 +9,9 @@ downloads/
 models/
 spike/audio/
 data/
+
+# embedded-browser probes: downloaded uBOL/filter lists, throwaway profiles, outputs
+spike/_vendor/
+spike/browser_probe.wav
+spike/browser_probe.png
+spike/adblock_*.png

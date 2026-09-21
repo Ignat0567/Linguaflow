@@ -33,7 +33,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QTimer, QUrl  # noqa: E402
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings  # noqa: E402
+from PySide6.QtWebEngineCore import (  # noqa: E402
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+    QWebEngineSettings,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -138,13 +143,23 @@ DRAIN_JS = """
 
 
 class Probe:
-    def __init__(self, app: QApplication, url: str, seconds: float) -> None:
+    def __init__(self, app: QApplication, url: str, seconds: float, clean: bool = False) -> None:
         self.app = app
         self.url = url
         self.seconds = seconds
         self.profile = QWebEngineProfile()  # off the record: nothing persists
         settings = self.profile.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+        if clean:
+            # Ads play in the same <video> the tap listens to; see adblock_probe.
+            from adblock_probe import YT_SCRIPTLET
+
+            script = QWebEngineScript()
+            script.setSourceCode(YT_SCRIPTLET)
+            script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            self.profile.scripts().insert(script)
+        self.clean = clean
         self.page = QWebEnginePage(self.profile)
         self.view = QWebEngineView()
         self.view.setPage(self.page)
@@ -192,6 +207,10 @@ class Probe:
         # Every tick, not once: a reload (YouTube does one behind its consent
         # dialog) throws the page's tap away. TAP_JS is idempotent.
         self.page.runJavaScript(TAP_JS, 0, self._tapped)
+        if self.clean:
+            from adblock_probe import REJECT_JS
+
+            self.page.runJavaScript(REJECT_JS, 0)
         if not self.status.get("playing"):
             # The embed's autoplay waits for a click on its own button even
             # when the engine allows playback without a gesture.
@@ -267,9 +286,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("url", nargs="?", default=DEFAULT_URL)
     parser.add_argument("--seconds", type=float, default=45.0)
+    parser.add_argument("--clean", action="store_true",
+                        help="YouTube: block ads and reject the consent dialog")
     args = parser.parse_args()
     app = QApplication(sys.argv)
-    probe = Probe(app, args.url, args.seconds)
+    probe = Probe(app, args.url, args.seconds, clean=args.clean)
     probe.run()
     app.exec()
     return summarise(probe)
