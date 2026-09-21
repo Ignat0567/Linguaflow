@@ -455,6 +455,56 @@ def test_cjk_sentence_end_closes_a_group():
     assert group_into_sentences(cues) == [[0], [1]]
 
 
+def test_an_unpunctuated_run_is_not_one_endless_sentence():
+    """Measured on a 21-minute recording: the recogniser stopped punctuating
+    and one "sentence" ran for 106 cues. Its translation is put back across
+    those cues by proportion, and nothing re-anchors that split, so the text
+    wanders further from the speech with every cue -- a median of 7.4 seconds
+    away on a 276-cue measurement, 23.5 at worst.
+    """
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = tuple(
+        cue(index + 1, index * 2.0, index * 2.0 + 2.0,
+            "so then we went over there and had a look at it")
+        for index in range(12)
+    )
+    groups = group_into_sentences(cues)
+    assert len(groups) > 1, "a run with no full stop in it was one group"
+    assert all(
+        sum(len(cues[position].flat_text.split()) for position in group) <= 40
+        for group in groups
+    )
+    assert [position for group in groups for position in group] == list(range(12)), (
+        "every cue must still appear exactly once, in order"
+    )
+
+
+def test_a_sentence_short_enough_to_translate_whole_is_left_whole():
+    """The cap exists for runs the recogniser never ended. A sentence that
+    fits in one piece must still reach the model in one piece."""
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = (
+        cue(1, 0.0, 2.0, "We cut infrastructure spending"),
+        cue(2, 2.0, 4.0, "by roughly twelve thousand"),
+        cue(3, 4.0, 6.0, "dollars per month."),
+    )
+    assert group_into_sentences(cues) == [[0, 1, 2]]
+
+
+def test_a_cue_longer_than_the_cap_still_forms_a_group_of_its_own():
+    """The group is made of whole cues, so a single over-long cue cannot be
+    divided here -- and must not be dropped or merged away either."""
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = (
+        cue(1, 0.0, 2.0, " ".join(["word"] * 50)),
+        cue(2, 2.0, 4.0, "and then a short one"),
+    )
+    assert group_into_sentences(cues) == [[0], [1]]
+
+
 def test_translation_is_distributed_across_the_cues_it_covers():
     from lt_core.subtitles.bilingual import distribute
 
