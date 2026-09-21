@@ -170,6 +170,9 @@ class LiveWorker(QThread):
     update = Signal(object)
     failed = Signal(str)
     stopped = Signal()
+    #: True while a translated line is being read out, False when it ends.
+    #: The browser screen lowers the video under the voice with it.
+    speaking = Signal(bool)
 
     def __init__(
         self,
@@ -283,7 +286,8 @@ class LiveWorker(QThread):
                         self.captions.append(item)
                         self.update.emit(item)
                         if speak:
-                            _read_out(item, voices, gate, session, playback)
+                            _read_out(item, voices, gate, session, playback,
+                                      self.speaking.emit)
         except CaptureError as error:
             self.failed.emit(str(error))
             return
@@ -302,7 +306,8 @@ class LiveWorker(QThread):
             self.captions.append(final)
             self.update.emit(final)
             if speak:
-                _read_out(final, voices, gate, session, playback)
+                _read_out(final, voices, gate, session, playback,
+                          self.speaking.emit)
         self.stopped.emit()
 
 
@@ -321,7 +326,7 @@ CATCH_UP_AFTER = 1.0
 
 
 def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
-              session, playback: Playback) -> None:
+              session, playback: Playback, announce=None) -> None:
     """Read a settled line out in the language it was translated into.
 
     Only settled lines: a provisional translation is replaced on the next tick,
@@ -357,12 +362,13 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
         voice = chosen
 
     behind = playback.behind(update.audio_time)
-    spoken = _speak(voice, update.translation, gate, hurry=behind > CATCH_UP_AFTER)
+    spoken = _speak(voice, update.translation, gate,
+                    hurry=behind > CATCH_UP_AFTER, announce=announce)
     playback.done(update.audio_time, spoken)
 
 
 def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
-           hurry: bool = False) -> float:
+           hurry: bool = False, announce=None) -> float:
     """Play a line; return how long it took. Blocks this worker, which is the
     point: capture continues on its own thread, and the echo gate keeps our
     voice out of the transcript.
@@ -370,6 +376,9 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
     `hurry` asks for the line as fast as it can still be said, which is how a
     backlog is worked off. `fit` clamps that at the point where the voice stops
     sounding human, so asking for the impossible is safe.
+
+    `announce` is told True as the line starts and False as it ends, whatever
+    happens in between.
     """
     if hurry:
         utterance = speaker.fit(text, 0.0, 0.01)
@@ -381,12 +390,18 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
     import sounddevice as sd
 
     duration = len(samples) / rate
-    if gate is not None:
-        with gate.playing():
-            gate.extend(duration)
+    if announce is not None:
+        announce(True)
+    try:
+        if gate is not None:
+            with gate.playing():
+                gate.extend(duration)
+                sd.play(samples, rate, blocking=True)
+        else:
             sd.play(samples, rate, blocking=True)
-    else:
-        sd.play(samples, rate, blocking=True)
+    finally:
+        if announce is not None:
+            announce(False)
     return duration
 
 
@@ -405,6 +420,7 @@ class Engine(QObject):
     live_update = Signal(object)
     live_failed = Signal(str)
     live_stopped = Signal()
+    live_speaking = Signal(bool)
 
     def __init__(self, parent: QObject | None = None, keys=None,
                  data_root: Path | None = None) -> None:
@@ -491,6 +507,7 @@ class Engine(QObject):
         worker.update.connect(self.live_update)
         worker.failed.connect(self.live_failed)
         worker.stopped.connect(self.live_stopped)
+        worker.speaking.connect(self.live_speaking)
         self._live = worker
         worker.start()
 

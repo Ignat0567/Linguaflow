@@ -346,6 +346,20 @@ DRAIN_JS = r"""
 """
 
 
+def duck_js(level: float, fade: float) -> str:
+    """Set the video's volume through every tap's gain, over `fade` seconds.
+
+    The tap copies the sound before this gain, so what the recogniser hears
+    does not change -- only what the viewer does.
+    """
+    return (
+        "(() => { let n = 0; for (const v of document.querySelectorAll('video')) {"
+        " const t = v.__lfTap; if (!t) continue;"
+        f" t.gain.gain.setTargetAtTime({level:.4f}, t.ctx.currentTime, {fade / 3:.4f});"
+        " n++; } return n; })()"
+    )
+
+
 def switch_js(on: bool) -> str:
     return (
         "(() => { const lf = window.__lf || (window.__lf = "
@@ -376,9 +390,16 @@ class PageTap(QObject):
         self.page = page
         self.source = None
         self._state = ""
+        self._ducked = False
         self._timer = QTimer(self)
         self._timer.setInterval(DRAIN_MS)
         self._timer.timeout.connect(self._tick)
+        # Lines read back to back keep the video down between them, as the
+        # file dub does: coming up for 0.3 s between two lines is a pump,
+        # not a pause.
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(lambda: self._set_volume(1.0))
         # A new document forgets the switch; say it again on every load.
         page.loadFinished.connect(self._reassert)
 
@@ -393,8 +414,30 @@ class PageTap(QObject):
         self._timer.start()
         self._tick()
 
+    def duck(self, speaking: bool) -> None:
+        """Lower the video under a line being read out; raise it after."""
+        from lt_core.tts.dub import DUCK_BRIDGE, DUCK_GAIN
+
+        if speaking:
+            self._restore.stop()
+            self._set_volume(DUCK_GAIN)
+        elif self._ducked:
+            self._restore.start(int(DUCK_BRIDGE * 1000))
+
+    def _set_volume(self, level: float) -> None:
+        from lt_core.tts.dub import DUCK_FADE
+
+        self._ducked = level < 1.0
+        try:
+            self.page.runJavaScript(duck_js(level, DUCK_FADE), TAP_WORLD)
+        except RuntimeError:  # the page is already gone
+            pass
+
     def stop(self) -> None:
         self._timer.stop()
+        self._restore.stop()
+        if self._ducked:
+            self._set_volume(1.0)
         self.source = None
         try:
             self.page.runJavaScript(switch_js(False), TAP_WORLD)

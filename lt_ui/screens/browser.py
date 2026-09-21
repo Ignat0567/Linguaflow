@@ -110,6 +110,7 @@ class BrowserScreen(QWidget):
         engine.live_update.connect(self._on_update)
         engine.live_failed.connect(self._on_fail)
         engine.live_stopped.connect(self._on_stopped)
+        engine.live_speaking.connect(self._on_speaking)
 
     # -- lifecycle ---------------------------------------------------------
     def refresh(self) -> None:
@@ -204,6 +205,10 @@ class BrowserScreen(QWidget):
             self.app.overlay.reveal()
             self.app.overlay.set_caption(listening=True)
         self.app.engine.start_live(self.app.store.settings, source=self._source)
+
+    def _on_speaking(self, speaking: bool) -> None:
+        if self._mine and self._tap is not None:
+            self._tap.duck(speaking)
 
     def _on_tap_state(self, state: str) -> None:
         if not self._mine:

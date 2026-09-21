@@ -286,3 +286,110 @@ def test_the_blocker_refuses_what_its_list_names(tmp_path):
     assert not engine.check_network_urls(
         "https://cdn.example/app.js", "https://news.example/", "script"
     ).matched
+
+
+# -- the video under the voice -------------------------------------------
+
+def test_a_line_read_out_is_announced_before_and_after(monkeypatch):
+    import sounddevice as sd
+
+    heard: list[bool] = []
+
+    class _Voice:
+        def say(self, text):
+            return np.ones(2205, dtype=np.float32), 22_050
+
+    monkeypatch.setattr(sd, "play", lambda *a, **k: heard.append("play"))
+    engine_module._speak(_Voice(), "Привет", None, announce=heard.append)
+    assert heard == [True, "play", False]
+
+
+def test_a_failed_line_still_brings_the_video_back_up(monkeypatch):
+    """A ducked video that never comes back up is a broken player."""
+    import sounddevice as sd
+
+    heard: list[bool] = []
+
+    class _Voice:
+        def say(self, text):
+            return np.ones(2205, dtype=np.float32), 22_050
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("device gone")
+
+    monkeypatch.setattr(sd, "play", broken)
+    with pytest.raises(RuntimeError):
+        engine_module._speak(_Voice(), "Привет", None, announce=heard.append)
+    assert heard == [True, False]
+
+
+def _levels(page) -> list[float]:
+    import re
+
+    return [
+        float(m.group(1))
+        for script in page.ran
+        for m in [re.search(r"setTargetAtTime\(([\d.]+)", script)] if m
+    ]
+
+
+def _wait(qapp, seconds: float) -> None:
+    import time as _time
+
+    end = _time.monotonic() + seconds
+    while _time.monotonic() < end:
+        qapp.processEvents()
+        _time.sleep(0.01)
+
+
+def test_the_video_is_lowered_under_a_line_and_raised_after(qapp):
+    from lt_core.tts.dub import DUCK_BRIDGE, DUCK_GAIN
+    from lt_ui.browser import PageTap
+
+    page = _FakePage()
+    tap = PageTap(page)
+    tap.start(PageAudioSource())
+    tap.duck(True)
+    assert _levels(page) == [pytest.approx(DUCK_GAIN, abs=1e-4)]
+    tap.duck(False)
+    _wait(qapp, DUCK_BRIDGE + 0.2)
+    assert _levels(page)[-1] == 1.0
+    tap.stop()
+
+
+def test_lines_read_back_to_back_keep_the_video_down_between_them(qapp):
+    """Coming up for a moment between two lines is a pump, not a pause."""
+    from lt_core.tts.dub import DUCK_BRIDGE
+    from lt_ui.browser import PageTap
+
+    page = _FakePage()
+    tap = PageTap(page)
+    tap.start(PageAudioSource())
+    tap.duck(True)
+    tap.duck(False)
+    _wait(qapp, DUCK_BRIDGE / 3)
+    tap.duck(True)
+    _wait(qapp, DUCK_BRIDGE + 0.2)
+    assert 1.0 not in _levels(page)
+    tap.stop()
+
+
+def test_stopping_mid_line_gives_the_video_its_volume_back(qapp):
+    from lt_ui.browser import PageTap
+
+    page = _FakePage()
+    tap = PageTap(page)
+    tap.start(PageAudioSource())
+    tap.duck(True)
+    tap.stop()
+    assert _levels(page)[-1] == 1.0
+
+
+def test_the_tap_listens_before_the_volume_the_viewer_hears():
+    """Ducking is for the viewer. If the copy were taken after the gain,
+    every line read out would drop the next words to -18 dB for the
+    recogniser too."""
+    from lt_ui.browser import TAP_JS
+
+    assert "src.connect(proc)" in TAP_JS
+    assert "gain.connect(proc)" not in TAP_JS
