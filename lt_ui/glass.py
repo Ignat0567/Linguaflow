@@ -236,22 +236,49 @@ class TextLink(Hoverable):
 class Toggle(Hoverable):
     """The 38x21 pill switch, knob sliding from 2px to 19px."""
 
+    #: Where the knob sits when the switch is off and when it is on.
+    OFF, ON = 2.0, 19.0
+
     def __init__(self, parent: QWidget | None = None, on: bool = False) -> None:
         super().__init__(parent)
         self.setCheckable(True)
         self.setChecked(on)
         self.setFixedSize(38, 21)
-        self._position = 19.0 if on else 2.0
+        self._position = self._resting()
         self._animation = QPropertyAnimation(self, b"knob", self)
         self._animation.setDuration(140)
         self._animation.setEasingCurve(QEasingCurve.OutCubic)
         self.toggled.connect(self._slide)
 
+    def _resting(self) -> float:
+        """Where the knob belongs, on the evidence of the switch itself."""
+        return self.ON if self.isChecked() else self.OFF
+
     def _slide(self, on: bool) -> None:
         self._animation.stop()
         self._animation.setStartValue(self._position)
-        self._animation.setEndValue(19.0 if on else 2.0)
+        self._animation.setEndValue(self.ON if on else self.OFF)
         self._animation.start()
+
+    def checkStateSet(self) -> None:  # noqa: N802 -- Qt spells it this way
+        """Qt's own hook for "the checked state was set", however it was set.
+
+        `toggled` is not that hook: it is a signal, and everything that
+        restores a saved setting blocks signals first, so that putting the
+        switch where the setting says does not write the setting straight
+        back. Reported from use -- after a restart every switch that was on
+        was lit and pointing left.
+        """
+        super().checkStateSet()
+        if getattr(self, "_animation", None) is None:
+            return  # still being built; the constructor places the knob
+        if self.signalsBlocked() or not self.isVisible():
+            # Nobody flicked it: it is being put where a saved setting says,
+            # and a switch that was already on has nothing to travel from.
+            self._animation.stop()
+            self.set_knob(self._resting())
+            return
+        self._slide(self.isChecked())
 
     def get_knob(self) -> float:
         return self._position
@@ -263,6 +290,15 @@ class Toggle(Hoverable):
     knob = Property(float, get_knob, set_knob)
 
     def paintEvent(self, event) -> None:  # noqa: N802
+        if (self._animation.state() != QPropertyAnimation.Running
+                and self._position != self._resting()):
+            # The knob is put back in step with the switch here, and not only
+            # by the animation, because the animation runs off `toggled` and
+            # anyone restoring a saved setting blocks that signal to keep
+            # from writing it straight back. Reported from use: after a
+            # restart every switch that was on was lit and pointing left.
+            self._position = self._resting()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(0, 0, -1, -1)

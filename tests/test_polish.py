@@ -814,3 +814,66 @@ def test_the_styled_controls_keep_step_with_the_painted_ones(mode, fill):
         assert abs(float(found.group(1)) - wanted) <= 0.12, (
             f"{widget.__name__} in {mode}: {found.group(1)} against {wanted}"
         )
+
+
+# -- a switch that is on looks like a switch that is on ------------------
+
+def _switch_image(toggle):
+    from PySide6.QtGui import QImage
+
+    image = QImage(toggle.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    toggle.render(image)
+    return image.constBits().tobytes()
+
+
+def test_a_switch_restored_from_settings_points_the_right_way(app):
+    """Reported from use: after a restart every switch that was on was lit in
+    the accent colour and had its knob over on the left, where off lives.
+
+    The knob moved on `toggled`, and everything that restores a saved setting
+    blocks that signal first -- otherwise setting the switch writes the
+    setting straight back. So the fill knew and the knob did not.
+    """
+    from lt_ui import glass
+
+    restored = glass.Toggle()
+    restored.blockSignals(True)
+    restored.setChecked(True)
+    restored.blockSignals(False)
+
+    born_on = glass.Toggle(on=True)
+    assert _switch_image(restored) == _switch_image(born_on), (
+        "a switch turned on quietly does not look like one that was born on"
+    )
+
+
+def test_a_switch_turned_off_quietly_points_the_other_way(app):
+    from lt_ui import glass
+
+    restored = glass.Toggle(on=True)
+    restored.blockSignals(True)
+    restored.setChecked(False)
+    restored.blockSignals(False)
+
+    assert _switch_image(restored) == _switch_image(glass.Toggle())
+
+
+def test_the_settings_screen_shows_every_saved_switch_the_right_way(window):
+    """The whole point of the above, on the screen it was reported on."""
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui import glass
+
+    window.store.settings.voiceover = True
+    window.store.settings.match_voices = True
+    window.store.settings.notify = True
+    window.goto("settings")
+    window._settings.refresh()
+    QApplication.processEvents()
+
+    wrong = [
+        toggle for toggle in window._settings.findChildren(glass.Toggle)
+        if toggle.isChecked() and toggle._position != glass.Toggle.ON
+    ]
+    assert wrong == [], f"{len(wrong)} switches are lit and pointing left"
