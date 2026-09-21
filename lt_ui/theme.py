@@ -168,6 +168,16 @@ def tint(raised: bool = False) -> float:
     return TINT_DARK_RAISED if raised else TINT_DARK
 
 
+def nav_capsule() -> float:
+    """The navigation capsule's fill.
+
+    Well above the bar's own tint. The bar is already glass at the raised
+    value, so a capsule painted at that value vanishes into it -- tried, and
+    it read as a hairline outline rather than as a lozenge.
+    """
+    return 0.90 if is_light() else 0.34
+
+
 def border() -> float:
     """Hairline edge opacity. Dark mode edges in white, light mode in ink."""
     return 0.10 if is_light() else 0.19

@@ -505,12 +505,26 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
         return image.constBits().tobytes()
 
     def answers(widget) -> bool:
+        """Something visible changes when the pointer arrives.
+
+        Not necessarily on the widget itself: the navigation bar draws one
+        capsule that glides between its five destinations, so a destination
+        is answered by its parent rather than by its own pixels.
+        """
+        watched = [widget]
+        if widget.parentWidget() is not None:
+            watched.append(widget.parentWidget())
         QApplication.sendEvent(widget, QEvent(QEvent.Leave))
-        resting = painted(widget)
+        QApplication.processEvents()
+        resting = [painted(w) for w in watched]
         QApplication.sendEvent(widget, QEvent(QEvent.Enter))
-        hovered = painted(widget)
+        QApplication.processEvents()
+        hovered = [painted(w) for w in watched]
         QApplication.sendEvent(widget, QEvent(QEvent.Leave))
-        return bool(resting) and resting != hovered
+        QApplication.processEvents()
+        return bool(resting[0]) and any(
+            before != after for before, after in zip(resting, hovered)
+        )
 
     window.resize(1280, 860)
     window.show()
@@ -547,3 +561,70 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
         f"to look at passes for the wrong reason"
     )
     assert silent == [], silent
+
+
+# -- one capsule, travelling ---------------------------------------------
+
+def _nav(window):
+    from lt_ui.widgets import NavBar, NavItem
+
+    bar = window.findChild(NavBar)
+    return bar, {item.key: item for item in bar.findChildren(NavItem)}
+
+
+def test_the_capsule_travels_to_what_the_pointer_is_on(window):
+    """Asked for: the white lozenge in the header should run back and forth
+    after the cursor rather than blink from one destination to the next."""
+    from PySide6.QtCore import QEvent, QPropertyAnimation, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+        bar._glide.stop()
+        bar._settle(animated=False)
+        assert bar.capsule == QRectF(items["realtime"].geometry())
+
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Enter))
+        assert bar._glide.state() == QPropertyAnimation.Running, (
+            "it jumped instead of travelling"
+        )
+        assert bar._glide.endValue() == QRectF(items["settings"].geometry())
+        bar._glide.setCurrentTime(bar.GLIDE_MS)
+        assert bar.capsule == QRectF(items["settings"].geometry())
+
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Leave))
+        bar._glide.setCurrentTime(bar.GLIDE_MS)
+        assert bar.capsule == QRectF(items["realtime"].geometry()), (
+            "with nothing under the pointer it belongs on the page that is open"
+        )
+    finally:
+        window.hide()
+
+
+def test_leaving_one_destination_for_the_next_does_not_send_it_home(window):
+    """Qt can deliver the arrival before the departure. Taken literally that
+    puts the capsule back on the open page for one frame, which reads as a
+    flinch."""
+    from PySide6.QtCore import QEvent, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("home")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+        bar._glide.stop()
+        bar._settle(animated=False)
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["history"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
+        bar._glide.setCurrentTime(bar.GLIDE_MS)
+        assert bar.capsule == QRectF(items["history"].geometry())
+    finally:
+        window.hide()
