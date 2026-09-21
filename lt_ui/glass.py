@@ -8,6 +8,7 @@ own shade of white.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 from PySide6.QtCore import (
@@ -553,15 +554,46 @@ class RecordButton(Hoverable):
 
 
 class ProgressRing(QWidget):
-    """`conic-gradient(accent N%, rgba(255,255,255,0.15) 0)`, with a glass core."""
+    """A filled ring that keeps moving while the job is still running.
+
+    Recognition is a fraction and can sit still for a long time afterwards —
+    translation, speech and muxing do not report seconds. The comet on the
+    rim is what says the process is alive, not the number in the middle.
+    """
+
+    RING_PERIOD_MS = 2200
+    FRAME_MS = 33
 
     def __init__(self, parent: QWidget | None = None, diameter: int = 160) -> None:
         super().__init__(parent)
         self.setFixedSize(diameter, diameter)
         self._value = 0.0
+        self._phase = 0.0
+        self._running = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self._advance)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def set_running(self, running: bool) -> None:
+        if running == self._running:
+            return
+        self._running = running
+        if running:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
 
     def set_value(self, fraction: float) -> None:
         self._value = max(0.0, min(1.0, fraction))
+        self.update()
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + self.FRAME_MS / self.RING_PERIOD_MS) % 1.0
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -569,10 +601,15 @@ class ProgressRing(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1)
 
+        pulse = 0.95
+        if self._running:
+            pulse = 0.78 + 0.17 * (
+                0.5 + 0.5 * math.sin(self._phase * 2 * math.pi)
+            )
         stop = max(1e-4, min(1.0, self._value))
         gradient = QConicalGradient(QPointF(rect.center()), 90.0)
-        gradient.setColorAt(0.0, theme.accent(0.95))
-        gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(0.95))
+        gradient.setColorAt(0.0, theme.accent(pulse))
+        gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(pulse))
         empty = theme.ink(0.15)
         gradient.setColorAt(stop, empty)
         gradient.setColorAt(1.0, empty)
@@ -587,6 +624,26 @@ class ProgressRing(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(rect)
         painter.restore()
+
+        if self._running:
+            band = QRectF(rect).adjusted(9, 9, -9, -9)
+            start = int((90.0 - self._phase * 360.0) * 16)
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(theme.accent(0.40), 10, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(band, start, int(-70 * 16))
+            painter.setPen(QPen(theme.accent(0.95), 10, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(band, start, int(-16 * 16))
+            if self._value > 0.02:
+                radius = band.width() / 2
+                centre = band.center()
+                theta = 2 * math.pi * self._value
+                tip = QPointF(
+                    centre.x() + radius * math.sin(theta),
+                    centre.y() - radius * math.cos(theta),
+                )
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(theme.accent(0.95))
+                painter.drawEllipse(tip, 5.5, 5.5)
 
         inner = rect.adjusted(18, 18, -18, -18)
         paint_glass(self, painter, inner, inner.width() // 2, theme.tint(raised=True))

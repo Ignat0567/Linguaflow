@@ -31,6 +31,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QGridLayout,
     QHBoxLayout,
     QSizePolicy,
     QVBoxLayout,
@@ -114,6 +115,8 @@ class LanguagePair(QWidget):
         parent: QWidget | None = None,
         compact: bool = False,
         allow_auto: bool = False,
+        from_caption: str = "",
+        to_caption: str = "",
     ) -> None:
         super().__init__(parent)
         clear_fill(self)
@@ -128,12 +131,26 @@ class LanguagePair(QWidget):
         swap = glass.TextLink("⇄", self, size=16, alpha=0.7)
         swap.clicked.connect(self._swap)
 
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        row.addWidget(self._from)
-        row.addWidget(swap)
-        row.addWidget(self._to)
+        if from_caption or to_caption:
+            # Labels in the same columns as the dropdowns. A stretch between
+            # two eyebrows puts «Перевод на» over empty space, not over the
+            # target language — which is what the upload screen was drawing.
+            grid = QGridLayout(self)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(8)
+            grid.addWidget(glass.eyebrow(from_caption), 0, 0)
+            grid.addWidget(glass.eyebrow(to_caption), 0, 2)
+            grid.addWidget(self._from, 1, 0)
+            grid.addWidget(swap, 1, 1, Qt.AlignCenter)
+            grid.addWidget(self._to, 1, 2)
+        else:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(10)
+            row.addWidget(self._from)
+            row.addWidget(swap)
+            row.addWidget(self._to)
 
     def _fill(self) -> None:
         self._from.blockSignals(True)

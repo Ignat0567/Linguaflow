@@ -31,10 +31,20 @@ MODEL_ROOT = ROOT / "models"
 
 SCREENS = ("home", "realtime", "upload", "history", "settings")
 
-_MONTHS = (
-    "янв", "фев", "мар", "апр", "мая", "июн",
-    "июл", "авг", "сент", "окт", "ноя", "дек",
-)
+_MONTHS = {
+    "ru": (
+        "янв", "фев", "мар", "апр", "мая", "июн",
+        "июл", "авг", "сент", "окт", "ноя", "дек",
+    ),
+    "en": (
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sept", "Oct", "Nov", "Dec",
+    ),
+    "de": (
+        "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni",
+        "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez.",
+    ),
+}
 
 
 def display_name(code: str) -> str:
@@ -64,7 +74,13 @@ def format_date(iso: str) -> str:
         moment = datetime.fromisoformat(iso)
     except ValueError:
         return iso
-    return f"{moment.day} {_MONTHS[moment.month - 1]} {moment.year}"
+    from . import i18n
+
+    months = _MONTHS.get(i18n.LANGUAGE, _MONTHS["ru"])
+    month = months[moment.month - 1]
+    if i18n.LANGUAGE == "de":
+        return f"{moment.day}. {month} {moment.year}"
+    return f"{moment.day} {month} {moment.year}"
 
 
 def split_terms(text: str) -> tuple[str, ...]:

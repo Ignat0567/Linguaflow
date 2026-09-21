@@ -92,7 +92,7 @@ class RealtimeScreen(QWidget):
         self._feed.setSpacing(18)
         self._feed.setAlignment(Qt.AlignCenter)
         self._placeholder = glass.label(
-            _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
+            _("Субтитры появятся здесь"), 13, 400, theme.MUTED
         )
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._feed.addWidget(self._placeholder)
@@ -245,7 +245,7 @@ class RealtimeScreen(QWidget):
             visible.append(self._current)
         if not visible:
             placeholder = glass.label(
-                _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
+                _("Субтитры появятся здесь"), 13, 400, theme.MUTED
             )
             placeholder.setAlignment(Qt.AlignCenter)
             self._feed.addWidget(placeholder)

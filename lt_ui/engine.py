@@ -125,9 +125,10 @@ class BatchWorker(QThread):
 
         def on_progress(done: float, total: float) -> None:
             fraction = done / total if total else 0.0
-            # Recognition is most of the wall time. Leave the last fifth of
-            # the ring for translation and (optionally) the voice track, so
-            # the percentage does not sit at 100% while those still run.
+            # Recognition is a share of the job, not the whole of it.
+            # Translation, speech and muxing come after and can take longer;
+            # they have no seconds to report, so the ring holds at 80% and
+            # the busy screen keeps moving around it.
             self.progress.emit(min(0.80, fraction * 0.80))
 
         try:

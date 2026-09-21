@@ -111,7 +111,20 @@ def test_format_clock_hides_hours_until_needed():
 
 
 def test_format_date_uses_russian_months():
+    from lt_ui import i18n
+
+    i18n.set_language("ru")
     assert format_date("2026-09-17T12:04:00") == "17 сент 2026"
+
+
+def test_format_date_follows_the_interface_language():
+    from lt_ui import i18n
+
+    i18n.set_language("de")
+    assert format_date("2026-09-17T12:04:00") == "17. Sept. 2026"
+    i18n.set_language("en")
+    assert format_date("2026-09-17T12:04:00") == "17 Sept 2026"
+    i18n.set_language("ru")
 
 
 def test_new_ids_are_unique():
@@ -249,6 +262,21 @@ def test_home_shows_recent_entries(qapp, tmp_path):
     window = Window(store)
     window._home.refresh()
     assert window._home._recent.count() >= 1
+    window.close()
+
+
+def test_the_home_subtitle_sits_under_the_middle_of_the_headline(qapp, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from lt_ui.window import Window
+    from lt_ui.store import Store
+
+    window = Window(Store(tmp_path))
+    window.resize(1280, 800)
+    window.show()
+    QApplication.processEvents()
+    title = window._home._title
+    sub = window._home._sub
+    assert abs(title.geometry().center().x() - sub.geometry().center().x()) <= 2
     window.close()
 
 

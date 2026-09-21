@@ -59,6 +59,17 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "История": ("History", "Verlauf"),
     "Настройки": ("Settings", "Einstellungen"),
 
+    # Names the core uses when it says «translating into …». Capitalised
+    # to match `languages.describe` after the first letter is raised.
+    "Русский": ("Russian", "Russisch"),
+    "Английский": ("English", "Englisch"),
+    "Немецкий": ("German", "Deutsch"),
+    "Китайский": ("Chinese", "Chinesisch"),
+    "Японский": ("Japanese", "Japanisch"),
+    "Испанский": ("Spanish", "Spanisch"),
+    "Итальянский": ("Italian", "Italienisch"),
+    "Французский": ("French", "Französisch"),
+
     # -- home ----------------------------------------------------------
     "Что переводим сегодня?": (
         "What are we translating today?",
@@ -107,6 +118,9 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "Нажмите, чтобы начать запись": (
         "Press to start recording", "Zum Aufnehmen drücken",
     ),
+    "Субтитры появятся здесь": (
+        "Subtitles will appear here", "Untertitel erscheinen hier",
+    ),
     "Нажмите на кнопку, чтобы начать": (
         "Press the button to begin", "Zum Beginnen die Taste drücken",
     ),
@@ -151,6 +165,11 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "ОК": ("OK", "OK"),
     "Начать перевод": ("Start translating", "Übersetzung starten"),
+    "уже {clock}": ("{clock} elapsed", "seit {clock}"),
+    "Распознавание готово — дальше перевод, озвучка и сборка видео": (
+        "Recognition is done — translation, voice and assembling the video still to come",
+        "Erkennung fertig — Übersetzung, Stimme und Videoschnitt folgen noch",
+    ),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",
         "… und {count} weitere Untertitel in den gespeicherten Dateien",
@@ -287,19 +306,19 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "No voice has been set for this language yet.",
         "Für diese Sprache ist noch keine Stimme festgelegt.",
     ),
-    "Язык перевода — {language}. Мужские реплики читает голос {male}, "
-    "женские — {female}. Кто говорит, определяется по высоте голоса в "
-    "оригинале, отдельно для каждой реплики.": (
-        "Translating into {language}. Male lines are read by {male}, female "
-        "lines by {female}. Who is speaking is decided from the pitch of the "
-        "original, line by line.",
-        "Übersetzung nach {language}. Männliche Zeilen liest {male}, "
-        "weibliche {female}. Wer spricht, wird aus der Stimmhöhe des Originals "
-        "bestimmt, Zeile für Zeile.",
+    "Язык перевода — {language}. Мужские реплики читает мужской "
+    "голос, женские — женский. Кто говорит, определяется по "
+    "высоте голоса в оригинале, отдельно для каждой реплики.": (
+        "Translating into {language}. Male lines are read in a male voice, "
+        "female lines in a female one. Who is speaking is decided from the "
+        "pitch of the original, line by line.",
+        "Übersetzung nach {language}. Männliche Zeilen liest eine männliche "
+        "Stimme, weibliche eine weibliche. Wer spricht, wird aus der "
+        "Stimmhöhe des Originals bestimmt, Zeile für Zeile.",
     ),
-    "Язык перевода — {language}. Всё читает один голос, {voice}.": (
-        "Translating into {language}. One voice reads everything: {voice}.",
-        "Übersetzung nach {language}. Eine Stimme liest alles: {voice}.",
+    "Язык перевода — {language}. Всё читает один голос.": (
+        "Translating into {language}. One voice reads everything.",
+        "Übersetzung nach {language}. Eine Stimme liest alles.",
     ),
 
     # -- the three settings added on Day 7 -----------------------------

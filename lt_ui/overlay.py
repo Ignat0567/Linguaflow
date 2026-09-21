@@ -57,6 +57,7 @@ class OverlayWindow(QWidget):
         self._affinity_ok = True
         self._placing = False
 
+        self._last_caption: dict = {}
         self._share = glass.Toggle(self, on=store.settings.overlay_hidden_from_share)
         self._share.toggled.connect(self._on_share)
         self._share_label = _caption(
@@ -68,7 +69,8 @@ class OverlayWindow(QWidget):
         chrome = QHBoxLayout()
         chrome.setContentsMargins(4, 0, 0, 0)
         chrome.setSpacing(10)
-        chrome.addWidget(_caption(_("Субтитры"), 11, 600, theme.TERTIARY))
+        self._chrome_title = _caption(_("Субтитры"), 11, 600, theme.TERTIARY)
+        chrome.addWidget(self._chrome_title)
         chrome.addStretch()
         chrome.addWidget(self._share)
         chrome.addWidget(self._share_label)
@@ -119,6 +121,10 @@ class OverlayWindow(QWidget):
         speaker: str | None = None,
         listening: bool = False,
     ) -> None:
+        self._last_caption = {
+            "original": original, "translated": translated,
+            "speaker": speaker, "listening": listening,
+        }
         if speaker:
             self._speaker.setText(speaker)
             self._speaker.show()
@@ -237,11 +243,17 @@ class OverlayWindow(QWidget):
         The plate stays dark either way; what this fixes is `theme.restyle`
         having walked in and recoloured these labels along with the rest.
         """
+        self.setWindowTitle(_("Linguaflow — субтитры"))
+        self._chrome_title.setText(_("Субтитры"))
+        hidden = self.store.settings.overlay_hidden_from_share
+        self._share_label.setText(
+            _("Скрыто с демонстрации") if hidden else _("Видно на демонстрации")
+        )
+        self.set_caption(**self._last_caption)
         for label, alpha in (
+            (self._chrome_title, theme.TERTIARY),
             (self._share_label, theme.TERTIARY),
             (self._speaker, theme.TERTIARY),
-            (self._translated, theme.PRIMARY),
-            (self._original, theme.SECONDARY),
         ):
             label.setStyleSheet(_colour(alpha))
         self.update()

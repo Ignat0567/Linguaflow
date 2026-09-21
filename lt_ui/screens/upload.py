@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import QCursor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lt_core.subtitles.bilingual import fold_original
 from lt_core.subtitles.export import format_srt_time
 
 from .. import glass, theme
@@ -143,6 +145,7 @@ class UploadScreen(QWidget):
             outputs=outputs,
         ))
         self.app.history_changed()
+        self._busy.settle()
         try:
             self._done.show_result(result, settings)
         except Exception as error:  # noqa: BLE001 -- see below
@@ -164,16 +167,12 @@ class _Idle(QWidget):
         super().__init__()
         self.screen = screen
         clear_fill(self)
-        self.pair = LanguagePair(self, allow_auto=True)
+        self.pair = LanguagePair(
+            self, allow_auto=True,
+            from_caption=_("Исходный язык"),
+            to_caption=_("Перевод на"),
+        )
         self.pair.changed.connect(screen._sync_pair)
-
-        from_label = glass.eyebrow(_("Исходный язык"))
-        to_label = glass.eyebrow(_("Перевод на"))
-        captions = QHBoxLayout()
-        captions.setContentsMargins(4, 0, 4, 0)
-        captions.addWidget(from_label)
-        captions.addStretch()
-        captions.addWidget(to_label)
 
         zone = _Dropzone(screen)
         demo = glass.GlassButton(_("Выбрать файл"), zone, primary=True)
@@ -211,8 +210,7 @@ class _Idle(QWidget):
         pair_layout = QVBoxLayout(pair_wrap)
         pair_layout.setContentsMargins(0, 0, 0, 0)
         pair_layout.setSpacing(8)
-        pair_layout.addLayout(captions)
-        pair_layout.addWidget(self.pair)
+        pair_layout.addWidget(self.pair, 0, Qt.AlignHCenter)
         column.addWidget(pair_wrap)
         column.addSpacing(18)
         zone.setFixedWidth(560)
@@ -291,13 +289,12 @@ class _Ready(QWidget):
         self.screen = screen
         clear_fill(self)
 
-        self.pair = LanguagePair(self, allow_auto=True)
+        self.pair = LanguagePair(
+            self, allow_auto=True,
+            from_caption=_("Исходный язык"),
+            to_caption=_("Перевод на"),
+        )
         self.pair.changed.connect(screen._sync_pair)
-        captions = QHBoxLayout()
-        captions.setContentsMargins(4, 0, 4, 0)
-        captions.addWidget(glass.eyebrow(_("Исходный язык")))
-        captions.addStretch()
-        captions.addWidget(glass.eyebrow(_("Перевод на")))
 
         panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         panel.setFixedWidth(560)
@@ -333,8 +330,7 @@ class _Ready(QWidget):
         pair_layout = QVBoxLayout(pair_wrap)
         pair_layout.setContentsMargins(0, 0, 0, 0)
         pair_layout.setSpacing(8)
-        pair_layout.addLayout(captions)
-        pair_layout.addWidget(self.pair)
+        pair_layout.addWidget(self.pair, 0, Qt.AlignHCenter)
         column.addWidget(pair_wrap)
         column.addSpacing(18)
         column.addWidget(panel, 0, Qt.AlignHCenter)
@@ -382,24 +378,46 @@ class _Busy(QWidget):
     #: The ring measures recognition, which finishes well before the job
     #: does -- translation, speech and muxing all come after it. Showing 100%
     #: while a video is still being assembled reads as finished-and-frozen,
-    #: so the ring stops just short until there is a result.
+    #: so the ring stops just short until there is a result. The comet on the
+    #: rim and the elapsed clock are what keep the wait from looking stuck.
     RUNNING_CEILING = 0.99
+    #: Recognition is mapped onto this much of the ring; past it, later
+    #: stages are still running and the hint says so.
+    RECOGNITION_SHARE = 0.80
 
     def __init__(self, screen: UploadScreen) -> None:
         super().__init__()
         self.screen = screen
         clear_fill(self)
+        self._active = False
+        self._origin: float | None = None
         self._ring = glass.ProgressRing(self, 160)
         self._stage = glass.label(_("Загружаю модели…"), 13, 400, 0.75)
         self._stage.setAlignment(Qt.AlignCenter)
+        self._stage.setWordWrap(True)
+        self._stage.setMaximumWidth(480)
+        self._hint = glass.label(
+            _("Распознавание готово — дальше перевод, озвучка и сборка видео"),
+            13, 400, 0.62, wrap=True,
+        )
+        self._hint.setAlignment(Qt.AlignCenter)
+        self._hint.setMaximumWidth(420)
+        self._hint.hide()
+        self._elapsed = glass.label(_("уже {clock}", clock="00:00"), 12, 400, theme.MUTED)
+        self._elapsed.setAlignment(Qt.AlignCenter)
         self._name = glass.label("", 12, 400, theme.MUTED)
         self._name.setAlignment(Qt.AlignCenter)
+        self._tick = QTimer(self)
+        self._tick.setInterval(250)
+        self._tick.timeout.connect(self._refresh_clock)
         column = QVBoxLayout(self)
         column.setAlignment(Qt.AlignCenter)
         column.setSpacing(18)
         column.addStretch()
         column.addWidget(self._ring, 0, Qt.AlignHCenter)
         column.addWidget(self._stage)
+        column.addWidget(self._hint)
+        column.addWidget(self._elapsed)
         column.addWidget(self._name)
         self._ok = glass.GlassButton(_("ОК"), self, primary=True, height=38)
         self._ok.clicked.connect(screen.reset)
@@ -408,20 +426,58 @@ class _Busy(QWidget):
         column.addWidget(self._ok, 0, Qt.AlignHCenter)
         column.addStretch()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_motion()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._ring.set_running(False)
+        self._tick.stop()
+        super().hideEvent(event)
+
+    def _sync_motion(self) -> None:
+        moving = self._active and self.isVisible()
+        self._ring.set_running(moving)
+        if moving:
+            if not self._tick.isActive():
+                self._tick.start()
+            self._refresh_clock()
+        else:
+            self._tick.stop()
+
+    def _refresh_clock(self) -> None:
+        elapsed = 0.0 if self._origin is None else time.monotonic() - self._origin
+        self._elapsed.setText(_("уже {clock}", clock=format_clock(elapsed)))
+
     def reset(self, name: str) -> None:
+        self._active = True
+        self._origin = time.monotonic()
         self._ring.set_value(0.0)
         self._stage.setText(_("Загружаю модели…"))
+        self._hint.hide()
         self._name.setText(name)
         self._ok.hide()
+        self._refresh_clock()
+        self._sync_motion()
 
     def set_stage(self, text: str) -> None:
         self._stage.setText(text)
 
     def set_progress(self, fraction: float) -> None:
-        self._ring.set_value(min(fraction, self.RUNNING_CEILING))
+        capped = min(fraction, self.RUNNING_CEILING)
+        self._ring.set_value(capped)
+        self._hint.setVisible(self._active and capped >= self.RECOGNITION_SHARE)
+
+    def settle(self) -> None:
+        """The job finished; the result screen takes over from here."""
+        self._active = False
+        self._sync_motion()
 
     def stop(self, message: str) -> None:
         """The job ended without a result. Say so, and offer the way back."""
+        self._active = False
+        self._sync_motion()
+        self._hint.hide()
         self._stage.setText(message)
         self._ring.set_value(0.0)
         self._ok.show()
@@ -496,6 +552,10 @@ class _Done(QWidget):
 
         cues = result.cues
         translated = result.translated_cues or ()
+        if translated and len(translated) != len(cues):
+            # Empty translation shares were absorbed, so pairing by index
+            # would put someone else's words under the wrong timestamp.
+            cues = fold_original(cues, translated)
         for index, cue in enumerate(cues[:24]):
             other = translated[index].flat_text if index < len(translated) else ""
             self._body.addWidget(_CueRow(cue.start, cue.flat_text, other))

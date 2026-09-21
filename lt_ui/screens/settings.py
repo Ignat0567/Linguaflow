@@ -595,27 +595,13 @@ class SettingsScreen(QWidget):
         spoken = language_name(code)
         if self.app.store.settings.match_voices and languages.has_voice_pair(code):
             self._voice_note.setText(_(
-                "Язык перевода — {language}. Мужские реплики читает голос "
-                "{male}, женские — {female}. Кто говорит, определяется по "
+                "Язык перевода — {language}. Мужские реплики читает мужской "
+                "голос, женские — женский. Кто говорит, определяется по "
                 "высоте голоса в оригинале, отдельно для каждой реплики.",
                 language=spoken,
-                male=_voice_label(language.piper_male),
-                female=_voice_label(language.piper_female),
             ))
         else:
             self._voice_note.setText(_(
-                "Язык перевода — {language}. Всё читает один голос, {voice}.",
-                language=spoken, voice=_voice_label(language.piper_voice),
+                "Язык перевода — {language}. Всё читает один голос.",
+                language=spoken,
             ))
-
-
-def _voice_label(voice: str) -> str:
-    """«ru_RU-ruslan-medium» -> «ruslan».
-
-    Left as the identifier Piper uses rather than prettified. Half of these
-    are names a person would recognise (ruslan, irina) and half are corpus
-    labels that are not (hfc_male), and «Hfc male» reads worse than the plain
-    identifier does.
-    """
-    parts = voice.split("-")
-    return parts[1] if len(parts) > 1 else voice

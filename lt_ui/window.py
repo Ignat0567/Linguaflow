@@ -45,13 +45,6 @@ class _Scroll(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
-            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.22);"
-            " border-radius: 4px; min-height: 32px; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        )
         viewport = self.viewport()
         viewport.setAutoFillBackground(False)
         viewport.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -60,6 +53,19 @@ class _Scroll(QScrollArea):
         if child.layout() is not None:
             child.layout().setSizeConstraint(QLayout.SetMinimumSize)
         self.setWidget(child)
+        self.apply_sheet()
+
+    def apply_sheet(self) -> None:
+        handle = (
+            "rgba(13,15,26,0.22)" if theme.is_light() else "rgba(255,255,255,0.22)"
+        )
+        self.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
+            f"QScrollBar::handle:vertical {{ background: {handle};"
+            " border-radius: 4px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
 
 
 class Window(QWidget):
@@ -163,6 +169,8 @@ class Window(QWidget):
         self._backdrop.invalidate()
         self._backdrop.resize(self.width(), self.height())
         theme.restyle(self)
+        for scroll in self.findChildren(_Scroll):
+            scroll.apply_sheet()
         self.overlay.restyle()
         self.update()
 
@@ -287,6 +295,16 @@ def _capture(window: Window, folder: Path) -> None:
         window.goto(name)
         QApplication.processEvents()
         window.grab().save(str(folder / f"ui_{name}.png"), "PNG")
+        if name == "upload":
+            busy = window._upload._busy
+            busy.reset("Anthropic.mp4")
+            busy.set_stage("Озвучиваю перевод")
+            busy.set_progress(0.80)
+            busy._ring._phase = 0.28
+            window._upload._stack.setCurrentWidget(busy)
+            QApplication.processEvents()
+            window.grab().save(str(folder / "ui_upload_busy.png"), "PNG")
+            window._upload.reset()
         if name == "settings":
             scroll = window._stack.currentWidget()
             bar = scroll.verticalScrollBar()

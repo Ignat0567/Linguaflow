@@ -416,6 +416,48 @@ def test_the_ring_stops_short_while_work_continues(window):
     assert busy._ring._value >= 0.98
 
 
+def test_the_progress_ring_keeps_moving_while_running(window):
+    """A parked 80% used to look frozen. The comet on the rim is the pulse."""
+    ring = window._upload._busy._ring
+    ring.set_running(True)
+    assert ring.is_running
+    before = ring._phase
+    ring._advance()
+    assert ring._phase != before
+    ring.set_running(False)
+    assert not ring.is_running
+
+
+def test_elapsed_time_ticks_on_the_busy_screen(window):
+    import time
+
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    busy._origin = time.monotonic() - 94
+    busy._refresh_clock()
+    assert "01:34" in busy._elapsed.text()
+
+
+def test_after_recognition_the_busy_screen_says_work_continues(window):
+    """80% is the end of recognition, not of the job. Say so, or the wait
+    looks like a hang."""
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    assert busy._hint.isHidden()
+    busy.set_progress(0.80)
+    assert not busy._hint.isHidden()
+    assert "перевод" in busy._hint.text()
+
+
+def test_a_failure_stops_the_busy_motion(window):
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    busy._ring.set_running(True)
+    window._upload._on_fail("нет звука")
+    assert not busy._ring.is_running
+    assert busy._hint.isHidden()
+
+
 def test_starting_again_hides_the_button(window):
     window.goto("upload")
     window._upload._stack.setCurrentWidget(window._upload._busy)
