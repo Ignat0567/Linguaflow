@@ -1,20 +1,39 @@
 """A browser inside the app: watch a video, hear or read it in your language.
 
-The page's own <video> is tapped (see lt_ui.browser), so the live session
-hears the video and nothing else -- not the rest of the desktop, and not the
-translation being read out over it.
+Two ways to hear a video, chosen by what this web engine can play:
+
+* A page it plays (YouTube): the page's own <video> is tapped (see
+  lt_ui.browser), so the live session hears the video and nothing else.
+* A page it cannot (X serves H.264 only; the engine has none): the post's
+  video is downloaded with yt-dlp -- carrying the signed-in session, when
+  there is one -- and played here in a player of our own (lt_ui.video_player).
+
+Either way the same live session, captions, voice and ducking follow.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from lt_core.audio.capture import PageAudioSource
 from lt_core.realtime.session import append_committed
 
 from .. import glass, theme
-from ..browser import HOME_URL, PageTap, address_to_url, browser_profile, plays_here
+from ..browser import (
+    HOME_URL,
+    PageTap,
+    address_to_url,
+    browser_profile,
+    cookie_jar,
+    plays_here,
+)
 from ..i18n import _
 from ..widgets import LanguagePair, clear_fill
 
@@ -26,9 +45,15 @@ class BrowserScreen(QWidget):
         clear_fill(self)
         self._view = None
         self._page = None
+        self._video = None
         self._tap: PageTap | None = None
         self._source: PageAudioSource | None = None
+        #: What the voice ducks under: the page tap or the downloaded video.
+        self._audio = None
         self._pending_start = False
+        #: A downloaded video waiting for the models: (MediaInfo, frames).
+        self._pending_video = None
+        self._download = None
         #: True while the engine's live session is this screen's. The
         #: realtime screen listens to the same engine signals.
         self._mine = False
@@ -41,26 +66,35 @@ class BrowserScreen(QWidget):
         self._back = glass.GlassButton("←", self, size=15, height=34, padding=14)
         self._forward = glass.GlassButton("→", self, size=15, height=34, padding=14)
         self._reload = glass.GlassButton("↻", self, size=15, height=34, padding=14)
-        self._address = glass.GlassInput(
-            self, _("Адрес или поиск на YouTube")
-        )
+        self._address = glass.GlassInput(self, _("Адрес или поиск на YouTube"))
         self._address.returnPressed.connect(self._go)
         self._back.clicked.connect(lambda: self._page and self._view.back())
         self._forward.clicked.connect(lambda: self._page and self._view.forward())
         self._reload.clicked.connect(lambda: self._page and self._view.reload())
+        self._overlay_btn = glass.GlassButton(_("Окно субтитров"), self, height=34)
+        self._overlay_btn.clicked.connect(self._toggle_overlay)
+        # The whole video, the long way: downloaded, transcribed, subtitled
+        # and dubbed as files on the file screen.
+        self._as_file = glass.GlassButton(_("Скачать и перевести"), self, height=34)
+        self._as_file.clicked.connect(self._translate_as_file)
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
         toolbar.addWidget(self._back)
         toolbar.addWidget(self._forward)
         toolbar.addWidget(self._reload)
         toolbar.addWidget(self._address, 1)
+        toolbar.addWidget(self._overlay_btn)
+        toolbar.addWidget(self._as_file)
 
-        # -- the page (created on first show) -----------------------------
+        # -- the page or the downloaded video (created on first show) -----
         self._frame = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         self._frame.setMinimumHeight(320)
         self._frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._frame_layout = QVBoxLayout(self._frame)
-        self._frame_layout.setContentsMargins(6, 6, 6, 6)
+        frame_layout = QVBoxLayout(self._frame)
+        frame_layout.setContentsMargins(6, 6, 6, 6)
+        self._stack = QStackedWidget(self._frame)
+        self._stack.setStyleSheet("background: transparent;")
+        frame_layout.addWidget(self._stack)
 
         # -- captions -----------------------------------------------------
         captions = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
@@ -84,22 +118,13 @@ class BrowserScreen(QWidget):
         self._translate.toggled.connect(self._toggled)
         self._speak = glass.Toggle(self)
         self._speak.toggled.connect(self._sync_voice)
-        self._overlay_btn = glass.GlassButton(_("Окно субтитров"), self, height=34)
-        self._overlay_btn.clicked.connect(self._toggle_overlay)
-        # The whole video, the long way: downloaded, transcribed, subtitled
-        # and dubbed as a file. Also the only way for sites whose video this
-        # engine cannot play.
-        self._download = glass.GlassButton(_("Скачать и перевести"), self, height=34)
-        self._download.clicked.connect(self._translate_as_file)
-        self._status = glass.label("", 12, 400, 0.66)
+        self._status = glass.label("", 12, 400, 0.66, wrap=True)
 
         controls = QHBoxLayout()
         controls.setSpacing(14)
         controls.addWidget(self._pair)
         controls.addWidget(_pill(_("Переводить видео"), self._translate, self))
         controls.addWidget(_pill(_("Озвучивать"), self._speak, self))
-        controls.addWidget(self._overlay_btn)
-        controls.addWidget(self._download)
         controls.addWidget(self._status, 1)
 
         root = QVBoxLayout(self)
@@ -138,12 +163,18 @@ class BrowserScreen(QWidget):
         from PySide6.QtWebEngineCore import QWebEnginePage
         from PySide6.QtWebEngineWidgets import QWebEngineView
 
+        from ..video_player import DownloadedVideo
+
         profile = browser_profile(self.app.store.root)
-        self._view = QWebEngineView(self._frame)
+        self._view = QWebEngineView(self._stack)
         self._page = QWebEnginePage(profile, self._view)
         self._view.setPage(self._page)
         self._view.urlChanged.connect(self._show_url)
-        self._frame_layout.addWidget(self._view)
+        self._stack.addWidget(self._view)
+        self._video = DownloadedVideo(self._stack)
+        self._video.closed.connect(self._back_to_page)
+        self._video.ended.connect(self._video_ended)
+        self._stack.addWidget(self._video)
         self._tap = PageTap(self._page, self)
         self._tap.state.connect(self._on_tap_state)
         last = self.app.store.settings.browser_url
@@ -156,9 +187,12 @@ class BrowserScreen(QWidget):
             self.app.engine.stop_live()
         if self._tap is not None:
             self._tap.stop()
+        if self._video is not None:
+            self._video.stop()
 
     def open_url(self, url: QUrl) -> None:
         self._ensure_view()
+        self._back_to_page()
         self._view.load(url)
 
     # -- navigation --------------------------------------------------------
@@ -175,7 +209,17 @@ class BrowserScreen(QWidget):
             self.app.store.settings.browser_url = url.toString()
             self.app.store.save_settings()
         if not plays_here(url) and not self._mine:
-            self._status.setText(_("Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»"))
+            self._status.setText(_(
+                "Видео с этого сайта скачивается перед переводом — "
+                "откройте пост и включите перевод"
+            ))
+
+    def _back_to_page(self) -> None:
+        if self._video is not None and self._stack.currentWidget() is self._video:
+            if self._mine and self._audio is self._video:
+                self.app.engine.stop_live()
+            self._video.stop()
+            self._stack.setCurrentWidget(self._view)
 
     def _translate_as_file(self) -> None:
         if self._view is None:
@@ -197,20 +241,55 @@ class BrowserScreen(QWidget):
 
     # -- translation -------------------------------------------------------
     def _toggled(self, on: bool) -> None:
-        if on:
-            if self.app.engine.live_running and not self._mine:
-                self._refuse(_("Сейчас идёт живой перевод на экране «Реальное время»."))
-                return
-            self._ensure_view()
-            self._pending_start = True
-            self._original = self._partial = self._translated = self._coming = ""
-            self._status.setText(_("Загружаю модели…"))
-            self.app.engine.prepare(self.app.store.settings)
-        else:
+        if not on:
             self._pending_start = False
+            self._pending_video = None
             if self._mine:
                 self.app.engine.stop_live()
                 self._status.setText(_("Останавливаю…"))
+            return
+        if self.app.engine.live_running and not self._mine:
+            self._refuse(_("Сейчас идёт живой перевод на экране «Реальное время»."))
+            return
+        self._ensure_view()
+        self._pending_start = True
+        self._pending_video = None
+        self._original = self._partial = self._translated = self._coming = ""
+        url = self._view.url()
+        if plays_here(url) or self._stack.currentWidget() is self._video:
+            if self._stack.currentWidget() is self._video and self._video.sound is not None:
+                # The downloaded video is still here: translate it again.
+                self._pending_video = ("again", None)
+            self._status.setText(_("Загружаю модели…"))
+            self.app.engine.prepare(self.app.store.settings)
+            return
+        self._start_download(url)
+
+    def _start_download(self, url: QUrl) -> None:
+        from ..video_player import DownloadWorker
+
+        root = self.app.store.root
+        jar = cookie_jar(root)
+        cookies = jar.write_for(url, root / "browser" / "download-cookies.txt") if jar else None
+        worker = DownloadWorker(url.toString(), root / "downloads" / "browser", cookies, self)
+        worker.done.connect(self._downloaded)
+        worker.failed.connect(self._download_failed)
+        self._download = worker
+        self._status.setText(_("Скачиваю видео…"))
+        worker.start()
+
+    def _downloaded(self, info, frames) -> None:
+        if not self._pending_start:
+            return  # switched off while it downloaded
+        self._pending_video = (info, frames)
+        self._status.setText(_("Загружаю модели…"))
+        self.app.engine.prepare(self.app.store.settings)
+
+    def _download_failed(self, message: str) -> None:
+        if not self._pending_start:
+            return
+        self._pending_start = False
+        self._finish(message)
 
     def _on_ready(self) -> None:
         if not self._pending_start:
@@ -218,28 +297,44 @@ class BrowserScreen(QWidget):
         self._pending_start = False
         self._source = PageAudioSource()
         self._mine = True
-        self._tap.start(self._source)
-        self._status.setText(_("Жду, когда заиграет видео"))
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
             self.app.overlay.set_caption(listening=True)
+        pending, self._pending_video = self._pending_video, None
+        if pending is None:
+            self._audio = self._tap
+            self._tap.start(self._source)
+            self._status.setText(_("Жду, когда заиграет видео"))
+        else:
+            info, frames = pending
+            if info != "again":
+                self._video.load(
+                    info.path, frames, 48_000, info.title, on_audio=self._source.push
+                )
+            else:
+                self._video.sound.on_audio = self._source.push
+            self._stack.setCurrentWidget(self._video)
+            self._audio = self._video
+            self._status.setText(_("Слушаю видео"))
         self.app.engine.start_live(self.app.store.settings, source=self._source)
+        if self._audio is self._video:
+            self._video.play()
+
+    def _video_ended(self) -> None:
+        if self._mine and self._audio is self._video:
+            self.app.engine.stop_live()
 
     def _on_speaking(self, speaking: bool) -> None:
-        if self._mine and self._tap is not None:
-            self._tap.duck(speaking)
+        if self._mine and self._audio is not None:
+            self._audio.duck(speaking)
 
     def _on_tap_state(self, state: str) -> None:
-        if not self._mine:
+        if not self._mine or self._audio is not self._tap:
             return
         self._status.setText({
             "listening": _("Слушаю видео"),
             "ad": _("Идёт реклама — её не перевожу"),
-            "waiting": (
-                _("Жду, когда заиграет видео")
-                if self._view is None or plays_here(self._view.url())
-                else _("Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»")
-            ),
+            "waiting": _("Жду, когда заиграет видео"),
         }.get(state, ""))
 
     def _on_update(self, update) -> None:
@@ -284,12 +379,19 @@ class BrowserScreen(QWidget):
         if not (self._mine or self._pending_start):
             return
         self._pending_start = False
+        self._pending_video = None
         self._finish(message)
 
     def _finish(self, message: str) -> None:
         self._mine = False
         if self._tap is not None:
             self._tap.stop()
+        if self._video is not None and self._audio is self._video:
+            self._video.pause()
+            if self._video.sound is not None:
+                self._video.sound.on_audio = None
+            self._video.duck(False)
+        self._audio = None
         self._source = None
         self._status.setText(message)
         self._translate.blockSignals(True)

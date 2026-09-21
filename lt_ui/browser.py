@@ -208,6 +208,17 @@ class AdInterceptor(QWebEngineUrlRequestInterceptor):
 # -- the profile ---------------------------------------------------------
 
 _profiles: dict[str, QWebEngineProfile] = {}
+_jars: dict[str, "CookieJar"] = {}
+
+
+def plain_user_agent(agent: str) -> str:
+    """The engine's own User-Agent without the «QtWebEngine/x» token.
+
+    It is Chrome of the same version underneath; announcing an unusual
+    browser only earns more sign-in checks and captchas from sites that
+    treat the unfamiliar as a bot.
+    """
+    return re.sub(r"\s*QtWebEngine/\S+", "", agent)
 
 
 def browser_profile(root: Path) -> QWebEngineProfile:
@@ -231,6 +242,7 @@ def browser_profile(root: Path) -> QWebEngineProfile:
     profile.setPersistentCookiesPolicy(
         QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
     )
+    profile.setHttpUserAgent(plain_user_agent(profile.httpUserAgent()))
     # A video opened from the address bar should start; and the tap's audio
     # context must run without waiting for a click inside the page.
     profile.settings().setAttribute(
@@ -244,8 +256,95 @@ def browser_profile(root: Path) -> QWebEngineProfile:
     script.setRunsOnSubFrames(True)
     profile.scripts().insert(script)
     _profiles[key] = profile
+    _jars[key] = CookieJar(profile)
     _start_blocker(profile, storage / "filters")
     return profile
+
+
+def cookie_jar(root: Path) -> "CookieJar | None":
+    return _jars.get(str(Path(root).resolve()))
+
+
+# -- the signed-in session, for yt-dlp ----------------------------------
+
+#: Sites that are one site under two names.
+_SAME_SITE = {"x.com": ("x.com", "twitter.com"), "twitter.com": ("x.com", "twitter.com")}
+
+
+def site_hosts(url: QUrl) -> tuple[str, ...]:
+    """The hosts whose cookies a download from `url` may carry."""
+    host = url.host().lower().removeprefix("www.").removeprefix("mobile.")
+    for name, hosts in _SAME_SITE.items():
+        if host == name or host.endswith("." + name):
+            return hosts
+    return (host,) if host else ()
+
+
+def netscape_cookies(cookies, hosts: tuple[str, ...]) -> str:
+    """cookies.txt for yt-dlp, holding only the cookies of `hosts`.
+
+    `cookies` are (domain, path, secure, expires, name, value). Only the
+    site being downloaded from: the file hands a session to another program,
+    and the sessions of every other site signed into here are none of its
+    business.
+    """
+    lines = ["# Netscape HTTP Cookie File"]
+    for domain, path, secure, expires, name, value in cookies:
+        bare = domain.lstrip(".").lower()
+        if not any(bare == h or bare.endswith("." + h) for h in hosts):
+            continue
+        lines.append("\t".join((
+            domain,
+            "TRUE" if domain.startswith(".") else "FALSE",
+            path or "/",
+            "TRUE" if secure else "FALSE",
+            str(int(expires)),
+            name,
+            value,
+        )))
+    return "\n".join(lines) + "\n"
+
+
+class CookieJar(QObject):
+    """What the profile's cookie store holds, kept up to date.
+
+    The store has no way to be asked for its cookies, only signals as they
+    come and go; so they are collected here from the start.
+    """
+
+    def __init__(self, profile: QWebEngineProfile) -> None:
+        super().__init__(profile)
+        self._cookies: dict[tuple[str, str, str], tuple] = {}
+        store = profile.cookieStore()
+        store.cookieAdded.connect(self._added)
+        store.cookieRemoved.connect(self._removed)
+        store.loadAllCookies()
+
+    @staticmethod
+    def _key(cookie) -> tuple[str, str, str]:
+        return (cookie.domain(), cookie.path(), bytes(cookie.name()).decode("latin-1"))
+
+    def _added(self, cookie) -> None:
+        expires = 0
+        if not cookie.isSessionCookie() and cookie.expirationDate().isValid():
+            expires = cookie.expirationDate().toSecsSinceEpoch()
+        domain, path, name = self._key(cookie)
+        self._cookies[(domain, path, name)] = (
+            domain, path, cookie.isSecure(), expires, name,
+            bytes(cookie.value()).decode("latin-1"),
+        )
+
+    def _removed(self, cookie) -> None:
+        self._cookies.pop(self._key(cookie), None)
+
+    def write_for(self, url: QUrl, path: Path) -> Path | None:
+        """Write the cookies `url`'s site needs; None when there are none."""
+        text = netscape_cookies(self._cookies.values(), site_hosts(url))
+        if text.count("\n") <= 1:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
 
 
 def _start_blocker(profile: QWebEngineProfile, folder: Path) -> None:

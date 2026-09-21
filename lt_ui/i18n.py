@@ -137,9 +137,14 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Переводить видео": ("Translate video", "Video übersetzen"),
     "Скачать и перевести": ("Download and translate", "Herunterladen und übersetzen"),
-    "Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»": (
-        "This site's videos do not play here — use “Download and translate”",
-        "Videos dieser Seite laufen hier nicht — „Herunterladen und übersetzen“ nutzen",
+    "Видео с этого сайта скачивается перед переводом — откройте пост и включите перевод": (
+        "Videos from this site are downloaded first — open the post and turn on translation",
+        "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
+    ),
+    "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "← К странице": ("← Back to the page", "← Zurück zur Seite"),
+    "Не удалось прочитать звук из {name}": (
+        "Could not read the sound of {name}", "Der Ton von {name} ist nicht lesbar",
     ),
     "Ссылка — видео скачается, когда начнётся перевод": (
         "Link — the video is downloaded when translation starts",

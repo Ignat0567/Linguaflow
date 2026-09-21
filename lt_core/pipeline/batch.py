@@ -200,6 +200,7 @@ def transcribe_file(
     dub_video: bool = True,
     condense: bool = True,
     shortener: object | None = None,
+    cookies: Path | str | None = None,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -219,7 +220,9 @@ def transcribe_file(
     stage(tell("Открываю источник"))
     # A dubbed copy needs the picture, and for a link that means downloading
     # it. Asked for, it is fetched; not asked for, only the audio comes down.
-    media = resolve(str(target), scratch, want_video=bool(voice and dub_video))
+    media = resolve(
+        str(target), scratch, want_video=bool(voice and dub_video), cookies=cookies
+    )
     if not media.has_audio:
         raise ValueError(f"В «{media.path.name}» нет звуковой дорожки.")
 
