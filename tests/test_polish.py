@@ -492,7 +492,7 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
     The pointer is delivered as a real enter and leave, so a control is
     judged by what it draws rather than by which base class it inherits.
     """
-    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtCore import QEvent, QPropertyAnimation, Qt
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import (
         QAbstractButton, QApplication, QComboBox, QLineEdit, QWidget,
@@ -504,24 +504,38 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
         widget.render(image)
         return image.constBits().tobytes()
 
+    def settle(widgets) -> None:
+        """Run any animation the pointer just started to its end.
+
+        A control that answers by animating has not answered yet on the
+        frame the event arrives, and a test that looks then would call it
+        silent.
+        """
+        QApplication.processEvents()
+        for widget in widgets:
+            for animation in widget.findChildren(QPropertyAnimation):
+                if animation.state() == QPropertyAnimation.Running:
+                    animation.setCurrentTime(animation.duration())
+        QApplication.processEvents()
+
     def answers(widget) -> bool:
         """Something visible changes when the pointer arrives.
 
         Not necessarily on the widget itself: the navigation bar draws one
-        capsule that glides between its five destinations, so a destination
-        is answered by its parent rather than by its own pixels.
+        pane of glass that runs between its five destinations, so a
+        destination is answered by its parent rather than by its own pixels.
         """
         watched = [widget]
         if widget.parentWidget() is not None:
             watched.append(widget.parentWidget())
         QApplication.sendEvent(widget, QEvent(QEvent.Leave))
-        QApplication.processEvents()
+        settle(watched)
         resting = [painted(w) for w in watched]
         QApplication.sendEvent(widget, QEvent(QEvent.Enter))
-        QApplication.processEvents()
+        settle(watched)
         hovered = [painted(w) for w in watched]
         QApplication.sendEvent(widget, QEvent(QEvent.Leave))
-        QApplication.processEvents()
+        settle(watched)
         return bool(resting[0]) and any(
             before != after for before, after in zip(resting, hovered)
         )
@@ -572,64 +586,6 @@ def _nav(window):
     return bar, {item.key: item for item in bar.findChildren(NavItem)}
 
 
-def test_the_capsule_travels_to_what_the_pointer_is_on(window):
-    """Asked for: the white lozenge in the header should run back and forth
-    after the cursor rather than blink from one destination to the next."""
-    from PySide6.QtCore import QEvent, QPropertyAnimation, QRectF
-    from PySide6.QtWidgets import QApplication
-
-    window.resize(1280, 860)
-    window.show()
-    try:
-        window.goto("realtime")
-        QApplication.processEvents()
-        bar, items = _nav(window)
-        bar._glide.stop()
-        bar._settle(animated=False)
-        assert bar.capsule == QRectF(items["realtime"].geometry())
-
-        QApplication.sendEvent(items["settings"], QEvent(QEvent.Enter))
-        assert bar._glide.state() == QPropertyAnimation.Running, (
-            "it jumped instead of travelling"
-        )
-        assert bar._glide.endValue() == QRectF(items["settings"].geometry())
-        bar._glide.setCurrentTime(bar.GLIDE_MS)
-        assert bar.capsule == QRectF(items["settings"].geometry())
-
-        QApplication.sendEvent(items["settings"], QEvent(QEvent.Leave))
-        bar._glide.setCurrentTime(bar.GLIDE_MS)
-        assert bar.capsule == QRectF(items["realtime"].geometry()), (
-            "with nothing under the pointer it belongs on the page that is open"
-        )
-    finally:
-        window.hide()
-
-
-def test_leaving_one_destination_for_the_next_does_not_send_it_home(window):
-    """Qt can deliver the arrival before the departure. Taken literally that
-    puts the capsule back on the open page for one frame, which reads as a
-    flinch."""
-    from PySide6.QtCore import QEvent, QRectF
-    from PySide6.QtWidgets import QApplication
-
-    window.resize(1280, 860)
-    window.show()
-    try:
-        window.goto("home")
-        QApplication.processEvents()
-        bar, items = _nav(window)
-        bar._glide.stop()
-        bar._settle(animated=False)
-
-        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
-        QApplication.sendEvent(items["history"], QEvent(QEvent.Enter))
-        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
-        bar._glide.setCurrentTime(bar.GLIDE_MS)
-        assert bar.capsule == QRectF(items["history"].geometry())
-    finally:
-        window.hide()
-
-
 # -- no lit band along the top of anything -------------------------------
 
 def _top_rows(widget, count: int = 6):
@@ -675,5 +631,129 @@ def test_no_glass_surface_wears_a_lit_band_along_its_top(window, mode):
         assert rows[1] <= body + 4 and rows[2] <= body + 4, (
             f"a band is lit beneath the top edge: {rows}"
         )
+    finally:
+        window.hide()
+
+
+# -- the runner belongs to the pointer, the page to its word --------------
+
+def _nav(window):
+    from lt_ui.widgets import NavBar, NavItem
+
+    bar = window.findChild(NavBar)
+    return bar, {item.key: item for item in bar.findChildren(NavItem)}
+
+
+def _painted_alone(widget) -> bytes:
+    from PySide6.QtGui import QImage
+
+    image = QImage(widget.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    widget.render(image)
+    return image.constBits().tobytes()
+
+
+def _finish(animation):
+    from PySide6.QtCore import QPropertyAnimation
+
+    if animation.state() == QPropertyAnimation.Running:
+        animation.setCurrentTime(animation.duration())
+
+
+def test_nothing_runs_in_the_bar_until_the_pointer_is_in_it(window):
+    """Asked for: the open page says so through its own word, and the pane of
+    glass appears only under the pointer."""
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar, _items = _nav(window)
+        _finish(bar._fade)
+        assert bar.shown == 0.0
+    finally:
+        window.hide()
+
+
+def test_the_open_page_is_told_apart_by_its_word_alone(window):
+    """Which is what the runner is freed up to stop saying."""
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        _bar, items = _nav(window)
+        open_item, other = items["realtime"], items["history"]
+        assert open_item.isChecked() and not other.isChecked()
+        assert open_item.OPEN_WEIGHT > open_item.RESTING_WEIGHT
+        assert _painted_alone(open_item) != _painted_alone(other), (
+            "the two words are drawn identically"
+        )
+    finally:
+        window.hide()
+
+
+def test_the_runner_appears_where_the_pointer_is_and_then_travels(window):
+    from PySide6.QtCore import QEvent, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+        _finish(bar._fade)
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
+        assert bar.runner == QRectF(items["upload"].geometry()), (
+            "it slid in from somewhere instead of appearing under the pointer"
+        )
+        _finish(bar._fade)
+        assert bar.shown == 1.0
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Enter))
+        QApplication.processEvents()
+        assert bar._glide.endValue() == QRectF(items["settings"].geometry()), (
+            "it jumped between destinations instead of travelling"
+        )
+        _finish(bar._glide)
+        assert bar.runner == QRectF(items["settings"].geometry())
+        assert bar.shown == 1.0, "it should not blink on the way across"
+
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Leave))
+        QApplication.processEvents()
+        _finish(bar._fade)
+        assert bar.shown == 0.0, "it stayed behind after the pointer left"
+    finally:
+        window.hide()
+
+
+def test_leaving_one_destination_for_the_next_does_not_put_it_out(window):
+    """Qt can deliver the arrival before the departure. Taken literally that
+    fades the runner out just as it should be setting off."""
+    from PySide6.QtCore import QEvent, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("home")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["history"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
+        QApplication.processEvents()
+        _finish(bar._glide)
+        _finish(bar._fade)
+        assert bar.shown == 1.0
+        assert bar.runner == QRectF(items["history"].geometry())
     finally:
         window.hide()

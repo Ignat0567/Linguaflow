@@ -16,6 +16,7 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import (
@@ -252,12 +253,18 @@ class AccentSwatch(glass.Hoverable):
 class NavItem(glass.Hoverable):
     """One entry in the floating pill.
 
-    The capsule behind it belongs to the bar, not to the item: it is one
-    capsule that glides between destinations rather than five that blink on
-    and off. All this draws is the word.
+    Nothing is drawn here but the word. The page that is open says so through
+    the word itself -- full strength and a heavier weight -- so that the
+    glass runner behind it is free to mean one thing only: where the pointer
+    is. See `NavBar`.
     """
 
     pointed = Signal(object, bool)
+
+    SIZE = 13
+    RESTING_WEIGHT = 600
+    OPEN_WEIGHT = 700
+    PADDING = 15
 
     def __init__(self, text: str, key: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -265,7 +272,13 @@ class NavItem(glass.Hoverable):
         self.setText(text)
         self.setCheckable(True)
         self.setFixedHeight(28)
-        self.setMinimumWidth(88)
+        # Measured at the heavier weight, because that is the widest this
+        # word is ever drawn: sizing to the lighter one clips the page you
+        # are actually on.
+        metrics = QFontMetrics(theme.font(self.SIZE, self.OPEN_WEIGHT))
+        self.setMinimumWidth(
+            max(88, metrics.horizontalAdvance(text) + self.PADDING * 2)
+        )
 
     def enterEvent(self, event) -> None:  # noqa: N802
         super().enterEvent(event)
@@ -278,13 +291,11 @@ class NavItem(glass.Hoverable):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        # Under the capsule the word is at full strength; away from it the
-        # destinations recede, which is what makes the capsule read as the
-        # thing being pointed at.
-        lit = self.isChecked() or self._hover
+        open_here = self.isChecked()
         painter.setPen(theme.ink(theme.text_alpha(
-            theme.PRIMARY if lit else theme.SECONDARY)))
-        painter.setFont(theme.font(13, 600))
+            theme.PRIMARY if open_here or self._hover else theme.SECONDARY)))
+        painter.setFont(theme.font(
+            self.SIZE, self.OPEN_WEIGHT if open_here else self.RESTING_WEIGHT))
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
@@ -434,11 +445,14 @@ class NavBar(glass.GlassPanel):
             ("settings", _("Настройки")),
         )
 
-    #: How long the capsule takes to reach what the pointer is on.
+    #: How long the runner takes to reach what the pointer is on.
     #:
     #: Long enough to be seen travelling, short enough that it has arrived
     #: before a hand moving between two destinations gets there.
     GLIDE_MS = 190
+
+    #: How long it takes to appear and to go again.
+    FADE_MS = 140
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, radius=theme.RADIUS_PILL, tint=theme.tint(raised=True))
@@ -453,8 +467,6 @@ class NavBar(glass.GlassPanel):
         self._items: dict[str, NavItem] = {}
         for index, (key, text) in enumerate(self.captions()):
             item = NavItem(text, key, self)
-            if key == "realtime":
-                item.setMinimumWidth(128)
             self._group.addButton(item, index)
             self._items[key] = item
             item.pointed.connect(self._point_at)
@@ -462,74 +474,90 @@ class NavBar(glass.GlassPanel):
         self._group.idClicked.connect(self._emit)
 
         self._pointed: NavItem | None = None
-        self._capsule = QRectF()
-        self._glide = QPropertyAnimation(self, b"capsule", self)
+        self._runner = QRectF()
+        self._shown = 0.0
+        self._glide = QPropertyAnimation(self, b"runner", self)
         self._glide.setDuration(self.GLIDE_MS)
         self._glide.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade = QPropertyAnimation(self, b"shown", self)
+        self._fade.setDuration(self.FADE_MS)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
         self.set_active("home")
 
-    # -- the capsule ----------------------------------------------------
+    # -- the runner -----------------------------------------------------
+    #
+    # One pane of glass, and it means one thing: where the pointer is. It is
+    # not there when the pointer is not. Which page is open is said by the
+    # word itself, in `NavItem`, so that nothing has to be read twice.
 
-    def get_capsule(self) -> QRectF:
-        return self._capsule
+    def get_runner(self) -> QRectF:
+        return self._runner
 
-    def set_capsule(self, rect: QRectF) -> None:
-        self._capsule = rect
+    def set_runner(self, rect: QRectF) -> None:
+        self._runner = rect
         self.update()
 
-    capsule = Property(QRectF, get_capsule, set_capsule)
+    runner = Property(QRectF, get_runner, set_runner)
 
-    def _resting_on(self) -> NavItem | None:
-        """Where the capsule belongs: under the pointer, or on the page open."""
-        if self._pointed is not None:
-            return self._pointed
-        return next((item for item in self._items.values() if item.isChecked()), None)
+    def get_shown(self) -> float:
+        return self._shown
 
-    def _settle(self, animated: bool = True) -> None:
-        item = self._resting_on()
-        if item is None:
+    def set_shown(self, value: float) -> None:
+        self._shown = value
+        self.update()
+
+    shown = Property(float, get_shown, set_shown)
+
+    def _fade_to(self, target: float) -> None:
+        if self._shown == target:
             return
-        wanted = QRectF(item.geometry())
-        if wanted == self._capsule:
-            return
-        self._glide.stop()
-        if not animated or self._capsule.isNull():
-            # Nothing to travel from on the first layout: appearing in place
-            # is right, sliding in from the corner is not.
-            self.set_capsule(wanted)
-            return
-        self._glide.setStartValue(self._capsule)
-        self._glide.setEndValue(wanted)
-        self._glide.start()
+        self._fade.stop()
+        self._fade.setStartValue(self._shown)
+        self._fade.setEndValue(target)
+        self._fade.start()
 
     def _point_at(self, item: NavItem, entering: bool) -> None:
         if entering:
+            # Already on screen: travel. Not on screen: appear where the
+            # pointer is, rather than sliding in from wherever it last was.
+            arriving = self._shown <= 0.0
             self._pointed = item
-        elif self._pointed is item:
-            # Moving between two destinations can deliver the new item's
-            # enter before the old one's leave; only the item still believed
-            # to be under the pointer may clear it.
-            self._pointed = None
-        self._settle()
+            wanted = QRectF(item.geometry())
+            self._glide.stop()
+            if arriving:
+                self.set_runner(wanted)
+            elif wanted != self._runner:
+                self._glide.setStartValue(self._runner)
+                self._glide.setEndValue(wanted)
+                self._glide.start()
+            self._fade_to(1.0)
+            return
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self._settle(animated=False)
+        if self._pointed is not item:
+            return
+        self._pointed = None
+        # Leaving one destination for the next arrives here first, and going
+        # out immediately would put the runner out at the moment it should be
+        # setting off. Deciding on the next turn of the loop lets the arrival
+        # -- in whichever order Qt delivers it -- be seen first.
+        QTimer.singleShot(0, self._retire)
+
+    def _retire(self) -> None:
+        """Go, if the pointer really has left rather than moved along."""
+        if self._pointed is not None:
+            return
+        self._glide.stop()
+        self._fade_to(0.0)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if self._capsule.isNull():
+        if self._runner.isNull() or self._shown <= 0.0:
             return
-        # Glass rather than a solid fill: the capsule sits on a bar that is
-        # itself glass, and a white lozenge on it reads as a sticker.
         painter = QPainter(self)
+        painter.setOpacity(self._shown)
         glass.paint_glass(
-            self, painter, self._capsule.toRect(), theme.RADIUS_PILL,
-            theme.nav_capsule(),
-            # Brighter while it is being pointed at, so that pointing at the
-            # page already open -- where the capsule has nowhere to travel --
-            # still answers.
-            lift=theme.HOVER_LIFT if self._pointed is not None else 0.0,
+            self, painter, self._runner.toRect(), theme.RADIUS_PILL,
+            theme.nav_runner(),
         )
 
     # -- destinations ----------------------------------------------------
@@ -542,7 +570,6 @@ class NavBar(glass.GlassPanel):
         item = self._items.get(key)
         if item is not None:
             item.setChecked(True)
-            self._settle()
 
 
 class SettingsGroup(glass.GlassPanel):
