@@ -512,7 +512,36 @@ own things belong.
     a two-language dialogue: turns returned untranslated 2 of 9 -> 0 of 12,
     first reading 6.1 s -> 4.1 s, median gap between readings 6.1 s -> 2.0 s.
 
-505 tests.
+46. **A translated cue stopped ending on the word that governs the next one.**
+    Splitting a translated sentence across the cues its source occupied was
+    done purely by proportion, and arithmetic knows nothing about phrases:
+    measured on an hour of real output, 42 of 1462 Russian cues ended on a
+    preposition or conjunction — "…умноженное на", and then, a cue later,
+    "энергию". The source language had avoided this since Day 2. The split may
+    now move by up to two words onto a clause end, or failing that off a
+    clinging word. On the five-minute file: 4 such cues before, 0 after.
+47. **Routing a conversation by when each word was said was built, measured
+    and dropped.** Where the two sides share an alphabet — English and German —
+    the letters cannot say who is talking, so the audio window's verdict is all
+    there is, and a commit that straddles a handover is attributed wholesale to
+    whoever is speaking by the time it settles. The fix tried was a timeline of
+    per-window verdicts, with each committed word looked up by its own
+    timestamp. Measured on a 47-second English/German dialogue against an
+    oracle that reads the text itself: **76% of runs attributed correctly
+    before, 77% after**, and no change at all on the Russian/English pair,
+    where the alphabet already decides. It splits handovers into more runs
+    without making them more often right, because it reads back the same
+    per-window verdicts that were wrong to begin with — shifting when they are
+    consulted does not make them true.
+
+    What a same-alphabet pair actually needs is voice identity rather than
+    language identity. The pitch of each side is already pooled for choosing
+    its voice, so the signal is in hand; using it to decide *who is speaking*
+    is diarisation-lite and a larger piece of work than this was. Left
+    undone deliberately, and measured so that it is not built again by
+    accident.
+
+553 tests.
 
 ## Not done
 
