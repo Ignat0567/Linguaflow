@@ -187,11 +187,6 @@ def border_colour() -> QColor:
     return ink(border()) if is_light() else white(border())
 
 
-def highlight() -> float:
-    """The inset top edge that makes a panel read as glass rather than fog."""
-    return 0.75 if is_light() else 0.30
-
-
 #: Kept for anything still reading the dark values directly.
 TINT = TINT_DARK
 TINT_RAISED = TINT_DARK_RAISED

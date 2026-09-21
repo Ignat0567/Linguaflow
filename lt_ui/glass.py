@@ -1,6 +1,6 @@
 """The glass surface, and everything built on it.
 
-One recipe -- tint, blur beneath, hairline border, inset top highlight -- and
+One recipe -- tint, blur beneath, hairline border -- and
 every card, pill, chip and toggle in the app is that recipe at a different
 size. It is written once here so that a new screen cannot quietly invent its
 own shade of white.
@@ -95,13 +95,6 @@ def paint_glass(
     if lift:
         painter.fillPath(path, theme.white(lift))
 
-    # The inset highlight along the top edge. Without it a panel reads as a
-    # flat wash; with it, as something with a lit edge.
-    highlight = QPainterPath()
-    highlight.addRoundedRect(
-        QRectF(rect.x(), rect.y(), rect.width(), 2.0), radius, radius
-    )
-    painter.fillPath(highlight, theme.white(theme.highlight()))
     painter.restore()
 
     edge = theme.border_colour() if border is None else theme.ink(border)

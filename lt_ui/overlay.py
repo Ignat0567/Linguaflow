@@ -255,11 +255,6 @@ class OverlayWindow(QWidget):
         fill = QColor(theme.INK)
         fill.setAlpha(210)
         painter.fillPath(path, fill)
-        highlight = QPainterPath()
-        highlight.addRoundedRect(
-            QRectF(rect.x(), rect.y(), rect.width(), 2.0), 18, 18
-        )
-        painter.fillPath(highlight, theme.white(0.30))
         painter.setPen(QPen(theme.white(0.22), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)

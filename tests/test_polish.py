@@ -628,3 +628,52 @@ def test_leaving_one_destination_for_the_next_does_not_send_it_home(window):
         assert bar.capsule == QRectF(items["history"].geometry())
     finally:
         window.hide()
+
+
+# -- no lit band along the top of anything -------------------------------
+
+def _top_rows(widget, count: int = 6):
+    """Mean lightness of each of the first rows of a widget's own pixels."""
+    from PySide6.QtGui import QColor, QImage
+
+    image = QImage(widget.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    widget.render(image)
+    rows = []
+    for y in range(count):
+        # The rounded corners are transparent, so only the middle is read.
+        sample = range(image.width() // 3, 2 * image.width() // 3)
+        rows.append(sum(QColor(image.pixelColor(x, y)).lightness()
+                        for x in sample) / len(list(sample)))
+    return rows
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_no_glass_surface_wears_a_lit_band_along_its_top(window, mode):
+    """Reported from use: the bright two-pixel edge along the top of the
+    navigation, the mode chips and the switch pill. It was the recipe's inset
+    highlight, drawn on every glass surface -- and absent from the picker and
+    the text field, which are styled by Qt rather than painted, which is why
+    those two looked right and everything else did not.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui.widgets import NavBar
+
+    window.store.settings.appearance = mode
+    window.apply_appearance()
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar = window.findChild(NavBar)
+        rows = _top_rows(bar)
+        # Row nought is the hairline edge, which runs all the way round the
+        # shape and is meant to be there. The band sat beneath it.
+        body = max(rows[3:])
+        assert rows[1] <= body + 4 and rows[2] <= body + 4, (
+            f"a band is lit beneath the top edge: {rows}"
+        )
+    finally:
+        window.hide()
