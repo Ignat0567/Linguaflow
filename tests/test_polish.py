@@ -757,3 +757,37 @@ def test_leaving_one_destination_for_the_next_does_not_put_it_out(window):
         assert bar.runner == QRectF(items["history"].geometry())
     finally:
         window.hide()
+
+
+# -- how much of the window there is ------------------------------------
+
+def test_the_window_itself_is_translucent(window):
+    """Asked for at a half. Everything the window draws goes through this,
+    text included, so it is the one appearance setting that can cost
+    legibility rather than only looks."""
+    from lt_ui import theme
+
+    assert theme.WINDOW_OPACITY == 0.50
+    assert window.windowOpacity() == pytest.approx(theme.WINDOW_OPACITY, abs=0.01)
+
+
+@pytest.mark.parametrize("mode, fill", [("dark", "TINT_DARK"), ("light", "TINT_LIGHT")])
+def test_the_styled_controls_keep_step_with_the_painted_ones(mode, fill):
+    """The picker and the text field are the only two surfaces drawn by Qt's
+    style sheets rather than by the shared recipe, and twice now they have
+    drifted from it in ways a user had to report: once carrying a hover rule
+    nothing else had, once missing the top band everything else wore. Their
+    fill is written as a number in CSS, so nothing but this keeps it in step.
+    """
+    import re
+
+    from lt_ui import glass, theme
+
+    wanted = getattr(theme, fill)
+    for widget in (glass.GlassSelect, glass.GlassInput):
+        sheet = getattr(widget, mode.upper())
+        found = re.search(r"background: rgba\(255,255,255,([\d.]+)\);", sheet)
+        assert found, widget.__name__
+        assert abs(float(found.group(1)) - wanted) <= 0.12, (
+            f"{widget.__name__} in {mode}: {found.group(1)} against {wanted}"
+        )

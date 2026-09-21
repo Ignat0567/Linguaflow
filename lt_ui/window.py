@@ -65,6 +65,7 @@ class Window(QWidget):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Linguaflow")
+        self.setWindowOpacity(theme.WINDOW_OPACITY)
         self.setMinimumSize(1020, 700)
         self.resize(1280, 800)
         self.store = store or Store()

@@ -152,11 +152,19 @@ def text_alpha(alpha: float) -> float:
 
 
 # -- surfaces ------------------------------------------------------------
+#: How opaque the window itself is.
+#:
+#: Asked for at a half. Everything the window draws goes through it, text
+#: included, so this is the one setting here that can cost legibility rather
+#: than only looks.
+WINDOW_OPACITY = 0.50
+
 #: Glass tint in dark mode: the rgba(255,255,255,0.07-0.10) of the recipe.
-TINT_DARK, TINT_DARK_RAISED = 0.085, 0.13
+TINT_DARK, TINT_DARK_RAISED = 0.05, 0.08
 #: In light mode the same panels need far more white to separate from a bright
-#: photograph -- at 8% they read as a smudge rather than a surface.
-TINT_LIGHT, TINT_LIGHT_RAISED = 0.55, 0.68
+#: photograph -- at 8% they read as a smudge rather than a surface. Taken down
+#: by the same proportion as the dark pair rather than to the same number.
+TINT_LIGHT, TINT_LIGHT_RAISED = 0.32, 0.40
 
 #: What a hover adds, per the handoff's suggested +4% white.
 HOVER_LIFT = 0.04

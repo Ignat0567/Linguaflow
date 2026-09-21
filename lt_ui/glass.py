@@ -333,13 +333,13 @@ class GlassSelect(QComboBox):
 
     DARK = """
     QComboBox {
-        background: rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.20);
         border-radius: 19px;
         padding: 0 34px 0 18px;
         color: rgba(255,255,255,0.95);
     }
-    QComboBox:hover { background: rgba(255,255,255,0.14); }
+    QComboBox:hover { background: rgba(255,255,255,0.10); }
     QComboBox:focus { border: 1px solid rgba(127,164,255,0.85); }
     QComboBox::drop-down { border: none; width: 26px; }
     QComboBox::down-arrow { image: none; }
@@ -356,13 +356,13 @@ class GlassSelect(QComboBox):
 
     LIGHT = """
     QComboBox {
-        background: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.42);
         border: 1px solid rgba(13,15,26,0.14);
         border-radius: 19px;
         padding: 0 34px 0 18px;
         color: rgba(13,15,26,0.95);
     }
-    QComboBox:hover { background: rgba(255,255,255,0.86); }
+    QComboBox:hover { background: rgba(255,255,255,0.50); }
     QComboBox:focus { border: 1px solid rgba(90,125,215,0.85); }
     QComboBox::drop-down { border: none; width: 26px; }
     QComboBox::down-arrow { image: none; }
@@ -411,27 +411,27 @@ class GlassInput(QLineEdit):
 
     DARK = """
     QLineEdit {
-        background: rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.20);
         border-radius: 17px;
         padding: 0 16px;
         color: rgba(255,255,255,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
-    QLineEdit:hover { background: rgba(255,255,255,0.14); }
+    QLineEdit:hover { background: rgba(255,255,255,0.10); }
     QLineEdit:focus { border: 1px solid rgba(127,164,255,0.85); }
     """
 
     LIGHT = """
     QLineEdit {
-        background: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.42);
         border: 1px solid rgba(13,15,26,0.14);
         border-radius: 17px;
         padding: 0 16px;
         color: rgba(13,15,26,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
-    QLineEdit:hover { background: rgba(255,255,255,0.86); }
+    QLineEdit:hover { background: rgba(255,255,255,0.50); }
     QLineEdit:focus { border: 1px solid rgba(90,125,215,0.85); }
     """
 
