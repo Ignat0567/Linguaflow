@@ -227,8 +227,17 @@ def main() -> int:
     print("\n")
     print(f"Источник:   {result.media.title}  "
           f"({format_srt_time(result.media.duration)[:-4]})")
+    sure = transcript.confidence_in_language
     print(f"Язык:       {result.language_name} "
-          f"(уверенность {transcript.language_probability:.0%})")
+          + (f"(уверенность {sure:.0%})" if sure is not None
+             else "(задан вручную)"))
+    if transcript.language_looks_wrong:
+        from lt_core import languages as _languages
+        heard = _languages.describe(transcript.detected_language)
+        print(f"            ВНИМАНИЕ: запись звучит как {heard} "
+              f"(уверенность {transcript.detected_probability:.0%}). "
+              f"Распознавание по заданному языку даёт связный, но выдуманный "
+              f"текст — проверьте выбор языка и звуковую дорожку.")
     if not result.is_supported_language:
         print("            ВНИМАНИЕ: язык вне восьми поддерживаемых — "
               "качество не гарантировано.")

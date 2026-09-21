@@ -138,6 +138,17 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Проверьте язык": ("Check the language", "Sprache prüfen"),
+    "Запись звучит как {heard}, а распознавали как {used}. "
+    "По неверному языку текст выходит связным и выдуманным — "
+    "проверьте выбор языка и звуковую дорожку файла.": (
+        "The recording sounds like {heard}, but it was transcribed as "
+        "{used}. Under the wrong language the text comes out fluent and "
+        "invented — check the language and the file's audio track.",
+        "Die Aufnahme klingt nach {heard}, transkribiert wurde sie als "
+        "{used}. Mit der falschen Sprache entsteht flüssiger, erfundener "
+        "Text — prüfen Sie Sprache und Tonspur der Datei.",
+    ),
     "ОК": ("OK", "OK"),
     "Начать перевод": ("Start translating", "Übersetzung starten"),
     "… и ещё {count} субтитров в сохранённых файлах": (

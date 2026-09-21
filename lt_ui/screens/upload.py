@@ -458,6 +458,28 @@ class _Done(QWidget):
         self._body.addLayout(header)
         self._body.addSpacing(20)
 
+        transcript = result.transcript
+        if transcript.language_looks_wrong:
+            # Whisper never refuses a language it is given: told that Russian
+            # speech is English, it writes fluent English that reads exactly
+            # like a good transcript. The only place this can be caught is
+            # here, before the reader believes it.
+            heard = display_name(transcript.detected_language)
+            panel = glass.GlassPanel(self, radius=14, accent_fill=True)
+            inside = QVBoxLayout(panel)
+            inside.setContentsMargins(16, 14, 16, 14)
+            inside.setSpacing(4)
+            inside.addWidget(glass.eyebrow(_("Проверьте язык")))
+            inside.addWidget(glass.label(
+                _("Запись звучит как {heard}, а распознавали как {used}. "
+                  "По неверному языку текст выходит связным и выдуманным — "
+                  "проверьте выбор языка и звуковую дорожку файла.",
+                  heard=heard, used=display_name(transcript.language)),
+                13, 500, theme.SECONDARY, wrap=True,
+            ))
+            self._body.addWidget(panel)
+            self._body.addSpacing(16)
+
         cues = result.cues
         translated = result.translated_cues or ()
         for index, cue in enumerate(cues[:24]):

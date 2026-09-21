@@ -76,6 +76,17 @@ class TranscribeOptions:
     #: for a recording that needs it, and not the default.
     hallucination_silence_threshold: float | None = None
     initial_prompt: str | None = None
+    #: Check a named language against the recording, rather than taking it.
+    #:
+    #: Whisper never refuses a language it is given. Told that Russian speech
+    #: is English, it writes fluent English -- a translation, not a transcript
+    #: -- and reports a language probability of 1.0, because it was not asked.
+    #: Nothing downstream can tell that apart from a good transcript, so the
+    #: whole job comes out wrong and confident.
+    #:
+    #: Costs one detection pass over the opening audio: 1.8 s on a
+    #: twelve-minute recording, against 85 s for the job.
+    verify_language: bool = True
     #: Prime the model with a short, punctuated sample in the language being
     #: transcribed, so that it punctuates its own output.
     #:
@@ -229,14 +240,22 @@ class Transcriber:
         started = time.perf_counter()
 
         language = options.language
+        detected, detected_probability = "", 0.0
+        wants_detection = language is None and (
+            options.initial_prompt is None and options.punctuation_prompt
+        )
+        if wants_detection or (language is not None and options.verify_language):
+            # When no language was given, the sample for the prompt has to be
+            # in the recording's own language, and a prompt in the wrong one is
+            # the single way the prompt is known to cause harm -- so the
+            # language is settled off the opening seconds rather than guessed.
+            # When one was given, the same answer says whether it was right.
+            detected, detected_probability = self.detect_language(source)
+            if language is None:
+                language = detected
+
         prompt = options.initial_prompt
         if prompt is None and options.punctuation_prompt:
-            if language is None:
-                # The sample has to be in the recording's own language, and a
-                # prompt in the wrong one is the single way this is known to
-                # cause harm -- so the language is settled first, off the
-                # opening seconds, rather than guessed.
-                language, _confidence = self.detect_language(source)
             prompt = languages.punctuation_sample(language) or None
         prompt = _with_terms(prompt, options.terms)
 
@@ -262,6 +281,8 @@ class Transcriber:
             segments=segments,
             language=info.language,
             language_probability=float(info.language_probability),
+            detected_language=detected,
+            detected_probability=detected_probability,
             duration=float(duration),
             elapsed=time.perf_counter() - started,
             model=self.model_name,

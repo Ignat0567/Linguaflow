@@ -422,3 +422,61 @@ def test_starting_again_hides_the_button(window):
     window._upload._on_fail("ошибка")
     window._upload._busy.reset("clip.mp4")
     assert window._upload._busy._ok.isHidden()
+
+
+# -- a language the recording contradicts -------------------------------
+
+def _finished(detected: str, probability: float):
+    """A finished job, of the shape the result screen is handed."""
+    from types import SimpleNamespace
+
+    from lt_core.asr.types import Transcript
+    from lt_core.subtitles.cues import Cue
+
+    transcript = Transcript(
+        segments=(), language="en", language_probability=1.0, duration=12.0,
+        detected_language=detected, detected_probability=probability,
+    )
+    return SimpleNamespace(
+        transcript=transcript,
+        media=SimpleNamespace(title="лекция.m4a", duration=12.0),
+        cues=(Cue(index=1, start=0.0, end=2.0, lines=("Hello there.",)),),
+        translated_cues=(Cue(index=1, start=0.0, end=2.0, lines=("Здравствуйте.",)),),
+        outputs={},
+    )
+
+
+def _texts(widget) -> str:
+    """Every label on the widget, folded -- the eyebrow style uppercases."""
+    from PySide6.QtWidgets import QLabel
+
+    return " ".join(
+        child.text() for child in widget.findChildren(QLabel)).casefold()
+
+
+def test_a_recording_in_another_language_says_so_on_the_result(window):
+    """Told that Russian speech is English, Whisper writes fluent English that
+    reads exactly like a good transcript. The result screen is the last place
+    it can be caught before the reader believes it."""
+    from types import SimpleNamespace
+
+    window.goto("upload")
+    done = window._upload._done
+    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    done.show_result(_finished("ru", 1.0), settings)
+    shown = _texts(done)
+    assert i18n._("Проверьте язык").casefold() in shown
+    assert "звуковую дорожку" in shown, (
+        "the reason, not just the heading"
+    )
+    assert "русский" in shown, "the language actually heard"
+
+
+def test_a_recording_that_agrees_says_nothing(window):
+    from types import SimpleNamespace
+
+    window.goto("upload")
+    done = window._upload._done
+    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    done.show_result(_finished("en", 1.0), settings)
+    assert i18n._("Проверьте язык").casefold() not in _texts(done)

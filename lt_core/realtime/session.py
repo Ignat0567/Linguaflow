@@ -308,6 +308,10 @@ class LiveSession:
                 # detection would run on every two-second window, and this
                 # path already carries its own context above.
                 punctuation_prompt=False,
+                # For the same reason: a language named once cannot be worth
+                # re-checking a hundred times a minute. Conversation mode does
+                # its own detection, over a window sized for the question.
+                verify_language=False,
                 # File mode carries the previous window's text forward, which
                 # is what makes it punctuate. Here a window is two seconds and
                 # the text before it is already supplied above, deliberately,
