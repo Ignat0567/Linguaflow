@@ -393,3 +393,61 @@ def test_the_tap_listens_before_the_volume_the_viewer_hears():
 
     assert "src.connect(proc)" in TAP_JS
     assert "gain.connect(proc)" not in TAP_JS
+
+
+# -- sites this engine cannot play ------------------------------------------
+
+@pytest.mark.parametrize("url,plays", [
+    ("https://www.youtube.com/watch?v=abc", True),
+    ("https://x.com/someone/status/1", False),
+    ("https://mobile.twitter.com/someone/status/1", False),
+    ("https://twitter.com/someone", False),
+    ("https://notx.com/video", True),
+])
+def test_sites_without_playable_video_are_known(url, plays):
+    """X serves H.264 only and this web engine has none -- measured in
+    spike/browser_probe.py. Those pages are sent to the download path."""
+    from PySide6.QtCore import QUrl
+
+    from lt_ui.browser import plays_here
+
+    assert plays_here(QUrl(url)) is plays
+
+
+@pytest.mark.parametrize("url,label", [
+    ("https://www.youtube.com/watch?v=UF8uR6Z6KLc&t=10s", "youtube.com/watch?v=UF8uR6Z6KLc"),
+    ("https://x.com/someone/status/1789", "x.com/…/1789"),
+    ("https://ted.com/", "ted.com"),
+    ("https://vimeo.com/123", "vimeo.com/123"),
+])
+def test_a_link_gets_a_short_caption(url, label):
+    from lt_ui.screens.upload import link_label
+
+    assert link_label(url) == label
+
+
+def test_a_link_reaches_the_file_screen_as_the_string_it_is(qapp, tmp_path):
+    """A Path would make «https://x.com/…» into «https:» plus backslashes on
+    Windows, and yt-dlp would be handed a file name that does not exist."""
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    url = "https://x.com/someone/status/1789"
+    window.translate_link(url)
+    assert window.current_screen == "upload"
+    assert window._upload._path == url
+    assert isinstance(window._upload._path, str)
+    window.close()
+
+
+def test_the_browser_remembers_where_it_was(qapp, tmp_path):
+    from PySide6.QtCore import QUrl
+
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    window._browser._show_url(QUrl("https://www.youtube.com/watch?v=abc"))
+    window.close()
+    assert Store(tmp_path).settings.browser_url == "https://www.youtube.com/watch?v=abc"

@@ -136,6 +136,15 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Übersetzung einschalten und ein Video abspielen",
     ),
     "Переводить видео": ("Translate video", "Video übersetzen"),
+    "Скачать и перевести": ("Download and translate", "Herunterladen und übersetzen"),
+    "Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»": (
+        "This site's videos do not play here — use “Download and translate”",
+        "Videos dieser Seite laufen hier nicht — „Herunterladen und übersetzen“ nutzen",
+    ),
+    "Ссылка — видео скачается, когда начнётся перевод": (
+        "Link — the video is downloaded when translation starts",
+        "Link — das Video wird beim Start der Übersetzung geladen",
+    ),
     "Жду, когда заиграет видео": (
         "Waiting for a video to play", "Warte, bis ein Video läuft",
     ),
@@ -152,6 +161,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "A video is being translated on the Browser screen.",
         "Auf dem Bildschirm „Browser“ wird gerade ein Video übersetzt.",
     ),
+    # -- realtime (continued) --------------------------------------------
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),

@@ -38,6 +38,15 @@ from PySide6.QtWebEngineCore import (
 )
 
 HOME_URL = "https://www.youtube.com/"
+
+#: Sites whose video this build cannot play: they serve H.264 only, and the
+#: web engine has no H.264. The download path decodes them with ffmpeg.
+NO_PLAYBACK_HOSTS = ("x.com", "twitter.com")
+
+
+def plays_here(url: QUrl) -> bool:
+    host = url.host().lower().removeprefix("www.").removeprefix("mobile.")
+    return not any(host == h or host.endswith("." + h) for h in NO_PLAYBACK_HOSTS)
 SEARCH_URL = "https://www.youtube.com/results?search_query={}"
 
 #: The tap and its drain run here, not in the page's own world: the page can

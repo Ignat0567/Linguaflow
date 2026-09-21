@@ -148,6 +148,8 @@ class Settings:
     #: right place. A folder chosen by the user is used as given: someone who
     #: picks «Загрузки» wants the file in «Загрузки», not in a subfolder.
     output_dir: str = ""
+    #: Where the browser screen was last. Empty means its home page.
+    browser_url: str = ""
     #: Floating caption window over the meeting.
     overlay: bool = True
     #: True: the window stays on this monitor but is absent from Zoom/Meet

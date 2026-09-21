@@ -218,6 +218,11 @@ class Window(QWidget):
         self._nav.set_active(name)
         widget.refresh()
 
+    def translate_link(self, url: str) -> None:
+        """Hand a video's address to the file screen, ready to start."""
+        self.goto("upload")
+        self._upload.open_link(url)
+
     def history_changed(self) -> None:
         self._home.refresh()
         self._history.refresh()

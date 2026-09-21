@@ -14,7 +14,7 @@ from lt_core.audio.capture import PageAudioSource
 from lt_core.realtime.session import append_committed
 
 from .. import glass, theme
-from ..browser import HOME_URL, PageTap, address_to_url, browser_profile
+from ..browser import HOME_URL, PageTap, address_to_url, browser_profile, plays_here
 from ..i18n import _
 from ..widgets import LanguagePair, clear_fill
 
@@ -86,6 +86,11 @@ class BrowserScreen(QWidget):
         self._speak.toggled.connect(self._sync_voice)
         self._overlay_btn = glass.GlassButton(_("Окно субтитров"), self, height=34)
         self._overlay_btn.clicked.connect(self._toggle_overlay)
+        # The whole video, the long way: downloaded, transcribed, subtitled
+        # and dubbed as a file. Also the only way for sites whose video this
+        # engine cannot play.
+        self._download = glass.GlassButton(_("Скачать и перевести"), self, height=34)
+        self._download.clicked.connect(self._translate_as_file)
         self._status = glass.label("", 12, 400, 0.66)
 
         controls = QHBoxLayout()
@@ -94,6 +99,7 @@ class BrowserScreen(QWidget):
         controls.addWidget(_pill(_("Переводить видео"), self._translate, self))
         controls.addWidget(_pill(_("Озвучивать"), self._speak, self))
         controls.addWidget(self._overlay_btn)
+        controls.addWidget(self._download)
         controls.addWidget(self._status, 1)
 
         root = QVBoxLayout(self)
@@ -140,7 +146,8 @@ class BrowserScreen(QWidget):
         self._frame_layout.addWidget(self._view)
         self._tap = PageTap(self._page, self)
         self._tap.state.connect(self._on_tap_state)
-        self._view.load(QUrl(HOME_URL))
+        last = self.app.store.settings.browser_url
+        self._view.load(QUrl(last if last.startswith("http") else HOME_URL))
 
     def shutdown(self) -> None:
         """Stop translating before the widgets go (language change, quit)."""
@@ -164,6 +171,18 @@ class BrowserScreen(QWidget):
     def _show_url(self, url: QUrl) -> None:
         if not self._address.hasFocus():
             self._address.setText(url.toString())
+        if url.scheme() in ("http", "https"):
+            self.app.store.settings.browser_url = url.toString()
+            self.app.store.save_settings()
+        if not plays_here(url) and not self._mine:
+            self._status.setText(_("Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»"))
+
+    def _translate_as_file(self) -> None:
+        if self._view is None:
+            return
+        url = self._view.url().toString()
+        if url.startswith("http"):
+            self.app.translate_link(url)
 
     # -- settings ----------------------------------------------------------
     def _sync_pair(self) -> None:
@@ -216,7 +235,11 @@ class BrowserScreen(QWidget):
         self._status.setText({
             "listening": _("Слушаю видео"),
             "ad": _("Идёт реклама — её не перевожу"),
-            "waiting": _("Жду, когда заиграет видео"),
+            "waiting": (
+                _("Жду, когда заиграет видео")
+                if self._view is None or plays_here(self._view.url())
+                else _("Видео с этого сайта здесь не воспроизводится — нажмите «Скачать и перевести»")
+            ),
         }.get(state, ""))
 
     def _on_update(self, update) -> None:
