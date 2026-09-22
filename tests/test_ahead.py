@@ -291,14 +291,13 @@ def test_a_sentence_is_not_carried_across_to_the_other_speaker():
     ]
 
 
-def test_the_male_voice_is_the_one_kept_for_russian():
+def test_the_browser_reads_with_the_same_pair_as_the_file_dub():
     from lt_ui.screens.browser import voice_names
 
     russian = voice_names("ru")
-    # dmitri was listened to and kept over ruslan and denis.
-    assert russian["male"] == russian[""] == "ru_RU-dmitri-medium"
-    assert russian["female"] == "ru_RU-irina-medium"
-    # English's own voice is a woman's: the man is its male voice.
+    # Chosen by ear on a real video: ruslan, and terra over irina.
+    assert russian["male"] == "ru_RU-ruslan-medium"
+    assert russian["female"] == "ru_RU-terra5871-medium"
     english = voice_names("en")
     assert english["male"] == "en_US-hfc_male-medium"
     assert english["female"] == "en_US-lessac-medium"

@@ -51,6 +51,43 @@ MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.84, 1.0
 LENGTH_RESPONSE = 0.55
 
 
+#: Voices from outside Piper's own catalogue: name -> Hugging Face repo.
+#:
+#: Russian has one female Piper voice, irina, and listened to against the
+#: alternatives she was turned down flat («как тупая»). terra is a community
+#: voice (rraaww/ru_piper, Apache-2.0), trained on about two hours -- the
+#: author calls most of his models experiments, terra one of the two that
+#: had enough data. Chosen by ear over mari and kat; igm turned out male.
+EXTRA_VOICES: dict[str, str] = {
+    "ru_RU-terra5871-medium": "rraaww/ru_piper",
+}
+
+#: Phoneme sequences a voice was trained to hear differently.
+#:
+#: terra was trained with its author's own espeak rules, and standard espeak
+#: writes «ч» as t ʃ ʲ, which terra reads close to «ш»: «честно» came out
+#: «шестно». Written t ɕ instead it was heard right, of three variants
+#: listened to side by side.
+PHONEME_FIXES: dict[str, tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]] = {
+    "ru_RU-terra5871-medium": ((("t", "ʃ", "ʲ"), ("t", "ɕ")),),
+}
+
+
+def _refit_phonemes(phonemes: list[str], fixes) -> list[str]:
+    result: list[str] = []
+    index = 0
+    while index < len(phonemes):
+        for old, new in fixes:
+            if tuple(phonemes[index:index + len(old)]) == old:
+                result.extend(new)
+                index += len(old)
+                break
+        else:
+            result.append(phonemes[index])
+            index += 1
+    return result
+
+
 class VoiceError(RuntimeError):
     def __init__(self, message: str, detail: str = "") -> None:
         super().__init__(message)
@@ -137,6 +174,8 @@ class Speaker:
         from piper import PiperVoice
 
         path = self.voices_dir / f"{self.voice_name}.onnx"
+        if not path.exists() and self.voice_name in EXTRA_VOICES:
+            self._fetch_extra(path)
         if not path.exists():
             raise VoiceError(
                 f"Голос «{self.voice_name}» не скачан. Загрузите его командой:\n"
@@ -144,10 +183,34 @@ class Speaker:
                 f"{self.voice_name}"
             )
         try:
-            return PiperVoice.load(str(path.resolve()))
+            voice = PiperVoice.load(str(path.resolve()))
         except Exception as exc:
             raise VoiceError(
                 f"Не удалось загрузить голос «{self.voice_name}».", str(exc)
+            ) from exc
+        fixes = PHONEME_FIXES.get(self.voice_name)
+        if fixes:
+            # Piper's synthesis asks the voice for its phonemes, so the fix
+            # goes there and everything after -- pace, levels -- is Piper's.
+            phonemize = voice.phonemize
+            voice.phonemize = lambda text: [
+                _refit_phonemes(list(sentence), fixes) for sentence in phonemize(text)
+            ]
+        return voice
+
+    def _fetch_extra(self, path: Path) -> None:
+        """A community voice, fetched on first use (about 64 MB)."""
+        try:
+            from huggingface_hub import hf_hub_download
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            for suffix in (".onnx", ".onnx.json"):
+                hf_hub_download(EXTRA_VOICES[self.voice_name],
+                                f"{self.voice_name}{suffix}", local_dir=path.parent)
+        except Exception as exc:  # noqa: BLE001 -- reported as not downloaded below
+            raise VoiceError(
+                f"Голос «{self.voice_name}» не удалось скачать. Для первой "
+                f"загрузки нужен интернет.", str(exc),
             ) from exc
 
     # -- synthesis -------------------------------------------------------

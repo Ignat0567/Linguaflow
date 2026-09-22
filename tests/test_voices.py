@@ -251,7 +251,8 @@ def test_russian_pair_is_the_measured_one_not_the_default_voice():
     listener cannot tell apart, which is the bug this records.
     """
     assert languages.voice_for("ru", MALE) == "ru_RU-ruslan-medium"
-    assert languages.voice_for("ru", FEMALE) == "ru_RU-irina-medium"
+    # terra rather than Piper's own irina, turned down by ear.
+    assert languages.voice_for("ru", FEMALE) == "ru_RU-terra5871-medium"
     assert languages.CATALOGUE["ru"].piper_voice == "ru_RU-dmitri-medium"
 
 
@@ -327,3 +328,15 @@ def test_a_short_line_joins_the_neighbour_nearer_in_time():
     spans = [Cue(1, 20.0, 26.0, ("a",)), Cue(2, 28.1, 28.6, ("Hi,",)),
              Cue(3, 28.7, 33.0, ("listeners",))]
     assert speaker_of([0, None, 1], spans) == [0, 1, 1]
+
+
+
+def test_terra_hears_ch_as_ch():
+    """Standard espeak writes «ч» as t ʃ ʲ, which terra read close to «ш»:
+    «честно» came out «шестно». It is given t ɕ."""
+    from lt_core.tts.speaker import PHONEME_FIXES, _refit_phonemes
+
+    fixes = PHONEME_FIXES["ru_RU-terra5871-medium"]
+    assert _refit_phonemes(list("tʃʲˈesnʌ"), fixes) == list("tɕˈesnʌ")
+    assert _refit_phonemes(list("nˈotʃʲ"), fixes) == list("nˈotɕ")
+    assert _refit_phonemes(list("ɕˈuka"), fixes) == list("ɕˈuka")

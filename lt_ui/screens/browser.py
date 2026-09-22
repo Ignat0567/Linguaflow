@@ -667,18 +667,20 @@ class BrowserScreen(QWidget):
 def voice_names(language: str) -> dict[str, str]:
     """The Piper voice for "" (unmeasured), "male" and "female" lines.
 
-    The man is the language's own voice where that is a man's -- for Russian
-    dmitri, the one listened to and kept over ruslan and denis -- and its
-    male voice otherwise (English's own voice is a woman's).
+    The same pair the file dub uses -- for Russian ruslan and terra, chosen
+    by ear on a real video -- so a video sounds the same translated here or
+    on the Upload screen. A language with one voice reads everyone with it.
     """
     from lt_core import languages
 
     single = languages.voice_for(language)
     if not languages.has_voice_pair(language):
         return {"": single}
-    female = languages.voice_for(language, "female")
-    male = single if single != female else languages.voice_for(language, "male")
-    return {"": single, "male": male, "female": female}
+    return {
+        "": single,
+        "male": languages.voice_for(language, "male"),
+        "female": languages.voice_for(language, "female"),
+    }
 
 
 def _pill(caption: str, toggle, parent: QWidget) -> QWidget:
