@@ -230,11 +230,15 @@ def mix(
     keep_original: bool = True,
     rate: int = DUB_SAMPLE_RATE,
     match_voices: bool = False,
+    speaker_model: Path | str | None = None,
 ) -> DubResult:
     """Dub a recording: speak the cues, duck the original, mix the two.
 
     With `match_voices`, the original is measured first and each line is read
-    by a voice of the same register. That needs the original audio whether or
+    by a voice of the same register. With a `speaker_model` too, the people
+    are told apart by their voices first and each person gets one register
+    (`lt_core.tts.speakers`); pitch alone could not split a man and a woman
+    who share one. That needs the original audio whether or
     not it is kept in the mix, which is why it is loaded before anything is
     spoken.
     """
@@ -242,7 +246,11 @@ def mix(
 
     cast = None
     if match_voices and original is not None and isinstance(speaker, VoiceBank):
-        cast = casting.analyse(cues, original, rate)
+        people = _people(cues, original, rate, speaker_model)
+        if people is not None:
+            cast = casting.cast_people(cues, original, rate, people)
+        else:
+            cast = casting.analyse(cues, original, rate)
 
     dub = synthesise_track(cues, speaker, total_seconds, rate=rate, cast=cast)
     if not keep_original or original is None:
@@ -259,6 +267,20 @@ def mix(
         mixed *= 0.98 / peak
     dub.samples = mixed
     return dub
+
+
+def _people(cues, original: np.ndarray, rate: int, model) -> list[int] | None:
+    """Who speaks each cue, or None when the speaker model is not to hand."""
+    if model is None:
+        return None
+    try:
+        from . import speakers
+
+        voice_rate = 16_000
+        audio = resample(original, rate, voice_rate)
+        return speakers.speaker_of(speakers.identify(cues, audio, voice_rate, model), cues)
+    except Exception:  # noqa: BLE001 -- no model, no sherpa: pitch alone
+        return None
 
 
 def _load(media_path: Path | str, rate: int) -> np.ndarray:

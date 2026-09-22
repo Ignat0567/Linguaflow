@@ -578,8 +578,8 @@ class SettingsScreen(QWidget):
         if self.app.store.settings.match_voices and languages.has_voice_pair(code):
             self._voice_note.setText(_(
                 "Язык перевода — {language}. Мужские реплики читает мужской "
-                "голос, женские — женский. Кто говорит, определяется по "
-                "высоте голоса в оригинале, отдельно для каждой реплики.",
+                "голос, женские — женский. Кто говорит, программа узнаёт по "
+                "тембру голоса, а мужской он или женский — по его высоте.",
                 language=spoken,
             ))
         else:

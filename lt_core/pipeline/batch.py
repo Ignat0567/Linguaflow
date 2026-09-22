@@ -363,6 +363,17 @@ def transcribe_file(
             translated_cues, target_language, bilingual,
         )
 
+        speaker_model = None
+        if pair:
+            # Told apart by voice, not by pitch alone; fetched on first use,
+            # and without it (offline) the pitch casting still runs.
+            from ..tts import speakers
+
+            try:
+                speaker_model = speakers.ensure_model(voices_dir.parent / "speaker")
+                stage(tell("Различаю голоса"))
+            except Exception:  # noqa: BLE001
+                speaker_model = None
         stage(tell("Озвучиваю перевод, голоса по говорящему") if pair
               else tell("Озвучиваю перевод"))
         # Spoken as sentences. A dub cut to subtitle timings speaks in
@@ -370,7 +381,7 @@ def transcribe_file(
         # read and not where a thought ends.
         dub = mix(media.path, spoken_units or translated_cues, bank,
                   media.duration, keep_original=keep_original_audio,
-                  match_voices=pair)
+                  match_voices=pair, speaker_model=speaker_model)
         outputs["audio"] = write_wav(
             destination / f"{media.path.stem}.{target_language}.wav",
             dub.samples, dub.rate,

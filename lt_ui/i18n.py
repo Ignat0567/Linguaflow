@@ -371,14 +371,14 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Für diese Sprache ist noch keine Stimme festgelegt.",
     ),
     "Язык перевода — {language}. Мужские реплики читает мужской "
-    "голос, женские — женский. Кто говорит, определяется по "
-    "высоте голоса в оригинале, отдельно для каждой реплики.": (
+    "голос, женские — женский. Кто говорит, программа узнаёт по "
+    "тембру голоса, а мужской он или женский — по его высоте.": (
         "Translating into {language}. Male lines are read in a male voice, "
-        "female lines in a female one. Who is speaking is decided from the "
-        "pitch of the original, line by line.",
+        "female lines in a female one. Who is speaking is recognised by the "
+        "timbre of their voice, and male or female by its pitch.",
         "Übersetzung nach {language}. Männliche Zeilen liest eine männliche "
-        "Stimme, weibliche eine weibliche. Wer spricht, wird aus der "
-        "Stimmhöhe des Originals bestimmt, Zeile für Zeile.",
+        "Stimme, weibliche eine weibliche. Wer spricht, wird am Klang der "
+        "Stimme erkannt, männlich oder weiblich an ihrer Höhe.",
     ),
     "Язык перевода — {language}. Всё читает один голос.": (
         "Translating into {language}. One voice reads everything.",
