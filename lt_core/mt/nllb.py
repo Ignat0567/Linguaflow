@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .. import languages
 from ..runtime import bootstrap
-from .loanwords import germanise
+from .loanwords import germanise, restore
 from .types import NLLB_CODES, TranslationError
 
 #: The larger distilled model, int8. Measured on German meeting speech
@@ -258,9 +258,10 @@ class NllbTranslator:
         for owner, response in zip(ownership, responses):
             # The first token is the target-language tag the model echoes back.
             tokens = response.hypotheses[0][1:]
-            collected[owner].append(
-                tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip()
-            )
+            collected[owner].append(restore(
+                tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip(),
+                source, target,
+            ))
 
         joiner = " " if languages.joins_with_space(target) else ""
         return [
