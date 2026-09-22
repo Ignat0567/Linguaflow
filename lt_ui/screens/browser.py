@@ -28,6 +28,7 @@ from lt_core.realtime.session import append_committed
 from .. import glass, theme
 from ..browser import (
     HOME_URL,
+    CatchUp,
     PageTap,
     address_to_url,
     browser_profile,
@@ -118,6 +119,13 @@ class BrowserScreen(QWidget):
         self._translate.toggled.connect(self._toggled)
         self._speak = glass.Toggle(self)
         self._speak.toggled.connect(self._sync_voice)
+        self._catch_toggle = glass.Toggle(self)
+        self._catch_toggle.toggled.connect(self._sync_catch_up)
+        self._catch = CatchUp(
+            self, self,
+            backlog=lambda: self._source.queued_seconds if self._source else 0.0,
+        )
+        self._catch.held.connect(self._on_held)
         self._status = glass.label("", 12, 400, 0.66, wrap=True)
 
         controls = QHBoxLayout()
@@ -125,6 +133,7 @@ class BrowserScreen(QWidget):
         controls.addWidget(self._pair)
         controls.addWidget(_pill(_("Переводить видео"), self._translate, self))
         controls.addWidget(_pill(_("Озвучивать"), self._speak, self))
+        controls.addWidget(_pill(_("Догонять"), self._catch_toggle, self))
         controls.addWidget(self._status, 1)
 
         root = QVBoxLayout(self)
@@ -142,6 +151,7 @@ class BrowserScreen(QWidget):
         engine.live_failed.connect(self._on_fail)
         engine.live_stopped.connect(self._on_stopped)
         engine.live_speaking.connect(self._on_speaking)
+        engine.live_lagging.connect(self._on_lagging)
 
     # -- lifecycle ---------------------------------------------------------
     def refresh(self) -> None:
@@ -150,6 +160,10 @@ class BrowserScreen(QWidget):
         self._speak.blockSignals(True)
         self._speak.setChecked(settings.realtime_voice)
         self._speak.blockSignals(False)
+        self._catch_toggle.blockSignals(True)
+        self._catch_toggle.setChecked(settings.browser_catch_up)
+        self._catch_toggle.blockSignals(False)
+        self._catch.enabled = settings.browser_catch_up
         self._ensure_view()
 
     def _ensure_view(self) -> None:
@@ -239,6 +253,13 @@ class BrowserScreen(QWidget):
         self.app.store.settings.realtime_voice = on
         self.app.store.save_settings()
 
+    def _sync_catch_up(self, on: bool) -> None:
+        self.app.store.settings.browser_catch_up = on
+        self.app.store.save_settings()
+        self._catch.enabled = on
+        if not on:
+            self._catch.release()
+
     # -- translation -------------------------------------------------------
     def _toggled(self, on: bool) -> None:
         if not on:
@@ -327,6 +348,24 @@ class BrowserScreen(QWidget):
     def _on_speaking(self, speaking: bool) -> None:
         if self._mine and self._audio is not None:
             self._audio.duck(speaking)
+            self._catch.speaking(speaking)
+
+    def _on_lagging(self, seconds: float) -> None:
+        if self._mine:
+            self._catch.line_lag(seconds)
+
+    def hold(self, held: bool) -> None:
+        """CatchUp's target: stop the video and its clock, or go on."""
+        if self._source is not None:
+            self._source.hold(held)
+        if self._audio is not None:
+            self._audio.hold(held)
+
+    def _on_held(self, held: bool) -> None:
+        if self._mine:
+            self._status.setText(
+                _("Пауза — перевод догоняет видео") if held else _("Слушаю видео")
+            )
 
     def _on_tap_state(self, state: str) -> None:
         if not self._mine or self._audio is not self._tap:
@@ -383,6 +422,8 @@ class BrowserScreen(QWidget):
         self._finish(message)
 
     def _finish(self, message: str) -> None:
+        # A video held for the reading goes on when translation ends.
+        self._catch.release()
         self._mine = False
         if self._tap is not None:
             self._tap.stop()

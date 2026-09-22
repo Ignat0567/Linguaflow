@@ -142,6 +142,11 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
     ),
     "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "Догонять": ("Catch up", "Aufholen"),
+    "Пауза — перевод догоняет видео": (
+        "Paused — the translation is catching up",
+        "Pause — die Übersetzung holt auf",
+    ),
     "← К странице": ("← Back to the page", "← Zurück zur Seite"),
     "Не удалось прочитать звук из {name}": (
         "Could not read the sound of {name}", "Der Ton von {name} ist nicht lesbar",

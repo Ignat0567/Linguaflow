@@ -75,6 +75,7 @@ class DownloadedVideo(QWidget):
         self._screen = QVideoWidget(self)
         self._picture.setVideoOutput(self._screen)
         self.sound: FilePlayback | None = None
+        self._held = False
 
         self._back = glass.GlassButton(_("← К странице"), self, height=32, padding=16)
         self._back.clicked.connect(self._close)
@@ -127,6 +128,17 @@ class DownloadedVideo(QWidget):
         self._picture.pause()
         self._toggle.setText("▶")
         self._sync.stop()
+
+    def hold(self, held: bool) -> None:
+        """Pause for the reading to catch up, or go on -- but only go on
+        with a video this held, never one the viewer paused."""
+        if held:
+            self._held = self.sound is not None and self.sound.playing
+            if self._held:
+                self.pause()
+        elif self._held:
+            self._held = False
+            self.play()
 
     def toggle(self) -> None:
         if self.sound is not None and self.sound.playing:

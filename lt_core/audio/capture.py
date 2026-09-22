@@ -156,6 +156,11 @@ class AudioSource(ABC):
     def dropped_blocks(self) -> int:
         return self._dropped_blocks
 
+    @property
+    def queued_seconds(self) -> float:
+        """Audio captured and not yet taken by the consumer (block-sized)."""
+        return self._queue.qsize() * BLOCK_SAMPLES / TARGET_SAMPLE_RATE
+
 
 class MicrophoneSource(AudioSource):
     """Capture from an input device via sounddevice."""
@@ -488,6 +493,10 @@ class PageAudioSource(AudioSource):
         self._gated = threading.Event()
         self._silence_blocks = 0
         self._gated_seconds = 0.0
+        # Held: the video was paused on purpose and its clock stops with it.
+        self._held_since: float | None = None
+        self._held_total = 0.0
+        self._clock_lock = threading.Lock()
 
     @property
     def silence_blocks(self) -> int:
@@ -508,6 +517,37 @@ class PageAudioSource(AudioSource):
             self._gated.set()
         else:
             self._gated.clear()
+
+    def hold(self, held: bool) -> None:
+        """Stop the clock while the video is paused so the reading can catch up.
+
+        Without this the paused seconds would be made up as silence, and
+        silence enough to fill the queue pushes out the oldest audio in it --
+        the speech not yet recognised, which is what the pause was for.
+        """
+        import time
+
+        with self._clock_lock:
+            now = time.monotonic()
+            if held and self._held_since is None:
+                self._held_since = now
+            elif not held and self._held_since is not None:
+                self._held_total += now - self._held_since
+                self._held_since = None
+
+    @property
+    def held(self) -> bool:
+        return self._held_since is not None
+
+    def _clock(self, started: float) -> float:
+        """Seconds the video has been running, not counting holds."""
+        import time
+
+        with self._clock_lock:
+            held = self._held_total
+            if self._held_since is not None:
+                held += time.monotonic() - self._held_since
+        return time.monotonic() - started - held
 
     def push(self, samples: np.ndarray, rate: int) -> None:
         """Hand over mono audio from the page. Safe from any thread.
@@ -543,7 +583,9 @@ class PageAudioSource(AudioSource):
             try:
                 samples, source_rate = self._inbox.get(timeout=block_seconds)
             except queue.Empty:
-                behind = (time.monotonic() - started) - (
+                # The held seconds are not in the clock, so a pause is never
+                # owed as silence.
+                behind = self._clock(started) - (
                     self._samples_emitted / TARGET_SAMPLE_RATE
                 )
                 while behind >= self.SILENCE_AFTER and not self._stop.is_set():

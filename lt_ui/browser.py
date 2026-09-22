@@ -468,6 +468,18 @@ def duck_js(level: float, fade: float) -> str:
     )
 
 
+#: Pause what is playing and mark it; release plays only what was marked, so
+#: a video the viewer paused themselves is not started behind their back.
+HOLD_JS = r"""
+(() => { let n = 0; for (const v of document.querySelectorAll('video')) {
+  if (!v.paused) { v.__lfHeld = true; v.pause(); n++; } } return n; })()
+"""
+RELEASE_JS = r"""
+(() => { let n = 0; for (const v of document.querySelectorAll('video')) {
+  if (v.__lfHeld) { v.__lfHeld = false; v.play().catch(() => {}); n++; } } return n; })()
+"""
+
+
 def switch_js(on: bool) -> str:
     return (
         "(() => { const lf = window.__lf || (window.__lf = "
@@ -532,6 +544,15 @@ class PageTap(QObject):
         elif self._ducked:
             self._restore.start(int(DUCK_BRIDGE * 1000))
 
+    def hold(self, held: bool) -> None:
+        """Pause the page's video for the reading to catch up, or go on."""
+        if self.source is not None:
+            self.source.hold(held)
+        try:
+            self.page.runJavaScript(HOLD_JS if held else RELEASE_JS, TAP_WORLD)
+        except RuntimeError:  # the page is already gone
+            pass
+
     def _set_volume(self, level: float) -> None:
         from lt_core.tts.dub import DUCK_FADE
 
@@ -579,3 +600,95 @@ class PageTap(QObject):
         if now != self._state:
             self._state = now
             self.state.emit(now)
+
+
+# -- catching up ---------------------------------------------------------
+
+class CatchUp(QObject):
+    """Hold the video while its translation is too far behind it.
+
+    A line read aloud blocks the live worker; the video goes on meanwhile,
+    and a translation is often longer than what it translates. Lines then
+    queue, each waits longer than the last, and past the capture queue's
+    eight seconds the oldest audio is dropped -- words that were never
+    recognised. Speeding the voice up buys ~15% before it stops sounding
+    human (see CATCH_UP_AFTER), which is not enough for a fast speaker.
+
+    So when the reading would trail the video by more than PAUSE_AT at the
+    end of the line about to be read -- what it waited plus its own length --
+    the video is paused. It goes on once the voice has been quiet for
+    RESUME_AFTER and the audio captured meanwhile has been taken
+    (`backlog`), so the next line does not arrive late and pause it again;
+    or after MAX_HOLD at the latest, so a stuck session never leaves the
+    video stopped.
+
+    Measured on a fast speaker, 60 s of video with the voice on: deciding on
+    the wait alone held too late and still lost 4.3 s of speech, and going
+    on as soon as the voice stopped paused again 0.6 s later.
+
+    `target` is the page tap or the downloaded video: anything with
+    hold(bool). `backlog` returns the seconds of audio waiting to be heard.
+    """
+
+    #: Seconds the reading may trail by the end of a line before the video
+    #: waits. An ordinary three-second line with no queue stays under it.
+    PAUSE_AT = 5.0
+    #: Quiet after the last line before the video goes on.
+    RESUME_AFTER = 1.0
+    #: Captured audio still unheard below which it counts as caught up.
+    CAUGHT_UP = 0.5
+    #: The longest the video is ever held.
+    MAX_HOLD = 20.0
+
+    held = Signal(bool)
+
+    def __init__(self, target, parent: QObject | None = None, backlog=None) -> None:
+        super().__init__(parent)
+        self.target = target
+        self.backlog = backlog or (lambda: 0.0)
+        self.enabled = True
+        self.holds = 0
+        self._holding = False
+        self._resume = QTimer(self)
+        self._resume.setSingleShot(True)
+        self._resume.timeout.connect(self._maybe_release)
+        self._limit = QTimer(self)
+        self._limit.setSingleShot(True)
+        self._limit.timeout.connect(self.release)
+
+    @property
+    def holding(self) -> bool:
+        return self._holding
+
+    def line_lag(self, seconds: float) -> None:
+        if not self.enabled or self._holding or seconds <= self.PAUSE_AT:
+            return
+        self._holding = True
+        self.holds += 1
+        self._resume.stop()
+        self.target.hold(True)
+        self._limit.start(int(self.MAX_HOLD * 1000))
+        self.held.emit(True)
+
+    def speaking(self, on: bool) -> None:
+        if not self._holding:
+            return
+        if on:
+            self._resume.stop()
+        else:
+            self._resume.start(int(self.RESUME_AFTER * 1000))
+
+    def _maybe_release(self) -> None:
+        if self.backlog() > self.CAUGHT_UP:
+            self._resume.start(int(self.RESUME_AFTER * 500))
+            return
+        self.release()
+
+    def release(self) -> None:
+        if not self._holding:
+            return
+        self._holding = False
+        self._resume.stop()
+        self._limit.stop()
+        self.target.hold(False)
+        self.held.emit(False)

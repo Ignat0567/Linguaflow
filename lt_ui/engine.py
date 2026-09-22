@@ -173,6 +173,11 @@ class LiveWorker(QThread):
     #: True while a translated line is being read out, False when it ends.
     #: The browser screen lowers the video under the voice with it.
     speaking = Signal(bool)
+    #: How far the reading will trail the video by the end of the line about
+    #: to be read: the time it waited for the voice plus its own length, in
+    #: seconds, sent as it starts. The browser screen holds the video when
+    #: this grows.
+    lagging = Signal(float)
 
     def __init__(
         self,
@@ -287,7 +292,7 @@ class LiveWorker(QThread):
                         self.update.emit(item)
                         if speak:
                             _read_out(item, voices, gate, session, playback,
-                                      self.speaking.emit)
+                                      self.speaking.emit, self.lagging.emit)
         except CaptureError as error:
             self.failed.emit(str(error))
             return
@@ -307,7 +312,7 @@ class LiveWorker(QThread):
             self.update.emit(final)
             if speak:
                 _read_out(final, voices, gate, session, playback,
-                          self.speaking.emit)
+                          self.speaking.emit, self.lagging.emit)
         self.stopped.emit()
 
 
@@ -326,7 +331,7 @@ CATCH_UP_AFTER = 1.0
 
 
 def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
-              session, playback: Playback, announce=None) -> None:
+              session, playback: Playback, announce=None, report=None) -> None:
     """Read a settled line out in the language it was translated into.
 
     Only settled lines: a provisional translation is replaced on the next tick,
@@ -362,13 +367,16 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
         voice = chosen
 
     behind = playback.behind(update.audio_time)
+    # Reported once the line is synthesised and its length known: a long
+    # line on top of a short wait is as much of a backlog as the reverse.
+    before = (lambda length: report(behind + length)) if report is not None else None
     spoken = _speak(voice, update.translation, gate,
-                    hurry=behind > CATCH_UP_AFTER, announce=announce)
+                    hurry=behind > CATCH_UP_AFTER, announce=announce, before=before)
     playback.done(update.audio_time, spoken)
 
 
 def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
-           hurry: bool = False, announce=None) -> float:
+           hurry: bool = False, announce=None, before=None) -> float:
     """Play a line; return how long it took. Blocks this worker, which is the
     point: capture continues on its own thread, and the echo gate keeps our
     voice out of the transcript.
@@ -378,7 +386,8 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
     sounding human, so asking for the impossible is safe.
 
     `announce` is told True as the line starts and False as it ends, whatever
-    happens in between.
+    happens in between. `before` is given the line's length, in seconds,
+    just before it is played.
     """
     if hurry:
         utterance = speaker.fit(text, 0.0, 0.01)
@@ -390,6 +399,8 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
     import sounddevice as sd
 
     duration = len(samples) / rate
+    if before is not None:
+        before(duration)
     if announce is not None:
         announce(True)
     try:
@@ -421,6 +432,7 @@ class Engine(QObject):
     live_failed = Signal(str)
     live_stopped = Signal()
     live_speaking = Signal(bool)
+    live_lagging = Signal(float)
 
     def __init__(self, parent: QObject | None = None, keys=None,
                  data_root: Path | None = None) -> None:
@@ -508,6 +520,7 @@ class Engine(QObject):
         worker.failed.connect(self.live_failed)
         worker.stopped.connect(self.live_stopped)
         worker.speaking.connect(self.live_speaking)
+        worker.lagging.connect(self.live_lagging)
         self._live = worker
         worker.start()
 
