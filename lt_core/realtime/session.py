@@ -121,6 +121,12 @@ class LiveUpdate:
 
     #: Text confirmed on this tick. Never revised afterwards.
     committed: str = ""
+    #: Whether `committed` begins a new word. Whisper's tokens carry their own
+    #: leading space and `committed` is stripped, so without this a screen
+    #: appending tick after tick has to guess -- and both guesses are wrong
+    #: somewhere: glued, "with you today" + "for your" reads "todayfor";
+    #: spaced, "$12" + ",000" reads "$12 ,000". Use `append_committed`.
+    committed_space: bool = True
     #: The provisional tail. Replaced wholesale on the next tick.
     partial: str = ""
     #: Translation of whatever sentences completed on this tick.
@@ -274,6 +280,7 @@ class LiveSession:
             translation = self._translate(force=True)
             return LiveUpdate(
                 committed="".join(word.text for word in tail).strip(),
+                committed_space=_starts_word(tail),
                 partial="",
                 translation=translation,
                 translation_language=self.target_language or "",
@@ -382,6 +389,7 @@ class LiveSession:
 
         return LiveUpdate(
             committed="".join(word.text for word in committed).strip(),
+            committed_space=_starts_word(committed),
             partial=partial,
             translation=translation,
             partial_translation=preview,
@@ -553,3 +561,18 @@ class LiveSession:
         finally:
             self.stats.mt_seconds += time.perf_counter() - started
         return results[0] if results else ""
+
+
+def _starts_word(words) -> bool:
+    """Whether the first of these words came with Whisper's leading space."""
+    return not words or words[0].text[:1].isspace()
+
+
+def append_committed(text: str, update: LiveUpdate) -> str:
+    """`text` with this tick's committed words added, spaced as spoken."""
+    if not update.committed:
+        return text
+    if not text:
+        return update.committed
+    joiner = " " if update.committed_space else ""
+    return text.rstrip() + joiner + update.committed

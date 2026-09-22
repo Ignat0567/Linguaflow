@@ -71,7 +71,7 @@ def test_the_session_goes_on_hearing_while_a_line_is_read(monkeypatch):
     minute was dropped unheard."""
     spoken: list[tuple[float, float]] = []
 
-    def slow_speak(speaker, text, gate, hurry=False):
+    def slow_speak(speaker, text, gate, hurry=False, **kwargs):
         start = time.monotonic()
         time.sleep(0.5)
         spoken.append((start, time.monotonic()))
@@ -107,7 +107,7 @@ def _reader(monkeypatch, clock_value):
     first = threading.Event()
     release = threading.Event()
 
-    def fake_read(update, voices, gate, session, behind=0.0):
+    def fake_read(update, voices, gate, session, behind=0.0, *rest):
         said.append(update.translation)
         if not first.is_set():
             first.set()

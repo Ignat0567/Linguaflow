@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 #: installation rather than being copied into each profile.
 MODEL_ROOT = ROOT / "models"
 
-SCREENS = ("home", "realtime", "upload", "history", "settings")
+SCREENS = ("home", "realtime", "browser", "upload", "history", "settings")
 
 _MONTHS = {
     "ru": (
@@ -148,6 +148,21 @@ class Settings:
     #: right place. A folder chosen by the user is used as given: someone who
     #: picks «Загрузки» wants the file in «Загрузки», not in a subfolder.
     output_dir: str = ""
+    #: Where the browser screen was last. Empty means its home page.
+    browser_url: str = ""
+    #: Pause the browser's video when the translation read aloud falls too
+    #: far behind it (lt_ui.browser.CatchUp). Off by default: the voice no
+    #: longer costs recognition anything (it reads on its own thread), and a
+    #: video that stops for ten seconds at a time reads as a fault.
+    browser_catch_up: bool = False
+    #: The language of the videos watched in the browser; "auto" detects it.
+    #: Separate from the Live screen's, which is a person's own language.
+    browser_from_lang: str = "auto"
+    #: What the browser translates into. Its own, too: sharing the Live
+    #: screen's meant a Russian speaker's «ru -> en» there made the browser
+    #: translate every video into English -- and a browser «-> ru» beside the
+    #: Live screen's «ru ->» was "clamped" back to English on every save.
+    browser_to_lang: str = "ru"
     #: Floating caption window over the meeting.
     overlay: bool = True
     #: True: the window stays on this monitor but is absent from Zoom/Meet
@@ -174,6 +189,11 @@ class Settings:
             self.to_lang = next(
                 (code for code in offered if code != self.from_lang), offered[0]
             )
+        if self.browser_to_lang not in offered:
+            self.browser_to_lang = "ru" if "ru" in offered else offered[0]
+        if (self.browser_from_lang not in (*offered, "auto")
+                or self.browser_from_lang == self.browser_to_lang):
+            self.browser_from_lang = "auto"
         if self.realtime_mode == "voice":
             # It was a mode before it was an option; carry the choice across.
             self.realtime_mode, self.realtime_voice = "subtitles", True

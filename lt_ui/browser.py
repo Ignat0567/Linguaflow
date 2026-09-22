@@ -1,0 +1,821 @@
+"""The embedded browser's machinery: profile, ad blocking, the audio tap.
+
+Measured before this was written (spike/browser_probe.py, adblock_probe.py):
+
+* This QtWebEngine plays VP9/Opus/AV1 and has no H.264/AAC. YouTube works;
+  a site that serves only H.264 -- X among them -- shows a player that never
+  starts. That is the build, not something this module can fix.
+* Tapping the page's <video> through Web Audio yields the video's own sound,
+  exactly: a track transcribed through the tap matched the direct
+  transcription word for word. So the dub read aloud through the speakers
+  never comes back in as speech.
+* Without a blocker, 36 of 37.5 seconds played on a YouTube talk were ads,
+  in the same <video>. They would have been translated and read out. Network
+  filtering alone blocked 6 requests and no ads (they come from the same
+  servers as the video); pruning the ad fields out of the player's response
+  took it to 0 s in 3 of 3 runs.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import re
+import threading
+import time
+import urllib.request
+from pathlib import Path
+
+import numpy as np
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+    QWebEngineSettings,
+    QWebEngineUrlRequestInfo,
+    QWebEngineUrlRequestInterceptor,
+)
+
+HOME_URL = "https://www.youtube.com/"
+
+#: Sites whose video this build cannot play: they serve H.264 only, and the
+#: web engine has no H.264. The download path decodes them with ffmpeg.
+NO_PLAYBACK_HOSTS = ("x.com", "twitter.com")
+
+
+def plays_here(url: QUrl) -> bool:
+    host = url.host().lower().removeprefix("www.").removeprefix("mobile.")
+    return not any(host == h or host.endswith("." + h) for h in NO_PLAYBACK_HOSTS)
+SEARCH_URL = "https://www.youtube.com/results?search_query={}"
+
+#: The tap and its drain run here, not in the page's own world: the page can
+#: neither see nor break them, and they cannot collide with its globals.
+TAP_WORLD = QWebEngineScript.ScriptWorldId.ApplicationWorld
+
+#: How often the page is drained. Also the upper bound on what the tap adds
+#: to the delay before a word reaches the recogniser.
+DRAIN_MS = 200
+
+
+# -- the address bar -----------------------------------------------------
+
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+_HOSTLIKE = re.compile(r"^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?(/.*)?$", re.I)
+
+
+def address_to_url(text: str) -> QUrl | None:
+    """What a line typed into the address bar means.
+
+    A URL is opened as typed; something that looks like a host gets https;
+    anything else is a search. The search is YouTube's, because finding a
+    video to watch is what this browser is for.
+    """
+    typed = (text or "").strip()
+    if not typed:
+        return None
+    if _SCHEME.match(typed):
+        return QUrl(typed)
+    if " " not in typed and _HOSTLIKE.match(typed):
+        return QUrl("https://" + typed)
+    return QUrl(SEARCH_URL.format(urllib.request.quote(typed)))
+
+
+# -- ad blocking ---------------------------------------------------------
+
+#: What uBlock Origin's YouTube rules do, written out. The player learns
+#: about ads from these fields of its player response, which arrives inline
+#: (ytInitialPlayerResponse) or from /youtubei/v1/player through fetch and
+#: JSON.parse. Removed on the way in, there is no ad to play. An ad that
+#: starts anyway is skipped. Runs in the page's world at document creation,
+#: before any of the page's scripts.
+YOUTUBE_ADS_JS = r"""
+(() => {
+  if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
+  const KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+  const prune = (o) => {
+    if (!o || typeof o !== 'object') return o;
+    for (const k of KEYS) if (k in o) delete o[k];
+    if (o.playerResponse) prune(o.playerResponse);
+    return o;
+  };
+  const parse = JSON.parse;
+  JSON.parse = function (...args) { return prune(parse.apply(this, args)); };
+  const json = Response.prototype.json;
+  Response.prototype.json = function (...args) { return json.apply(this, args).then(prune); };
+  let initial;
+  Object.defineProperty(window, 'ytInitialPlayerResponse', {
+    configurable: true,
+    get() { return initial; },
+    set(v) { initial = prune(v); },
+  });
+  setInterval(() => {
+    const player = document.querySelector('.html5-video-player.ad-showing');
+    if (!player) return;
+    const skip = document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern');
+    if (skip) skip.click();
+    const v = player.querySelector('video');
+    if (v && isFinite(v.duration)) v.currentTime = v.duration;
+  }, 300);
+})();
+"""
+
+FILTER_LISTS = {
+    "easylist.txt": "https://easylist.to/easylist/easylist.txt",
+    "ubo-filters.txt": "https://ublockorigin.github.io/uAssets/filters/filters.txt",
+    "ubo-quick-fixes.txt": "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt",
+}
+
+#: Lists older than this are fetched again, in the background.
+FILTER_MAX_AGE = 4 * 24 * 3600
+
+_REQUEST_TYPES = {
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame: "document",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeSubFrame: "subdocument",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeStylesheet: "stylesheet",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeScript: "script",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeImage: "image",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeFontResource: "font",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMedia: "media",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeXhr: "xmlhttprequest",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypePing: "ping",
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeCspReport: "csp_report",
+}
+
+
+def fetch_filter_lists(folder: Path, max_age: float = FILTER_MAX_AGE) -> list[Path]:
+    """Download the lists that are missing or stale; return those on disk.
+
+    A failed download keeps the old copy. No copy at all only means the
+    network half of the blocker is off -- YouTube's ads are handled by
+    YOUTUBE_ADS_JS, which needs no list.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, url in FILTER_LISTS.items():
+        path = folder / name
+        if path.exists() and time.time() - path.stat().st_mtime < max_age:
+            continue
+        # easylist.to answers Python's default User-Agent with 403.
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Linguaflow"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read()
+            partial = path.with_suffix(".part")
+            partial.write_bytes(body)
+            partial.replace(path)
+        except Exception:  # noqa: BLE001 -- offline, blocked, moved: keep the old one
+            continue
+    return [folder / name for name in FILTER_LISTS if (folder / name).exists()]
+
+
+def build_blocker(lists: list[Path]):
+    """An adblock-rust engine over the given lists, or None without them."""
+    if not lists:
+        return None
+    try:
+        import adblock
+    except ImportError:
+        return None
+    filters = adblock.FilterSet()
+    for path in lists:
+        filters.add_filter_list(path.read_text(encoding="utf-8", errors="replace"))
+    return adblock.Engine(filters, optimize=True)
+
+
+class AdInterceptor(QWebEngineUrlRequestInterceptor):
+    """Refuses requests the filter lists name. Runs on Qt's network thread."""
+
+    def __init__(self, engine, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.engine = engine
+        self.blocked = 0
+
+    def interceptRequest(self, info: QWebEngineUrlRequestInfo) -> None:  # noqa: N802
+        url = info.requestUrl().toString()
+        if not url.startswith("http"):
+            return
+        kind = _REQUEST_TYPES.get(info.resourceType(), "other")
+        source = info.firstPartyUrl().toString() or url
+        try:
+            matched = self.engine.check_network_urls(url, source, kind).matched
+        except Exception:  # noqa: BLE001 -- a filter bug must not break browsing
+            return
+        if matched:
+            self.blocked += 1
+            info.block(True)
+
+
+# -- the profile ---------------------------------------------------------
+
+_profiles: dict[str, QWebEngineProfile] = {}
+_jars: dict[str, "CookieJar"] = {}
+
+
+def plain_user_agent(agent: str) -> str:
+    """The engine's own User-Agent without the «QtWebEngine/x» token.
+
+    It is Chrome of the same version underneath; announcing an unusual
+    browser only earns more sign-in checks and captchas from sites that
+    treat the unfamiliar as a bot.
+    """
+    return re.sub(r"\s*QtWebEngine/\S+", "", agent)
+
+
+def browser_profile(root: Path) -> QWebEngineProfile:
+    """One on-disk profile per data folder, kept for the life of the process.
+
+    On disk so that signing in, and the answer given to a site's consent
+    dialog, are remembered between sessions. Shared because pages outlive the
+    widgets that show them: the window rebuilds its screens when the
+    interface language changes.
+    """
+    key = str(Path(root).resolve())
+    profile = _profiles.get(key)
+    if profile is not None:
+        return profile
+    storage = Path(root) / "browser"
+    from PySide6.QtWidgets import QApplication
+
+    profile = QWebEngineProfile("linguaflow", QApplication.instance())
+    profile.setPersistentStoragePath(str(storage / "profile"))
+    profile.setCachePath(str(storage / "cache"))
+    profile.setPersistentCookiesPolicy(
+        QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+    )
+    profile.setHttpUserAgent(plain_user_agent(profile.httpUserAgent()))
+    # A video opened from the address bar should start; and the tap's audio
+    # context must run without waiting for a click inside the page.
+    profile.settings().setAttribute(
+        QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
+    )
+    script = QWebEngineScript()
+    script.setName("linguaflow-youtube-ads")
+    script.setSourceCode(YOUTUBE_ADS_JS)
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(True)
+    profile.scripts().insert(script)
+    _profiles[key] = profile
+    _jars[key] = CookieJar(profile)
+    _start_blocker(profile, storage / "filters")
+    return profile
+
+
+def cookie_jar(root: Path) -> "CookieJar | None":
+    return _jars.get(str(Path(root).resolve()))
+
+
+# -- the signed-in session, for yt-dlp ----------------------------------
+
+#: Sites that are one site under two names.
+_SAME_SITE = {"x.com": ("x.com", "twitter.com"), "twitter.com": ("x.com", "twitter.com")}
+
+
+def site_hosts(url: QUrl) -> tuple[str, ...]:
+    """The hosts whose cookies a download from `url` may carry."""
+    host = url.host().lower().removeprefix("www.").removeprefix("mobile.")
+    for name, hosts in _SAME_SITE.items():
+        if host == name or host.endswith("." + name):
+            return hosts
+    return (host,) if host else ()
+
+
+def netscape_cookies(cookies, hosts: tuple[str, ...]) -> str:
+    """cookies.txt for yt-dlp, holding only the cookies of `hosts`.
+
+    `cookies` are (domain, path, secure, expires, name, value). Only the
+    site being downloaded from: the file hands a session to another program,
+    and the sessions of every other site signed into here are none of its
+    business.
+    """
+    lines = ["# Netscape HTTP Cookie File"]
+    for domain, path, secure, expires, name, value in cookies:
+        bare = domain.lstrip(".").lower()
+        if not any(bare == h or bare.endswith("." + h) for h in hosts):
+            continue
+        lines.append("\t".join((
+            domain,
+            "TRUE" if domain.startswith(".") else "FALSE",
+            path or "/",
+            "TRUE" if secure else "FALSE",
+            str(int(expires)),
+            name,
+            value,
+        )))
+    return "\n".join(lines) + "\n"
+
+
+class CookieJar(QObject):
+    """What the profile's cookie store holds, kept up to date.
+
+    The store has no way to be asked for its cookies, only signals as they
+    come and go; so they are collected here from the start.
+    """
+
+    def __init__(self, profile: QWebEngineProfile) -> None:
+        super().__init__(profile)
+        self._cookies: dict[tuple[str, str, str], tuple] = {}
+        store = profile.cookieStore()
+        store.cookieAdded.connect(self._added)
+        store.cookieRemoved.connect(self._removed)
+        store.loadAllCookies()
+
+    @staticmethod
+    def _key(cookie) -> tuple[str, str, str]:
+        return (cookie.domain(), cookie.path(), bytes(cookie.name()).decode("latin-1"))
+
+    def _added(self, cookie) -> None:
+        expires = 0
+        if not cookie.isSessionCookie() and cookie.expirationDate().isValid():
+            expires = cookie.expirationDate().toSecsSinceEpoch()
+        domain, path, name = self._key(cookie)
+        self._cookies[(domain, path, name)] = (
+            domain, path, cookie.isSecure(), expires, name,
+            bytes(cookie.value()).decode("latin-1"),
+        )
+
+    def _removed(self, cookie) -> None:
+        self._cookies.pop(self._key(cookie), None)
+
+    def write_for(self, url: QUrl, path: Path) -> Path | None:
+        """Write the cookies `url`'s site needs; None when there are none."""
+        text = netscape_cookies(self._cookies.values(), site_hosts(url))
+        if text.count("\n") <= 1:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+
+def _start_blocker(profile: QWebEngineProfile, folder: Path) -> None:
+    """Fetch and compile the lists off the GUI thread, then install."""
+    holder = QObject(profile)
+
+    class _Relay(QObject):
+        ready = Signal(object)
+
+    relay = _Relay(holder)
+
+    def install(engine) -> None:
+        if engine is None:
+            return
+        interceptor = AdInterceptor(engine, profile)
+        profile.setUrlRequestInterceptor(interceptor)
+        profile.setProperty("linguaflow_blocker", True)
+
+    relay.ready.connect(install)
+
+    def work() -> None:
+        try:
+            relay.ready.emit(build_blocker(fetch_filter_lists(folder)))
+        except Exception:  # noqa: BLE001
+            relay.ready.emit(None)
+
+    threading.Thread(target=work, name="adblock-lists", daemon=True).start()
+
+
+# -- the audio tap -------------------------------------------------------
+
+#: Hooks every <video> on the page into Web Audio, once each. The video still
+#: plays through the speakers; a second branch copies it, downmixed to mono,
+#: into a buffer the drain collects. A paused or muted element adds nothing,
+#: so a feed full of silent previews does not bury the one that plays.
+TAP_JS = r"""
+(() => {
+  const lf = window.__lf || (window.__lf = {on: false, chunks: [], rate: 0, taps: 0, error: ''});
+  if (!lf.on) return lf.taps;
+  for (const v of document.querySelectorAll('video')) {
+    if (v.__lfTap) continue;
+    try {
+      const ctx = new AudioContext();
+      const src = ctx.createMediaElementSource(v);
+      const gain = ctx.createGain();
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      const proc = ctx.createScriptProcessor(4096, 2, 1);
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      src.connect(proc);
+      proc.connect(silent);
+      silent.connect(ctx.destination);
+      proc.onaudioprocess = (e) => {
+        if (!lf.on || v.paused || v.muted) return;
+        const a = e.inputBuffer.getChannelData(0);
+        const b = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : a;
+        const pcm = new Int16Array(a.length);
+        for (let i = 0; i < a.length; i++) {
+          pcm[i] = Math.max(-1, Math.min(1, (a[i] + b[i]) / 2)) * 32767;
+        }
+        lf.rate = ctx.sampleRate;
+        lf.chunks.push(pcm);
+        if (lf.chunks.length > 400) lf.chunks.shift();
+      };
+      v.addEventListener('play', () => ctx.resume());
+      ctx.resume();
+      v.__lfTap = {ctx, gain};
+      lf.taps++;
+    } catch (e) {
+      lf.error = String(e);
+    }
+  }
+  return lf.taps;
+})()
+"""
+
+DRAIN_JS = r"""
+(() => {
+  const lf = window.__lf;
+  const player = document.querySelector('.html5-video-player');
+  const playing = [...document.querySelectorAll('video')].some(v => !v.paused && !v.muted);
+  const out = {
+    taps: lf ? lf.taps : 0,
+    rate: lf ? lf.rate : 0,
+    ad: !!(player && player.classList.contains('ad-showing')),
+    playing,
+    error: lf ? lf.error : '',
+    pcm: '',
+  };
+  if (lf && lf.chunks.length) {
+    let total = 0;
+    for (const c of lf.chunks) total += c.length;
+    const all = new Int16Array(total);
+    let at = 0;
+    for (const c of lf.chunks) { all.set(c, at); at += c.length; }
+    lf.chunks = [];
+    const bytes = new Uint8Array(all.buffer);
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    out.pcm = btoa(s);
+  }
+  return JSON.stringify(out);
+})()
+"""
+
+
+def duck_js(level: float, fade: float) -> str:
+    """Set the video's volume through every tap's gain, over `fade` seconds.
+
+    The tap copies the sound before this gain, so what the recogniser hears
+    does not change -- only what the viewer does.
+    """
+    return (
+        "(() => { let n = 0; for (const v of document.querySelectorAll('video')) {"
+        " const t = v.__lfTap; if (!t) continue;"
+        f" t.gain.gain.setTargetAtTime({level:.4f}, t.ctx.currentTime, {fade / 3:.4f});"
+        " n++; } return n; })()"
+    )
+
+
+#: Pause what is playing and mark it; release plays only what was marked, so
+#: a video the viewer paused themselves is not started behind their back.
+HOLD_JS = r"""
+(() => { let n = 0; for (const v of document.querySelectorAll('video')) {
+  if (!v.paused) { v.__lfHeld = true; v.pause(); n++; } } return n; })()
+"""
+RELEASE_JS = r"""
+(() => { let n = 0; for (const v of document.querySelectorAll('video')) {
+  if (v.__lfHeld) { v.__lfHeld = false; v.play().catch(() => {}); n++; } } return n; })()
+"""
+
+
+def switch_js(on: bool) -> str:
+    return (
+        "(() => { const lf = window.__lf || (window.__lf = "
+        "{on: false, chunks: [], rate: 0, taps: 0, error: ''});"
+        f" lf.on = {'true' if on else 'false'}; lf.chunks = []; return lf.taps; }})()"
+    )
+
+
+def decode_drain(result: str) -> tuple[dict, np.ndarray]:
+    """The drain's JSON: its state, and the PCM it carried as int16."""
+    state = json.loads(result) if result else {}
+    raw = state.pop("pcm", "") or ""
+    pcm = np.frombuffer(base64.b64decode(raw), dtype=np.int16) if raw else np.zeros(0, np.int16)
+    return state, pcm
+
+
+class PageTap(QObject):
+    """Moves one page's video audio into a PageAudioSource while running.
+
+    `state` reports what the viewer should be told: "waiting" (no video is
+    playing), "listening", or "ad" (an ad is playing and is not being heard).
+    """
+
+    state = Signal(str)
+
+    def __init__(self, page: QWebEnginePage, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.page = page
+        self.source = None
+        self._state = ""
+        self._ducked = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(DRAIN_MS)
+        self._timer.timeout.connect(self._tick)
+        # Lines read back to back keep the video down between them, as the
+        # file dub does: coming up for 0.3 s between two lines is a pump,
+        # not a pause.
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(lambda: self._set_volume(1.0))
+        # A new document forgets the switch; say it again on every load.
+        page.loadFinished.connect(self._reassert)
+
+    @property
+    def running(self) -> bool:
+        return self.source is not None
+
+    def start(self, source) -> None:
+        self.source = source
+        self._state = ""
+        self.page.runJavaScript(switch_js(True), TAP_WORLD)
+        self._timer.start()
+        self._tick()
+
+    def duck(self, speaking: bool) -> None:
+        """Lower the video under a line being read out; raise it after."""
+        from lt_core.tts.dub import DUCK_BRIDGE, DUCK_GAIN
+
+        if speaking:
+            self._restore.stop()
+            self._set_volume(DUCK_GAIN)
+        elif self._ducked:
+            self._restore.start(int(DUCK_BRIDGE * 1000))
+
+    def hold(self, held: bool) -> None:
+        """Pause the page's video for the reading to catch up, or go on."""
+        if self.source is not None:
+            self.source.hold(held)
+        try:
+            self.page.runJavaScript(HOLD_JS if held else RELEASE_JS, TAP_WORLD)
+        except RuntimeError:  # the page is already gone
+            pass
+
+    def _set_volume(self, level: float) -> None:
+        from lt_core.tts.dub import DUCK_FADE
+
+        self._ducked = level < 1.0
+        try:
+            self.page.runJavaScript(duck_js(level, DUCK_FADE), TAP_WORLD)
+        except RuntimeError:  # the page is already gone
+            pass
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._restore.stop()
+        if self._ducked:
+            self._set_volume(1.0)
+        self.source = None
+        try:
+            self.page.runJavaScript(switch_js(False), TAP_WORLD)
+        except RuntimeError:  # the page is already gone
+            pass
+
+    def _reassert(self, _ok: bool) -> None:
+        if self.running:
+            self.page.runJavaScript(switch_js(True), TAP_WORLD)
+
+    def _tick(self) -> None:
+        if not self.running:
+            return
+        self.page.runJavaScript(TAP_JS, TAP_WORLD)
+        self.page.runJavaScript(DRAIN_JS, TAP_WORLD, self._drained)
+
+    def _drained(self, result) -> None:
+        source = self.source
+        if source is None or not isinstance(result, str):
+            return
+        state, pcm = decode_drain(result)
+        source.set_gated(bool(state.get("ad")))
+        if pcm.size and state.get("rate"):
+            source.push(pcm, int(state["rate"]))
+        if state.get("ad"):
+            now = "ad"
+        elif state.get("playing"):
+            now = "listening"
+        else:
+            now = "waiting"
+        if now != self._state:
+            self._state = now
+            self.state.emit(now)
+
+
+# -- catching up ---------------------------------------------------------
+
+class CatchUp(QObject):
+    """Hold the video while its translation is too far behind it.
+
+    A line read aloud blocks the live worker; the video goes on meanwhile,
+    and a translation is often longer than what it translates. Lines then
+    queue, each waits longer than the last, and past the capture queue's
+    eight seconds the oldest audio is dropped -- words that were never
+    recognised. Speeding the voice up buys ~15% before it stops sounding
+    human (see CATCH_UP_AFTER), which is not enough for a fast speaker.
+
+    So when the reading would trail the video by more than PAUSE_AT at the
+    end of the line about to be read -- what it waited plus its own length --
+    the video is paused. It goes on once the voice has been quiet for
+    RESUME_AFTER and the audio captured meanwhile has been taken
+    (`backlog`), so the next line does not arrive late and pause it again;
+    or after MAX_HOLD at the latest, so a stuck session never leaves the
+    video stopped.
+
+    Measured on a fast speaker, 60 s of video with the voice on: deciding on
+    the wait alone held too late and still lost 4.3 s of speech, and going
+    on as soon as the voice stopped paused again 0.6 s later.
+
+    `target` is the page tap or the downloaded video: anything with
+    hold(bool). `backlog` returns the seconds of audio waiting to be heard.
+    """
+
+    #: Seconds the reading may trail by the end of a line before the video
+    #: waits. An ordinary three-second line with no queue stays under it.
+    PAUSE_AT = 5.0
+    #: Quiet after the last line before the video goes on.
+    RESUME_AFTER = 1.0
+    #: Captured audio still unheard below which it counts as caught up.
+    CAUGHT_UP = 0.5
+    #: The longest the video is ever held.
+    MAX_HOLD = 20.0
+
+    held = Signal(bool)
+
+    def __init__(self, target, parent: QObject | None = None, backlog=None) -> None:
+        super().__init__(parent)
+        self.target = target
+        self.backlog = backlog or (lambda: 0.0)
+        self.enabled = True
+        self.holds = 0
+        self._holding = False
+        self._resume = QTimer(self)
+        self._resume.setSingleShot(True)
+        self._resume.timeout.connect(self._maybe_release)
+        self._limit = QTimer(self)
+        self._limit.setSingleShot(True)
+        self._limit.timeout.connect(self.release)
+
+    @property
+    def holding(self) -> bool:
+        return self._holding
+
+    def line_lag(self, seconds: float) -> None:
+        if not self.enabled or self._holding or seconds <= self.PAUSE_AT:
+            return
+        self._holding = True
+        self.holds += 1
+        self._resume.stop()
+        self.target.hold(True)
+        self._limit.start(int(self.MAX_HOLD * 1000))
+        self.held.emit(True)
+
+    def speaking(self, on: bool) -> None:
+        if not self._holding:
+            return
+        if on:
+            self._resume.stop()
+        else:
+            self._resume.start(int(self.RESUME_AFTER * 1000))
+
+    def _maybe_release(self) -> None:
+        if self.backlog() > self.CAUGHT_UP:
+            self._resume.start(int(self.RESUME_AFTER * 500))
+            return
+        self.release()
+
+    def release(self) -> None:
+        if not self._holding:
+            return
+        self._holding = False
+        self._resume.stop()
+        self._limit.stop()
+        self.target.hold(False)
+        self.held.emit(False)
+
+
+# -- the page's clock, for translating ahead -----------------------------
+
+#: Where the playing video is. The first playing one, else the first that has
+#: been started, so a feed of silent previews does not stand in for it.
+CLOCK_JS = r"""
+(() => {
+  const vs = [...document.querySelectorAll('video')];
+  const v = vs.find(x => !x.paused && !x.muted) || vs.find(x => x.currentTime > 0) || vs[0];
+  const player = document.querySelector('.html5-video-player');
+  if (!v) return JSON.stringify({time: -1, playing: false, ad: false});
+  return JSON.stringify({
+    time: v.currentTime,
+    playing: !v.paused && !v.ended,
+    ad: !!(player && player.classList.contains('ad-showing')),
+  });
+})()
+"""
+
+#: The part of a YouTube address that names the video.
+_VIDEO_ID = re.compile(r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/)([\w-]{6,})")
+
+
+def recorded_video_id(url: QUrl) -> str:
+    """The video a YouTube address plays, or "" for anything else.
+
+    Only these are translated ahead: a recording that can be fetched whole.
+    A stream or another site goes through the live tap.
+    """
+    host = url.host().lower().removeprefix("www.").removeprefix("m.")
+    if host not in ("youtube.com", "youtu.be", "music.youtube.com"):
+        return ""
+    if "/live" in url.path():
+        return ""
+    match = _VIDEO_ID.search(url.toString())
+    return match.group(1) if match else ""
+
+
+class PageClock(QObject):
+    """The playing video's time, read from the page ten times a second.
+
+    Also where the video is ducked under a line and paused while the
+    translation is prepared: the tap's graph is installed so the volume can
+    be lowered on its gain node -- the element's own volume is YouTube's to
+    remember, and a duck interrupted by a closed window would be kept.
+    """
+
+    changed = Signal()
+
+    def __init__(self, page: QWebEnginePage, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.page = page
+        self.moment = -1.0
+        self.playing = False
+        self.ad = False
+        self._sampled = time.monotonic()
+        self._lock = threading.Lock()
+        self._ducked = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._tick)
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(lambda: self._set_volume(1.0))
+
+    def start(self) -> None:
+        self._run(switch_js(True))
+        self._timer.start()
+        self._tick()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._restore.stop()
+        if self._ducked:
+            self._set_volume(1.0)
+        self._run(switch_js(False))
+
+    def now(self) -> tuple[float, bool]:
+        """Seconds into the video, carried forward from the last sample."""
+        with self._lock:
+            moment, playing, sampled = self.moment, self.playing, self._sampled
+        if playing and moment >= 0:
+            moment += min(0.3, time.monotonic() - sampled)
+        return moment, playing and not self.ad
+
+    def hold(self, held: bool) -> None:
+        self._run(HOLD_JS if held else RELEASE_JS)
+
+    def duck(self, speaking: bool) -> None:
+        from lt_core.tts.dub import DUCK_BRIDGE, DUCK_GAIN
+
+        if speaking:
+            self._restore.stop()
+            self._set_volume(DUCK_GAIN)
+        elif self._ducked:
+            self._restore.start(int(DUCK_BRIDGE * 1000))
+
+    def _set_volume(self, level: float) -> None:
+        from lt_core.tts.dub import DUCK_FADE
+
+        self._ducked = level < 1.0
+        self._run(duck_js(level, DUCK_FADE))
+
+    def _run(self, script: str, callback=None) -> None:
+        try:
+            if callback is None:
+                self.page.runJavaScript(script, TAP_WORLD)
+            else:
+                self.page.runJavaScript(script, TAP_WORLD, callback)
+        except RuntimeError:  # the page is already gone
+            pass
+
+    def _tick(self) -> None:
+        self._run(TAP_JS)  # the gain node the duck needs, on any new <video>
+        self._run(CLOCK_JS, self._sampled_result)
+
+    def _sampled_result(self, result) -> None:
+        if not isinstance(result, str):
+            return
+        state = json.loads(result)
+        with self._lock:
+            self.moment = float(state.get("time", -1))
+            self.playing = bool(state.get("playing"))
+            self.ad = bool(state.get("ad"))
+            self._sampled = time.monotonic()
+        self.changed.emit()

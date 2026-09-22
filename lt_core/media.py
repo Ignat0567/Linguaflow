@@ -135,8 +135,12 @@ def fetch_url(
     into: Path | str,
     timeout: float = 1800.0,
     want_video: bool = False,
+    cookies: Path | str | None = None,
 ) -> MediaInfo:
     """Download a URL with yt-dlp.
+
+    `cookies` is a Netscape cookies.txt carrying a signed-in session, for
+    sites that show a video only to someone logged in -- X, increasingly.
 
     Audio only by default: the video is downloaded and discarded otherwise,
     which on a long recording is gigabytes of traffic for nothing. Asked for
@@ -163,6 +167,7 @@ def fetch_url(
             "--format", "bestaudio/best",
             "--extract-audio", "--audio-format", "wav",
         ]
+    signed_in = ["--cookies", str(Path(cookies).resolve())] if cookies else []
     command = [
         str(Path(_python_exe())), "-m", "yt_dlp",
         "--no-playlist", "--no-warnings", "--quiet",
@@ -172,6 +177,7 @@ def fetch_url(
         # failed with «ffprobe and ffmpeg not found» after downloading.
         "--ffmpeg-location", _ffmpeg_exe(),
         *_js_runtime(),
+        *signed_in,
         *wanted,
         "--print", "after_move:filepath",
         "--output", str(destination / "%(title).120B.%(ext)s"),
@@ -250,9 +256,37 @@ def _python_exe() -> str:
 
 
 def resolve(
-    target: str, download_dir: Path | str, want_video: bool = False
+    target: str, download_dir: Path | str, want_video: bool = False,
+    cookies: Path | str | None = None,
 ) -> MediaInfo:
     """Accept a path or a URL and return something decodable either way."""
     if is_url(target):
-        return fetch_url(target, download_dir, want_video=want_video)
+        return fetch_url(target, download_dir, want_video=want_video, cookies=cookies)
     return probe(target)
+
+
+def decode_audio(path: Path | str, rate: int = 48_000, channels: int = 2):
+    """The whole soundtrack as int16 frames, shape (n, channels).
+
+    For playing a downloaded video's sound ourselves: on some machines
+    QtMultimedia's audio output never starts (measured here -- every device,
+    both backends, a synthetic file too), while a PortAudio stream does.
+    """
+    import numpy as np
+    import imageio_ffmpeg
+
+    exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
+    completed = subprocess.run(
+        [exe, "-nostdin", "-loglevel", "error", "-i", str(Path(path).resolve()),
+         "-vn", "-f", "s16le", "-acodec", "pcm_s16le",
+         "-ac", str(channels), "-ar", str(rate), "-"],
+        capture_output=True, creationflags=_NO_WINDOW,
+    )
+    if completed.returncode != 0 or not completed.stdout:
+        raise MediaError(
+            say("Не удалось прочитать звук из {name}", name=Path(path).name),
+            detail=completed.stderr.decode("utf-8", "replace")[-500:],
+        )
+    samples = np.frombuffer(completed.stdout, dtype=np.int16)
+    usable = (samples.size // channels) * channels
+    return samples[:usable].reshape(-1, channels)

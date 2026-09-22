@@ -11,6 +11,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from lt_core.subtitles.export import to_srt, write
+from lt_core.realtime.session import append_committed
 from lt_core.subtitles.cues import Cue
 
 from .. import glass, theme
@@ -39,6 +40,9 @@ class RealtimeScreen(QWidget):
         self._lines: list[Line] = []
         self._current = Line()
         self._pending_start = False
+        #: True while the engine's live session is this screen's. The
+        #: browser screen runs its own sessions on the same engine.
+        self._mine = False
         self._ever = False
         self._saved: Path | None = None
 
@@ -165,6 +169,9 @@ class RealtimeScreen(QWidget):
 
     def _toggled(self, on: bool) -> None:
         if on:
+            if self.app.engine.live_running and not self._mine:
+                self._refuse(_("Сейчас переводится видео на экране «Браузер»."))
+                return
             self._pending_start = True
             self._lines.clear()
             self._current = Line()
@@ -183,6 +190,7 @@ class RealtimeScreen(QWidget):
         if not self._pending_start:
             return
         self._pending_start = False
+        self._mine = True
         self._status.setText(_("Слушаю…"))
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
@@ -190,13 +198,22 @@ class RealtimeScreen(QWidget):
         self.app.engine.start_live(self.app.store.settings)
 
     def _on_fail(self, message: str) -> None:
+        if not (self._mine or self._pending_start):
+            return
+        self._mine = False
         self._pending_start = False
+        self._refuse(message)
+
+    def _refuse(self, message: str) -> None:
         self._status.setText(message)
         self._record.blockSignals(True)
         self._record.setChecked(False)
         self._record.blockSignals(False)
 
     def _on_stopped(self) -> None:
+        if not self._mine:
+            return
+        self._mine = False
         self._ever = True
         self._record.blockSignals(True)
         self._record.setChecked(False)
@@ -207,6 +224,8 @@ class RealtimeScreen(QWidget):
         self._push_overlay()
 
     def _on_update(self, update) -> None:
+        if not self._mine:
+            return
         current = self._current
         if update.speaker and current.speaker and update.speaker != current.speaker:
             if current.original or current.translated:
@@ -216,7 +235,7 @@ class RealtimeScreen(QWidget):
         if not current.speaker:
             current.speaker = update.speaker
         if update.committed:
-            current.original += update.committed
+            current.original = append_committed(current.original, update)
             current.partial = ""
         if update.partial:
             current.partial = update.partial

@@ -55,6 +55,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     # -- navigation ----------------------------------------------------
     "Главная": ("Home", "Start"),
     "Реальное время": ("Live", "Echtzeit"),
+    "Браузер": ("Browser", "Browser"),
     "Загрузка": ("Upload", "Datei"),
     "История": ("History", "Verlauf"),
     "Настройки": ("Settings", "Einstellungen"),
@@ -126,6 +127,65 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Сохранить транскрипт": ("Save transcript", "Transkript speichern"),
     "Окно субтитров": ("Subtitle window", "Untertitelfenster"),
+    # -- browser ---------------------------------------------------------
+    "Адрес или поиск на YouTube": (
+        "Address or YouTube search", "Adresse oder YouTube-Suche",
+    ),
+    "Включите перевод и запустите видео": (
+        "Turn on translation and play a video",
+        "Übersetzung einschalten und ein Video abspielen",
+    ),
+    "Переводить видео": ("Translate video", "Video übersetzen"),
+    "Скачать и перевести": ("Download and translate", "Herunterladen und übersetzen"),
+    "Видео с этого сайта скачивается перед переводом — откройте пост и включите перевод": (
+        "Videos from this site are downloaded first — open the post and turn on translation",
+        "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
+    ),
+    "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "Готовлю перевод: {stage}": (
+        "Preparing the translation: {stage}", "Übersetzung wird vorbereitet: {stage}",
+    ),
+    "Перевод готов · {language} · {count} фраз": (
+        "Translation ready · {language} · {count} lines",
+        "Übersetzung fertig · {language} · {count} Zeilen",
+    ),
+    "Видео сменилось — включите перевод снова": (
+        "The video changed — turn translation on again",
+        "Das Video hat gewechselt — Übersetzung erneut einschalten",
+    ),
+    "Догонять": ("Catch up", "Aufholen"),
+    "Пауза — перевод догоняет видео": (
+        "Paused — the translation is catching up",
+        "Pause — die Übersetzung holt auf",
+    ),
+    "← К странице": ("← Back to the page", "← Zurück zur Seite"),
+    "Не удалось прочитать звук из {name}": (
+        "Could not read the sound of {name}", "Der Ton von {name} ist nicht lesbar",
+    ),
+    "Ссылка — видео скачается, когда начнётся перевод": (
+        "Link — the video is downloaded when translation starts",
+        "Link — das Video wird beim Start der Übersetzung geladen",
+    ),
+    "Жду, когда заиграет видео": (
+        "Waiting for a video to play", "Warte, bis ein Video läuft",
+    ),
+    "Слушаю видео": ("Listening to the video", "Höre das Video"),
+    "Слушаю видео · {language}": (
+        "Listening to the video · {language}", "Höre das Video · {language}",
+    ),
+    "Идёт реклама — её не перевожу": (
+        "An ad is playing — not translating it",
+        "Werbung läuft — wird nicht übersetzt",
+    ),
+    "Сейчас идёт живой перевод на экране «Реальное время».": (
+        "A live translation is running on the Live screen.",
+        "Auf dem Bildschirm „Echtzeit“ läuft gerade eine Übersetzung.",
+    ),
+    "Сейчас переводится видео на экране «Браузер».": (
+        "A video is being translated on the Browser screen.",
+        "Auf dem Bildschirm „Browser“ wird gerade ein Video übersetzt.",
+    ),
+    # -- realtime (continued) --------------------------------------------
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),

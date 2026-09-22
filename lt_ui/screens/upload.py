@@ -45,7 +45,9 @@ class UploadScreen(QWidget):
         super().__init__()
         self.app = app
         clear_fill(self)
-        self._path: Path | None = None
+        #: A file on disk, or a link kept as the string it is -- a Path would
+        #: turn «https://» into «https:\» on Windows.
+        self._path: Path | str | None = None
         self._pending = False
         self._result = None
         self._job_id = ""
@@ -101,13 +103,24 @@ class UploadScreen(QWidget):
         self._ready.show_file(target)
         self._stack.setCurrentWidget(self._ready)
 
+    def open_link(self, url: str) -> None:
+        """A video's address, fetched when the run starts, not before."""
+        self._path = url
+        self._ready.show_link(url)
+        self._stack.setCurrentWidget(self._ready)
+
+    def _display_name(self) -> str:
+        if isinstance(self._path, str):
+            return link_label(self._path)
+        return self._path.name if self._path else _("файл")
+
     def start(self) -> None:
         """Begin the run the user has now asked for."""
         if self._path is None:
             return
         self._pending = True
         self._job_id = new_id()
-        self._busy.reset(self._path.name)
+        self._busy.reset(self._display_name())
         self._stack.setCurrentWidget(self._busy)
         self.app.engine.prepare(self.app.store.settings)
 
@@ -136,7 +149,7 @@ class UploadScreen(QWidget):
         self.app.store.add(HistoryEntry(
             id=self._job_id,
             kind="file",
-            title=result.media.title or (self._path.name if self._path else _("файл")),
+            title=result.media.title or self._display_name(),
             source_language=result.transcript.language,
             target_language=result.target_language or settings.to_lang,
             duration=result.media.duration,
@@ -338,6 +351,11 @@ class _Ready(QWidget):
     def show_file(self, path: Path) -> None:
         self._name.setText(path.name)
         self._meta.setText(self._describe(path))
+        self.sync()
+
+    def show_link(self, url: str) -> None:
+        self._name.setText(link_label(url))
+        self._meta.setText(_("Ссылка — видео скачается, когда начнётся перевод"))
         self.sync()
 
     @staticmethod
@@ -625,3 +643,17 @@ class _CueRow(QWidget):
             texts.addWidget(glass.label(translated, 14, 400, 0.68, wrap=True))
         row.addWidget(stamp, 0, Qt.AlignTop)
         row.addLayout(texts, 1)
+
+
+def link_label(url: str) -> str:
+    """A link as a short caption: its host and the last part of its path."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.netloc.removeprefix("www.")
+    tail = [piece for piece in parts.path.split("/") if piece]
+    if parts.path.startswith("/watch") and "v=" in parts.query:
+        return f"{host}/watch?{parts.query.split('&')[0]}"
+    if not tail:
+        return host or url
+    return f"{host}/…/{tail[-1]}" if len(tail) > 1 else f"{host}/{tail[0]}"
