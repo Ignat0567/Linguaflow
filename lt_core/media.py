@@ -171,18 +171,26 @@ def fetch_url(
         # imageio-ffmpeg ships, which is on no PATH: without this every link
         # failed with «ffprobe and ffmpeg not found» after downloading.
         "--ffmpeg-location", _ffmpeg_exe(),
+        *_js_runtime(),
         *wanted,
         "--print", "after_move:filepath",
         "--output", str(destination / "%(title).120B.%(ext)s"),
         url,
     ]
-    try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=timeout, creationflags=_NO_WINDOW,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise MediaError(f"Скачивание превысило {timeout / 60:.0f} мин.") from exc
+    import time
+
+    for attempt in range(1 + REFUSAL_RETRIES):
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout, creationflags=_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise MediaError(f"Скачивание превысило {timeout / 60:.0f} мин.") from exc
+        refused = completed.returncode != 0 and "HTTP Error 403" in (completed.stderr or "")
+        if not refused or attempt == REFUSAL_RETRIES:
+            break
+        time.sleep(1.0)
 
     if completed.returncode != 0:
         raise MediaError(
@@ -207,6 +215,31 @@ def _ffmpeg_exe() -> str:
 
     # Store-Python virtualises paths given to subprocesses; resolve first.
     return str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
+
+
+#: Further tries when YouTube refuses the download with 403. It does, now
+#: and then, to a request it served a second before: 1 in 13 downloads of
+#: one talk, each failing in about two seconds. A wrong address or a private
+#: video fails the same way every time, and is not retried.
+REFUSAL_RETRIES = 2
+
+
+def _js_runtime() -> list[str]:
+    """Point yt-dlp at the Deno the deno package ships, when it is there.
+
+    YouTube's pages now need JavaScript run to list their formats; without a
+    runtime yt-dlp warns that extraction is deprecated and some formats may
+    be missing, and a download occasionally failed outright (1 in 7 on one
+    talk). Passed by path, not left to PATH: an installed copy has no
+    reason to have its Scripts folder on it.
+    """
+    try:
+        import deno
+
+        path = Path(deno.find_deno_bin()).resolve()
+    except Exception:  # noqa: BLE001 -- not installed: yt-dlp goes on without
+        return []
+    return ["--js-runtimes", f"deno:{path}"] if path.is_file() else []
 
 
 def _python_exe() -> str:
