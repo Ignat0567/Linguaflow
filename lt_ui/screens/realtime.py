@@ -267,14 +267,27 @@ class RealtimeScreen(QWidget):
             current.partial = update.partial
         current.partial_translated = update.partial_translation
         if update.translation:
-            current.translated = (
+            translated = (
                 f"{current.translated} {update.translation}".strip()
                 if current.translated else update.translation
             )
-            current.partial_translated = ""
-            if current.original:
-                self._lines.append(current)
-                self._current = Line(speaker=update.speaker)
+            rest = _after(current.original, update.translation_source)
+            if rest is not None:
+                # The line is exactly the sentences translated; whatever of
+                # the next one was already heard starts the next line.
+                if update.translation_source:
+                    self._lines.append(Line(
+                        original=update.translation_source, translated=translated,
+                        speaker=current.speaker,
+                    ))
+                self._current = Line(speaker=update.speaker, original=rest,
+                                     partial=current.partial)
+            else:
+                current.translated = translated
+                current.partial_translated = ""
+                if current.original:
+                    self._lines.append(current)
+                    self._current = Line(speaker=update.speaker)
         self._render()
         self._push_overlay()
 
@@ -370,6 +383,21 @@ class RealtimeScreen(QWidget):
             _("Сохранено · {duration}", duration=format_clock(duration))
         )
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+def _after(text: str, source: str) -> str | None:
+    """`text` with the translated `source` taken off its front, or None
+    when `source` is unknown or is not how `text` begins.
+
+    Compared word by word, because the two were joined from the same words
+    by different hands and may differ in spacing.
+    """
+    if not source:
+        return None
+    words, prefix = text.split(), source.split()
+    if words[: len(prefix)] != prefix:
+        return None
+    return " ".join(words[len(prefix):])
 
 
 #: Lines kept in the panel to scroll back through. Every update rebuilds

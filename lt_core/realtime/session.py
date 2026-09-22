@@ -131,6 +131,12 @@ class LiveUpdate:
     partial: str = ""
     #: Translation of whatever sentences completed on this tick.
     translation: str = ""
+    #: The source text `translation` translates -- the finished sentences,
+    #: not whatever was committed by the time they were. A screen that closed
+    #: its line when a translation arrived put the next sentence's first
+    #: words over the previous sentence's translation and began the next
+    #: line mid-sentence. Empty where not known (conversation mode).
+    translation_source: str = ""
     #: The sentence still being spoken, translated provisionally. Replaced
     #: wholesale on the next tick, exactly as `partial` is, and superseded by
     #: `translation` once the sentence finishes.
@@ -239,6 +245,8 @@ class LiveSession:
         self._consumed = 0.0
         self._last_run_at = 0.0
         self._untranslated: list[Word] = []
+        #: What the last translation was made from; see LiveUpdate.
+        self._translated_source = ""
         #: The last provisional translation, and the text it was made from, so
         #: a sentence that has not grown is not translated again.
         self._preview: tuple[str, str] = ("", "")
@@ -283,6 +291,7 @@ class LiveSession:
                 committed_space=_starts_word(tail),
                 partial="",
                 translation=translation,
+                translation_source=self._translated_source if translation else "",
                 translation_language=self.target_language or "",
                 speaker_language=self.source_language or "",
                 speaker=self.speaker,
@@ -392,6 +401,7 @@ class LiveSession:
             committed_space=_starts_word(committed),
             partial=partial,
             translation=translation,
+            translation_source=self._translated_source if translation else "",
             partial_translation=preview,
             translation_language=self.target_language or "",
             speaker_language=self.source_language or "",
@@ -525,6 +535,7 @@ class LiveSession:
         appeared at 40 s, they arrived a median of 10 s apart, and one of them
         was 496 characters of text delivered at once.
         """
+        self._translated_source = ""
         if self.translator is None or not self.target_language:
             self._untranslated.clear()
             return ""
@@ -548,6 +559,7 @@ class LiveSession:
         text = "".join(word.text for word in ready).strip()
         if not text:
             return ""
+        self._translated_source = text
         self._preview = ("", "")
         started = time.perf_counter()
         try:

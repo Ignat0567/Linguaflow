@@ -404,3 +404,45 @@ def test_the_live_feed_follows_new_lines_unless_scrolled_up(qapp, tmp_path):
         assert bar.value() == bar.maximum()
     finally:
         window.hide()
+
+
+def test_a_live_line_is_the_sentence_that_was_translated(qapp, tmp_path):
+    """The screen closed its line when a translation arrived, by which time
+    the next sentence's first words were in it: the line ended «...geeinigt
+    haben. Das ist natürlich ein Extrem, aber es ist eigentlich bei» over the
+    first sentence's translation alone, and the next began mid-sentence."""
+    from lt_core.realtime.session import LiveUpdate
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    screen = window._realtime
+    screen._mine = True
+    screen._on_update(LiveUpdate(committed="Wir haben uns geeinigt."))
+    screen._on_update(LiveUpdate(committed="Das ist natürlich"))
+    screen._on_update(LiveUpdate(
+        committed="ein Extrem,", partial="aber es",
+        translation="Мы договорились.", translation_source="Wir haben uns geeinigt.",
+    ))
+    assert [(line.original, line.translated) for line in screen._lines] == [
+        ("Wir haben uns geeinigt.", "Мы договорились."),
+    ]
+    # What was already heard of the next sentence starts the next line.
+    assert screen._current.original == "Das ist natürlich ein Extrem,"
+    assert screen._current.partial == "aber es"
+
+
+def test_a_translation_without_its_source_still_closes_the_line(qapp, tmp_path):
+    """Conversation mode does not say what it translated: the old way."""
+    from lt_core.realtime.session import LiveUpdate
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    screen = window._realtime
+    screen._mine = True
+    screen._on_update(LiveUpdate(committed="Hello there.", speaker="A"))
+    screen._on_update(LiveUpdate(translation="Привет.", speaker="A"))
+    assert [(line.original, line.translated) for line in screen._lines] == [
+        ("Hello there.", "Привет."),
+    ]

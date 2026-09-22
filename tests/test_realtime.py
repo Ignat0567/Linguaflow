@@ -758,3 +758,25 @@ def test_a_window_with_no_words_does_not_pin_a_language():
     for chunk in chunks(2.5):
         session.feed(chunk)
     assert session.source_language is None
+
+
+def test_a_translation_says_which_words_it_translated():
+    """So a screen can put the sentence and its translation on one line,
+    rather than whatever had been committed by the time it arrived."""
+    script = [
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0)),
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0), (" are", 1.0, 1.5)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    translated = [
+        update
+        for update in (session.feed(chunk) for chunk in chunks(3.0))
+        if update and update.translation
+    ]
+    assert translated
+    assert translated[0].translation_source == "Hello."
+    # Updates with no translation carry no source.
+    assert session.finish().translation_source in ("", "How are")
