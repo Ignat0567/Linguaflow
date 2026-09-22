@@ -35,7 +35,7 @@ class FakeSpeaker:
         self.seconds_per_char = seconds_per_char
         self.rate = rate
 
-    def fit(self, text, start, seconds):
+    def fit(self, text, start, seconds, fastest=None):
         natural = len(text) * self.seconds_per_char
         scale = 1.0
         if natural > seconds * 1.02:
@@ -318,3 +318,28 @@ def test_resampling_preserves_duration():
 def test_resampling_is_a_no_op_at_the_same_rate():
     samples = np.zeros(10, dtype=np.float32)
     assert resample(samples, 16_000, 16_000) is samples
+
+
+def test_two_dubbed_lines_never_sound_at_once():
+    """Lines were added over each other when one ran into the next slot: 22
+    overlaps, 9.7 s in all, on a 27-minute video. A line now waits."""
+    import numpy as np
+
+    from lt_core.subtitles.cues import Cue
+    from lt_core.tts.dub import LINE_GAP, synthesise_track
+    from lt_core.tts.speaker import Utterance
+
+    class Slow:
+        voice_name = "slow"
+
+        def fit(self, text, start, seconds, fastest=0.84):
+            length = 3.0      # always longer than its 1 s slot
+            return Utterance(np.full(int(length * 1000), 0.1, dtype=np.float32), 1000,
+                             start, seconds, fastest, self.voice_name)
+
+    cues = tuple(Cue(i + 1, float(i), float(i) + 1.0, (f"строка {i}",)) for i in range(4))
+    dub = synthesise_track(cues, Slow(), 20.0, rate=1000)
+    spans = sorted((u.start, u.start + u.duration) for u in dub.utterances)
+    for (_, end), (start, _) in zip(spans, spans[1:]):
+        assert start >= end + LINE_GAP - 1e-6
+    assert dub.delayed == 3

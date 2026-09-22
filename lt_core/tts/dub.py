@@ -10,7 +10,7 @@ original is still there to be checked against.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +65,16 @@ DUCK_BRIDGE = 0.7
 #: accumulate across a recording.
 EARLY_START = 1.0
 
+#: Silence kept between two lines when one has to wait for the other.
+LINE_GAP = 0.12
+
+#: A line already this far behind the moment it was said may speak a little
+#: faster than the usual limit, to win the time back ...
+CATCH_UP_AFTER = 1.0
+#: ... but no faster than this: about 12 %, against about 9 % normally and
+#: the 18 % that was heard as hurried.
+CATCH_UP_SCALE = 0.78
+
 
 @dataclass
 class DubResult:
@@ -77,6 +87,10 @@ class DubResult:
     #: Which voice read which line, when the recording had more than one
     #: speaker in it. Empty when a single voice read the whole thing.
     cast: Cast | None = None
+    #: Lines that waited for the one before rather than speak over it, and
+    #: the longest wait, in seconds after the moment the line was said.
+    delayed: int = 0
+    worst_delay: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -157,14 +171,29 @@ def synthesise_track(
                     begin = cue.start
         if utterance.samples.size == 0:
             continue
+        if result.spoken and begin < spoken_until + LINE_GAP:
+            # Never two voices at once. Lines used to be added over each
+            # other when one ran into the next slot: 22 overlaps, 9.7 s in
+            # all, on a 27-minute video -- «неприемлемо». A line that would
+            # start over the one before waits for it instead; the delay is
+            # made up in the next pause.
+            begin = spoken_until + LINE_GAP
+            late = begin - cue.start
+            if late > CATCH_UP_AFTER:
+                hurried = voice.fit(text, begin, max(0.05, cue.start + slot - begin),
+                                    fastest=CATCH_UP_SCALE)
+                if hurried.duration < utterance.duration:
+                    utterance = hurried
+            result.delayed += 1
+            result.worst_delay = max(result.worst_delay, late)
+            utterance = replace(utterance, start=begin)
 
         samples = resample(utterance.samples, utterance.rate, rate)
         at = int(begin * rate)
         end = min(at + len(samples), length)
         if end > at:
-            # Added rather than assigned: a line that runs into the next slot
-            # overlaps it instead of cutting it off, which is how a person
-            # talking over the end of a sentence sounds.
+            # Added rather than assigned, so a line never cuts off the tail
+            # of the original's own sound; lines themselves no longer meet.
             track[at:end] += samples[: end - at]
 
         spoken_until = begin + utterance.duration

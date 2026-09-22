@@ -29,10 +29,11 @@ from ..subtitles.export import EXPORTERS, write
 DEFAULT_FORMATS = ("srt", "txt")
 
 #: How much faster than its natural pace the voice may be asked to speak when
-#: deciding how much text fits. Measured on Day 5: past about 18% the voice
-#: stops sounding like a person, so the text budget is allowed to count on
-#: that much and no more.
-SPEED_HEADROOM = 1.18
+#: deciding how much text fits. Day 5 put the limit of a human-sounding voice
+#: at about 18 %; listened to on a real video, the lines that fast were the
+#: ones that sounded wrong. The voice now goes no faster than about 9 %
+#: (MIN_LENGTH_SCALE), so the text is shortened to fit that.
+SPEED_HEADROOM = 1.10
 
 
 def _named(code: str) -> str:

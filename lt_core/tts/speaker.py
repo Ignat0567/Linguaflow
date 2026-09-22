@@ -27,12 +27,15 @@ NATIVE_RATE = 22_050
 
 #: How far Piper's length_scale may be pushed to make a line fit.
 #:
-#: Below about 0.72 the voice stops sounding like a person. A line that still
-#: does not fit is allowed to run over rather than be squeezed further -- an
-#: overlap of a few hundred milliseconds is far less noticeable than a
-#: chipmunk. It is never stretched to fill silence either: a dub that drawls
+#: At 0.72 -- the old floor, about 18 % faster -- the voice still sounds like
+#: a person, but a hurried one, and listened to on a 27-minute video the
+#: hurried lines were the ones that sounded wrong: «Руслан неплохо, там где
+#: скорость речи приемлемая». 0.84 is about 9 % faster (LENGTH_RESPONSE),
+#: the text is shortened to match (SPEED_HEADROOM in the pipeline), and a
+#: line that still does not fit waits for its turn rather than being
+#: squeezed. It is never stretched to fill silence either: a dub that drawls
 #: sounds worse than one that finishes early.
-MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.72, 1.0
+MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.84, 1.0
 
 #: How much of a change in length_scale actually reaches the duration.
 #:
@@ -222,7 +225,8 @@ class Speaker:
     def chars_per_second(self) -> float:
         return self.pace()[0]
 
-    def fit(self, text: str, start: float, seconds: float) -> Utterance:
+    def fit(self, text: str, start: float, seconds: float,
+            fastest: float = MIN_LENGTH_SCALE) -> Utterance:
         """Speak `text` so that it fits `seconds`, as far as that is sensible.
 
         Synthesised once at normal speed to find out how long the line actually
@@ -243,7 +247,7 @@ class Speaker:
         # rather than the ratio itself -- which under-corrects by roughly half.
         wanted_ratio = seconds / natural
         scale = 1.0 + (wanted_ratio - 1.0) / LENGTH_RESPONSE
-        scale = max(MIN_LENGTH_SCALE, min(MAX_LENGTH_SCALE, scale))
+        scale = max(fastest, min(MAX_LENGTH_SCALE, scale))
 
         samples, rate = self.say(text, length_scale=scale)
         return Utterance(samples, rate, start, seconds, scale, self.voice_name)
