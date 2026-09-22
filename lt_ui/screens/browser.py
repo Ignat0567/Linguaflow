@@ -13,7 +13,7 @@ Either way the same live session, captions, voice and ducking follow.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
@@ -29,7 +29,9 @@ from .. import glass, theme
 from ..browser import (
     HOME_URL,
     CatchUp,
+    PageClock,
     PageTap,
+    recorded_video_id,
     address_to_url,
     browser_profile,
     cookie_jar,
@@ -37,6 +39,12 @@ from ..browser import (
 )
 from ..i18n import _
 from ..widgets import LanguagePair, clear_fill
+
+
+class _Relay(QObject):
+    """Carries 'a line is being spoken' from the voice's thread to this one."""
+
+    speaking = Signal(bool)
 
 
 class BrowserScreen(QWidget):
@@ -62,6 +70,14 @@ class BrowserScreen(QWidget):
         self._partial = ""
         self._translated = ""
         self._coming = ""
+        # -- translating ahead (a recorded YouTube video) -----------------
+        self._clock: PageClock | None = None
+        self._ahead_url: QUrl | None = None   # wanted, models or pipeline pending
+        self._ahead_id = ""
+        self._ahead_worker = None
+        self._track = None                    # ready: lines on the video clock
+        self._cue_voice = None
+        self._relay = _Relay(self)
 
         # -- toolbar ------------------------------------------------------
         self._back = glass.GlassButton("←", self, size=15, height=34, padding=14)
@@ -156,7 +172,7 @@ class BrowserScreen(QWidget):
     # -- lifecycle ---------------------------------------------------------
     def refresh(self) -> None:
         settings = self.app.store.settings
-        self._pair.set_pair(settings.browser_from_lang, settings.to_lang)
+        self._pair.set_pair(settings.browser_from_lang, settings.browser_to_lang)
         self._speak.blockSignals(True)
         self._speak.setChecked(settings.realtime_voice)
         self._speak.blockSignals(False)
@@ -191,11 +207,15 @@ class BrowserScreen(QWidget):
         self._stack.addWidget(self._video)
         self._tap = PageTap(self._page, self)
         self._tap.state.connect(self._on_tap_state)
+        self._clock = PageClock(self._page, self)
+        self._clock.changed.connect(self._ahead_render)
+        self._relay.speaking.connect(self._clock.duck)
         last = self.app.store.settings.browser_url
         self._view.load(QUrl(last if last.startswith("http") else HOME_URL))
 
     def shutdown(self) -> None:
         """Stop translating before the widgets go (language change, quit)."""
+        self._stop_ahead("")
         if self._mine or self._pending_start:
             self._pending_start = False
             self.app.engine.stop_live()
@@ -222,6 +242,9 @@ class BrowserScreen(QWidget):
         if url.scheme() in ("http", "https"):
             self.app.store.settings.browser_url = url.toString()
             self.app.store.save_settings()
+        if (self._ahead_url is not None or self._track is not None)                 and recorded_video_id(url) != self._ahead_id:
+            self._stop_ahead(_("Видео сменилось — включите перевод снова"))
+            return
         if not plays_here(url) and not self._mine:
             self._status.setText(_(
                 "Видео с этого сайта скачивается перед переводом — "
@@ -246,7 +269,7 @@ class BrowserScreen(QWidget):
     def _sync_pair(self) -> None:
         source, target = self._pair.pair()
         self.app.store.settings.browser_from_lang = source
-        self.app.store.settings.to_lang = target
+        self.app.store.settings.browser_to_lang = target
         self.app.store.save_settings()
 
     def _live_settings(self):
@@ -265,6 +288,7 @@ class BrowserScreen(QWidget):
         return replace(
             settings,
             from_lang="" if chosen in ("", "auto") else chosen,
+            to_lang=settings.browser_to_lang,
             realtime_mode="subtitles",
         )
 
@@ -281,6 +305,13 @@ class BrowserScreen(QWidget):
 
     # -- translation -------------------------------------------------------
     def _toggled(self, on: bool) -> None:
+        if not on and (self._ahead_url is not None or self._track is not None):
+            self._stop_ahead(_("Остановлено"))
+            return
+        if on and self._view is not None and self._stack.currentWidget() is not self._video:
+            if recorded_video_id(self._view.url()):
+                self._start_ahead(self._view.url())
+                return
         if not on:
             self._pending_start = False
             self._pending_video = None
@@ -304,6 +335,119 @@ class BrowserScreen(QWidget):
             self.app.engine.prepare(self.app.store.settings)
             return
         self._start_download(url)
+
+    # -- translating a recorded video ahead ---------------------------------
+    def _start_ahead(self, url: QUrl) -> None:
+        """Hold the video, fetch and translate it whole, then play it on.
+
+        Held so the opening is not missed while the translation is made; the
+        page goes on by itself once lines are ready.
+        """
+        self._ahead_url = url
+        self._ahead_id = recorded_video_id(url)
+        self._track = None
+        self._caption.setText("…")
+        self._subcaption.setText("")
+        self._clock.start()
+        self._clock.hold(True)
+        self._status.setText(_("Загружаю модели…"))
+        self.app.engine.prepare(self.app.store.settings)
+
+    def _run_ahead(self) -> None:
+        from ..ahead import AheadWorker
+
+        chosen = self.app.store.settings.browser_from_lang
+        worker = AheadWorker(
+            self._ahead_url.toString(),
+            self.app.store.root / "downloads" / "browser-ahead" / self._ahead_id,
+            self.app.engine.transcriber,
+            self.app.engine.translator,
+            None if chosen in ("", "auto") else chosen,
+            self.app.store.settings.browser_to_lang,
+            self,
+        )
+        worker.stage.connect(
+            lambda stage: self._status.setText(_("Готовлю перевод: {stage}", stage=stage))
+        )
+        worker.done.connect(self._ahead_ready)
+        worker.failed.connect(lambda message: self._stop_ahead(message))
+        self._ahead_worker = worker
+        worker.start()
+
+    def _ahead_ready(self, track) -> None:
+        if self._ahead_url is None:
+            return  # switched off meanwhile
+        from ..i18n import language_name
+
+        self._track = track
+        self._ahead_worker = None
+        if self.app.store.settings.realtime_voice and len(track):
+            self._cue_voice = self._make_voice(track)
+            self._cue_voice.start()
+        if self.app.store.settings.overlay:
+            self.app.overlay.reveal()
+        self._status.setText(_(
+            "Перевод готов · {language} · {count} фраз",
+            language=language_name(track.language), count=len(track),
+        ))
+        self._clock.hold(False)
+
+    def _make_voice(self, track):
+        import sounddevice as sd
+
+        from lt_core.tts.speaker import Speaker
+
+        from ..ahead import CueVoice
+        from ..store import MODEL_ROOT
+
+        speaker = Speaker(self.app.store.settings.browser_to_lang, voices_dir=MODEL_ROOT / "piper")
+
+        def synth(line):
+            # Fitted to its own slot, as the file dub does: up to what still
+            # sounds like a person, never stretched.
+            made = speaker.fit(line.translated, line.start, max(0.5, line.end - line.start))
+            return made.samples, made.rate
+
+        return CueVoice(
+            track, self._clock.now, synth=synth,
+            play=lambda samples, rate: sd.play(samples, rate, blocking=True),
+            announce=self._relay.speaking.emit,
+        )
+
+    def _ahead_render(self) -> None:
+        if self._track is None:
+            return
+        moment, _playing = self._clock.now()
+        line = self._track.at(moment)
+        shown = line.translated if line else ""
+        original = line.original if line else ""
+        self._caption.setText(shown)
+        self._subcaption.setText(original)
+        overlay = getattr(self.app, "overlay", None)
+        if overlay is not None and overlay.isVisible():
+            overlay.set_caption(original=original, translated=shown, speaker=None,
+                                listening=True)
+
+    def _stop_ahead(self, message: str) -> None:
+        if self._ahead_url is None and self._track is None:
+            return
+        self._ahead_url = None
+        self._ahead_id = ""
+        if self._ahead_worker is not None:
+            self._ahead_worker.cancel()
+            self._ahead_worker = None
+        if self._cue_voice is not None:
+            self._cue_voice.stop()
+            self._cue_voice = None
+        self._track = None
+        if self._clock is not None:
+            self._clock.hold(False)
+            self._clock.stop()
+        if message:
+            self._status.setText(message)
+        self._translate.blockSignals(True)
+        self._translate.setChecked(False)
+        self._translate.blockSignals(False)
 
     def _start_download(self, url: QUrl) -> None:
         from ..video_player import DownloadWorker
@@ -332,6 +476,9 @@ class BrowserScreen(QWidget):
         self._finish(message)
 
     def _on_ready(self) -> None:
+        if self._ahead_url is not None and self._ahead_worker is None and self._track is None:
+            self._run_ahead()
+            return
         if not self._pending_start:
             return
         self._pending_start = False
@@ -445,6 +592,9 @@ class BrowserScreen(QWidget):
         self._finish(_("Остановлено"))
 
     def _on_fail(self, message: str) -> None:
+        if self._ahead_url is not None and self._ahead_worker is None and self._track is None:
+            self._stop_ahead(message)  # the models failed to load
+            return
         if not (self._mine or self._pending_start):
             return
         self._pending_start = False

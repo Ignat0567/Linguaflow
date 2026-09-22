@@ -142,6 +142,17 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
     ),
     "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "Готовлю перевод: {stage}": (
+        "Preparing the translation: {stage}", "Übersetzung wird vorbereitet: {stage}",
+    ),
+    "Перевод готов · {language} · {count} фраз": (
+        "Translation ready · {language} · {count} lines",
+        "Übersetzung fertig · {language} · {count} Zeilen",
+    ),
+    "Видео сменилось — включите перевод снова": (
+        "The video changed — turn translation on again",
+        "Das Video hat gewechselt — Übersetzung erneut einschalten",
+    ),
     "Догонять": ("Catch up", "Aufholen"),
     "Пауза — перевод догоняет видео": (
         "Paused — the translation is catching up",

@@ -158,3 +158,4 @@ def test_the_downloaded_video_is_heard_by_the_session_it_feeds(qapp):
     video.sound._callback(out, 4800)
     assert source._inbox.qsize() == 1
     video.stop()
+

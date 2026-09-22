@@ -692,3 +692,130 @@ class CatchUp(QObject):
         self._limit.stop()
         self.target.hold(False)
         self.held.emit(False)
+
+
+# -- the page's clock, for translating ahead -----------------------------
+
+#: Where the playing video is. The first playing one, else the first that has
+#: been started, so a feed of silent previews does not stand in for it.
+CLOCK_JS = r"""
+(() => {
+  const vs = [...document.querySelectorAll('video')];
+  const v = vs.find(x => !x.paused && !x.muted) || vs.find(x => x.currentTime > 0) || vs[0];
+  const player = document.querySelector('.html5-video-player');
+  if (!v) return JSON.stringify({time: -1, playing: false, ad: false});
+  return JSON.stringify({
+    time: v.currentTime,
+    playing: !v.paused && !v.ended,
+    ad: !!(player && player.classList.contains('ad-showing')),
+  });
+})()
+"""
+
+#: The part of a YouTube address that names the video.
+_VIDEO_ID = re.compile(r"(?:[?&]v=|youtu\.be/|/shorts/|/embed/)([\w-]{6,})")
+
+
+def recorded_video_id(url: QUrl) -> str:
+    """The video a YouTube address plays, or "" for anything else.
+
+    Only these are translated ahead: a recording that can be fetched whole.
+    A stream or another site goes through the live tap.
+    """
+    host = url.host().lower().removeprefix("www.").removeprefix("m.")
+    if host not in ("youtube.com", "youtu.be", "music.youtube.com"):
+        return ""
+    if "/live" in url.path():
+        return ""
+    match = _VIDEO_ID.search(url.toString())
+    return match.group(1) if match else ""
+
+
+class PageClock(QObject):
+    """The playing video's time, read from the page ten times a second.
+
+    Also where the video is ducked under a line and paused while the
+    translation is prepared: the tap's graph is installed so the volume can
+    be lowered on its gain node -- the element's own volume is YouTube's to
+    remember, and a duck interrupted by a closed window would be kept.
+    """
+
+    changed = Signal()
+
+    def __init__(self, page: QWebEnginePage, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.page = page
+        self.moment = -1.0
+        self.playing = False
+        self.ad = False
+        self._sampled = time.monotonic()
+        self._lock = threading.Lock()
+        self._ducked = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._tick)
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(lambda: self._set_volume(1.0))
+
+    def start(self) -> None:
+        self._run(switch_js(True))
+        self._timer.start()
+        self._tick()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._restore.stop()
+        if self._ducked:
+            self._set_volume(1.0)
+        self._run(switch_js(False))
+
+    def now(self) -> tuple[float, bool]:
+        """Seconds into the video, carried forward from the last sample."""
+        with self._lock:
+            moment, playing, sampled = self.moment, self.playing, self._sampled
+        if playing and moment >= 0:
+            moment += min(0.3, time.monotonic() - sampled)
+        return moment, playing and not self.ad
+
+    def hold(self, held: bool) -> None:
+        self._run(HOLD_JS if held else RELEASE_JS)
+
+    def duck(self, speaking: bool) -> None:
+        from lt_core.tts.dub import DUCK_BRIDGE, DUCK_GAIN
+
+        if speaking:
+            self._restore.stop()
+            self._set_volume(DUCK_GAIN)
+        elif self._ducked:
+            self._restore.start(int(DUCK_BRIDGE * 1000))
+
+    def _set_volume(self, level: float) -> None:
+        from lt_core.tts.dub import DUCK_FADE
+
+        self._ducked = level < 1.0
+        self._run(duck_js(level, DUCK_FADE))
+
+    def _run(self, script: str, callback=None) -> None:
+        try:
+            if callback is None:
+                self.page.runJavaScript(script, TAP_WORLD)
+            else:
+                self.page.runJavaScript(script, TAP_WORLD, callback)
+        except RuntimeError:  # the page is already gone
+            pass
+
+    def _tick(self) -> None:
+        self._run(TAP_JS)  # the gain node the duck needs, on any new <video>
+        self._run(CLOCK_JS, self._sampled_result)
+
+    def _sampled_result(self, result) -> None:
+        if not isinstance(result, str):
+            return
+        state = json.loads(result)
+        with self._lock:
+            self.moment = float(state.get("time", -1))
+            self.playing = bool(state.get("playing"))
+            self.ad = bool(state.get("ad"))
+            self._sampled = time.monotonic()
+        self.changed.emit()
