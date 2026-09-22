@@ -154,7 +154,6 @@ def test_a_video_the_viewer_paused_is_not_started_by_the_release(qapp):
 
 
 def test_the_worker_reports_the_lag_at_the_end_of_the_line(monkeypatch):
-    from lt_core.tts.speaker import Playback
     from lt_ui import engine as engine_module
 
     class _Voice:
@@ -172,10 +171,8 @@ def test_the_worker_reports_the_lag_at_the_end_of_the_line(monkeypatch):
         return 2.0
 
     monkeypatch.setattr(engine_module, "_speak", speak)
-    playback = Playback()
-    playback.until = 14.5
     reported: list[float] = []
-    engine_module._read_out(_Update(), {"ru": _Voice()}, None, object(), playback,
+    engine_module._read_out(_Update(), {"ru": _Voice()}, None, object(), 4.5,
                             None, reported.append)
     # Waited 4.5 s for the voice, then two seconds of its own: by its end
     # the reading trails by 6.5.

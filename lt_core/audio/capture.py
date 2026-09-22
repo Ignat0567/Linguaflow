@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import wave
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -114,6 +115,7 @@ class AudioSource(ABC):
         chunk = AudioChunk(
             samples=mono16k.astype(np.float32, copy=False),
             start_time=self._samples_emitted / TARGET_SAMPLE_RATE,
+            captured_at=time.monotonic(),
         )
         self._samples_emitted += mono16k.size
 

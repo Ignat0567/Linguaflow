@@ -502,3 +502,54 @@ def test_the_gap_between_two_drains_is_not_filled_with_silence():
     finally:
         source.stop()
     assert source.silence_blocks == 0
+
+# -- the gate judges by when a chunk was captured --------------------------
+
+def _chunk_at(moment: float) -> AudioChunk:
+    return AudioChunk(samples=np.ones(512, dtype=np.float32), start_time=0.0,
+                      captured_at=moment)
+
+
+def test_audio_captured_while_we_spoke_is_muted_when_looked_at_later():
+    """The consumer reading a line aloud looks at nothing until it is done.
+    What it then finds in the queue was captured during our voice -- the
+    echo -- and must be muted though the gate has long reopened. Measured
+    before this fix: 13.8 s of it in a minute went through."""
+    gate = EchoGate(tail=0.05)
+    with gate.playing():
+        during = time.monotonic()
+        time.sleep(0.02)
+    time.sleep(0.1)  # gate open again
+    assert not gate.is_shut
+    assert gate.filter(_chunk_at(during)).muted
+
+
+def test_audio_captured_before_we_spoke_is_kept_when_looked_at_during():
+    """The other way round: speech from before the line was read is the
+    other person talking, and was being muted -- 4.9 s in the same minute."""
+    gate = EchoGate(tail=0.05)
+    before = time.monotonic()
+    time.sleep(0.05)  # well past the ~15.6 ms tick of Windows' monotonic clock
+    with gate.playing():
+        assert not gate.filter(_chunk_at(before)).muted
+
+
+def test_the_tail_after_our_voice_is_still_muted_by_capture_time():
+    gate = EchoGate(tail=0.3)
+    with gate.playing():
+        pass
+    just_after = time.monotonic() + 0.1
+    time.sleep(0.4)
+    assert gate.filter(_chunk_at(just_after)).muted
+
+
+def test_the_gate_forgets_old_lines():
+    gate = EchoGate(tail=0.01)
+    gate.MEMORY = 0.05
+    for _ in range(3):
+        with gate.playing():
+            pass
+        time.sleep(0.08)  # each span older than MEMORY by the next one
+    with gate.playing():
+        pass
+    assert len(gate._spans) <= 2
