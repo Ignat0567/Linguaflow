@@ -690,3 +690,40 @@ def test_a_turn_change_releases_the_unfinished_sentence():
     assert released == "[ru] An unfinished thought"
 
 
+
+
+class _UnsureTranscriber(FakeTranscriber):
+    """Unsure on its first ticks -- a video's opening music -- then sure."""
+
+    def __init__(self, script, answers):
+        super().__init__(script)
+        self.answers = answers
+
+    def transcribe(self, audio, options=None, on_progress=None, total_duration=None):
+        from dataclasses import replace
+
+        result = super().transcribe(audio, options, on_progress, total_duration)
+        language, probability = self.answers[min(self.calls - 1, len(self.answers) - 1)]
+        return replace(result, language=language, language_probability=probability)
+
+
+def test_the_language_is_not_pinned_off_an_unsure_window():
+    """A German talk run as English came out as English words and loops.
+    Detecting fixes that -- unless the opening music is detected, at low
+    confidence, as English and pinned for the rest of the video."""
+    transcriber = _UnsureTranscriber(
+        [words((" Hallo", 0, 0.5))],
+        answers=[("en", 0.31), ("en", 0.42), ("de", 0.99)],
+    )
+    session = LiveSession(transcriber, pace=Pace(window=1.0))
+    for chunk in chunks(4.5):
+        session.feed(chunk)
+    assert session.source_language == "de"
+
+
+def test_a_window_with_no_words_does_not_pin_a_language():
+    transcriber = _UnsureTranscriber([[]], answers=[("en", 0.95)])
+    session = LiveSession(transcriber, pace=Pace(window=1.0))
+    for chunk in chunks(2.5):
+        session.feed(chunk)
+    assert session.source_language is None

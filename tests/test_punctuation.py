@@ -240,6 +240,9 @@ def test_a_sample_is_short_enough_to_be_context_not_content(code):
     "Please subscribe!",
     "Untertitel von Stephanie Geiges",
     "Vielen Dank fürs Zuschauen",
+    "Untertitelung des ZDF für funk, 2017",
+    "2017 Untertitelung des ZDF, 2020",
+    "Untertitel im Auftrag des ZDF, 2021",
 ])
 def test_a_subtitle_credit_is_not_something_anybody_said(text):
     """Whisper was trained on subtitle files, credits and all, so given silence
@@ -263,6 +266,8 @@ def test_a_subtitle_credit_is_not_something_anybody_said(text):
     "Thanks for watching the demo and telling me what broke",
     "Спасибо за внимание, вопросы?",
     "Продолжение следует за этим разделом",
+    "Das ZDF zeigt heute die Untertitel des Films",
+    "Die Untertitelung des Films ist wichtig",
 ])
 def test_speech_that_merely_mentions_subtitles_is_still_speech(text):
     """Deleting what somebody actually said is the worse failure of the two, so

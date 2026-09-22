@@ -36,6 +36,11 @@ from .agreement import LocalAgreement
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]］】」』]*\s*$")
 _CLAUSE_END = re.compile(r"[,;:—–、，；：]['\"»”’)\]]*\s*$")
 
+#: Confidence at which a detected source language is pinned for the session.
+#: Speech is detected at 0.99-1.00 within a second (Day 4); a pause, music or
+#: silence comes out far lower, and those are the windows not to pin on.
+PIN_LANGUAGE_AT = 0.7
+
 #: How long a sentence may go unfinished before part of it is committed anyway.
 #:
 #: Long, because this is the safety valve and not the answer to latency: the
@@ -323,11 +328,20 @@ class LiveSession:
         self.stats.asr_seconds += time.perf_counter() - started
         self.stats.ticks += 1
 
-        if self.source_language is None and transcript.language:
+        if (
+            self.source_language is None
+            and transcript.language
+            and any(word.text.strip() for word in transcript.words)
+            and transcript.language_probability >= PIN_LANGUAGE_AT
+        ):
             # Detect once, then pin. Re-detecting every tick lets the model
             # change its mind mid-session on a short or accented window, and a
             # translation whose source language flips halfway through is worse
             # than one that is confidently wrong about a single word.
+            #
+            # But not off a window with nothing in it: a video's opening
+            # music or silence gets a language too, at low confidence, and
+            # pinning that decodes the rest of the session in the wrong one.
             self.source_language = transcript.language
             self.detected_language = transcript.language
 

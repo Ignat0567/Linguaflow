@@ -155,6 +155,11 @@ _HALLUCINATIONS = tuple(re.compile(pattern, re.IGNORECASE | re.UNICODE) for patt
     r"thanks?\s*(?:you)?\s*for\s+watching\W*",
     r"please\s+(?:subscribe|like\s+and\s+subscribe)\W*",
     r"untertitel(?:ung)?\s+(?:von|im\s+auftrag|aufgrund|der)\s+" + _NAME + r".*",
+    # The German broadcaster credit, with or without a year either side.
+    # Heard live over a YouTube video's music: «Untertitelung des ZDF für
+    # funk, 2017» and «2017 Untertitelung des ZDF, 2020», both translated.
+    r"(?:\d{4}\W*)?untertitel(?:ung)?\s+(?:im\s+auftrag\s+)?des\s+"
+    r"(?:zdf|ard|wdr|ndr|swr|br|mdr|hr|rbb|sr)\b.*",
     r"vielen\s+dank\s+f(?:ü|u)rs?\s+(?:zuschauen|zusehen)\W*",
     r".*\bamara\.org\b.*",
     r".*\bdimatorzok\b.*",
