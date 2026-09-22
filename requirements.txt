@@ -14,6 +14,10 @@ pyopenjtalk-plus==0.4.1.post9   # Japanese phonemizer; upstream pyopenjtalk has 
 sounddevice==0.5.6
 PyAudioWPatch==0.2.12.8         # WASAPI loopback (system audio)
 imageio-ffmpeg==0.6.0           # bundled ffmpeg binary
+# Links
+yt-dlp==2026.8.19
+yt-dlp-ejs==0.8.0               # YouTube's JavaScript challenges...
+deno==2.9.7                     # ...and the runtime that runs them
 numpy==2.5.3
 # UI
 PySide6==6.11.2
