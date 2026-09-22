@@ -27,18 +27,55 @@ def test_only_german_is_touched():
     assert germanise("The Feature is done.", "en") == "The Feature is done."
 
 
-def test_a_prompt_is_a_prompt():
-    """«Prompt» came out «проспект»; kept in capitals it survives as a name,
-    and comes back as the word Russians use."""
+def test_a_prompt_declines_as_the_request_the_model_translates_it_as():
+    """«Prompt» came out «проспект», and kept as a name it would not
+    decline: «инженерия промпт». Into Russian it goes as «Abfrage», which
+    declines as «промпт» does, and the stem is swapped back."""
     from lt_core.mt.loanwords import restore
 
-    assert germanise("Schreib einen besseren Prompt.", "de") == "Schreib einen besseren PROMPT."
-    assert germanise("Die Prompts werden länger.", "de") == "Die PROMPTS werden länger."
-    assert restore("Напишите лучше ПРОМПТ.", "de", "ru") == "Напишите лучше промпт."
-    assert restore("Хороший PROMPT даст ответы.", "de", "ru") == "Хороший промпт даст ответы."
-    assert restore("ПРОМПТЫ становятся длиннее.", "de", "ru") == "промпты становятся длиннее."
+    original = "Dafür brauchst du gutes Prompt-Engineering."
+    assert germanise(original, "de", "ru") == "Dafür brauchst du gutes Abfrage-Engineering."
+    assert restore("Нужна хорошая инженерия запросов.", original, "de", "ru") == (
+        "Нужна хорошая инженерия промптов."
+    )
+    two = "Ich habe drei Prompts probiert."
+    assert germanise(two, "de", "ru") == "Ich habe drei Abfragen probiert."
+    assert restore("Я пробовал три разных запроса.", two, "de", "ru") == (
+        "Я пробовал три разных промпта."
+    )
+    assert restore("Вопросы становятся длиннее.", "Die Prompts werden länger.", "de", "ru") == (
+        "Промпты становятся длиннее."
+    )
+
+
+def test_only_as_many_requests_become_prompts_as_there_were_prompts():
+    from lt_core.mt.loanwords import restore
+
+    original = "Kopiere diesen Prompt."
+    assert restore("Скопируйте этот запрос, а потом запрос ещё раз.", original, "de", "ru") == (
+        "Скопируйте этот промпт, а потом запрос ещё раз."
+    )
+
+
+def test_a_sentence_with_its_own_question_keeps_prompt_as_a_name():
+    """Its «вопрос» is a real one and must not become «промпт»."""
+    from lt_core.mt.loanwords import restore
+
+    original = "Die Frage ist, welcher Prompt besser ist."
+    assert germanise(original, "de", "ru") == "Die Frage ist, welcher PROMPT besser ist."
+    assert restore("Вопрос в том, какой ПРОМПТ лучше.", original, "de", "ru") == (
+        "Вопрос в том, какой промпт лучше."
+    )
+
+
+def test_into_english_a_prompt_stays_a_prompt():
+    from lt_core.mt.loanwords import restore
+
+    original = "Schreib einen besseren Prompt."
+    assert germanise(original, "de", "en") == "Schreib einen besseren PROMPT."
+    assert restore("Write a better PROMPT.", original, "de", "en") == "Write a better prompt."
     # Nothing is restored from a language that was not germanised.
-    assert restore("Хороший PROMPT.", "en", "ru") == "Хороший PROMPT."
+    assert restore("Хороший PROMPT.", "A good PROMPT.", "en", "ru") == "Хороший PROMPT."
 
 
 def test_an_llm_is_not_a_law_degree():

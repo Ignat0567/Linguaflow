@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from .. import languages
+from ..abbreviations import is_abbreviation
 from ..runtime import bootstrap
 from .loanwords import germanise, restore
 from .types import NLLB_CODES, TranslationError
@@ -120,11 +121,20 @@ def split_sentences(text: str) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
-    pieces: list[str] = []
+    parts: list[str] = []
     for part in _SENTENCE.split(stripped):
         part = part.strip()
-        if part:
-            pieces.extend(_break_up(part))
+        if not part:
+            continue
+        # «...mit Tools wie z.B. Gmail verbinden» is one sentence: a piece
+        # ending on an abbreviation goes on with the next one.
+        if parts and is_abbreviation(parts[-1].split()[-1]):
+            parts[-1] = f"{parts[-1]} {part}"
+        else:
+            parts.append(part)
+    pieces: list[str] = []
+    for part in parts:
+        pieces.extend(_break_up(part))
     return pieces
 
 
@@ -230,10 +240,12 @@ class NllbTranslator:
         # still gets one result per input.
         batch: list[list[str]] = []
         ownership: list[int] = []
+        originals: list[str] = []
         for position, text in enumerate(texts):
             for sentence in split_sentences(text):
-                sentence = germanise(sentence, source)
-                batch.append(tokenizer.convert_ids_to_tokens(tokenizer.encode(sentence)))
+                originals.append(sentence)
+                prepared = germanise(sentence, source, target)
+                batch.append(tokenizer.convert_ids_to_tokens(tokenizer.encode(prepared)))
                 ownership.append(position)
 
         if not batch:
@@ -255,12 +267,12 @@ class NllbTranslator:
             raise TranslationError("Сбой локального перевода.", str(exc)) from exc
 
         collected: list[list[str]] = [[] for _ in texts]
-        for owner, response in zip(ownership, responses):
+        for owner, original, response in zip(ownership, originals, responses):
             # The first token is the target-language tag the model echoes back.
             tokens = response.hypotheses[0][1:]
             collected[owner].append(restore(
                 tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip(),
-                source, target,
+                original, source, target,
             ))
 
         joiner = " " if languages.joins_with_space(target) else ""
