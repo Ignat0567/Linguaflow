@@ -27,7 +27,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .. import languages
-from ..asr.transcriber import TranscribeOptions, Transcriber
+from ..abbreviations import is_abbreviation
+from ..asr.transcriber import TranscribeOptions, Transcriber, _with_terms
 from ..asr.types import Word
 from ..audio.types import TARGET_SAMPLE_RATE, AudioChunk
 from ..mt.translator import Translator
@@ -216,9 +217,13 @@ class LiveSession:
         pace: Pace = BALANCED,
         speaker: str | None = None,
         carry_context: bool = True,
+        terms: tuple[str, ...] = (),
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
+        #: Names and words to spell as given -- the user's «Слова из записи»,
+        #: which reached file mode and never the live one.
+        self.terms = tuple(terms)
         self.source_language = source_language
         self.target_language = target_language
         self.pace = pace
@@ -485,6 +490,7 @@ class LiveSession:
         back unpunctuated once, a prompt made only of it keeps it that way.
         """
         opening = languages.punctuation_sample(self.source_language or "")
+        opening = _with_terms(opening or None, self.terms) or ""
         if not self.carry_context:
             return opening or None
         tail = self.agreement.committed[-30:]
@@ -547,7 +553,7 @@ class LiveSession:
         else:
             last = -1
             for index, word in enumerate(self._untranslated):
-                if _SENTENCE_END.search(word.text):
+                if _SENTENCE_END.search(word.text) and not is_abbreviation(word.text):
                     last = index
             if last < 0:
                 last = self._overdue_cut()

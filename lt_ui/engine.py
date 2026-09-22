@@ -269,6 +269,7 @@ class LiveWorker(QThread):
                 source_language=settings.from_lang or None,
                 target_language=settings.to_lang,
                 pace=BALANCED,
+                terms=split_terms(settings.terms),
             )
 
         if given is not None:

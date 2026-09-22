@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 
 from .. import languages
+from ..abbreviations import is_abbreviation
 from ..asr.types import Segment, Transcript, Word
 
 
@@ -235,7 +236,8 @@ def _split_words(words: list[Word], style: CueStyle) -> list[list[Word]]:
         current = candidate
         # A sentence ended and the run is already substantial: stop here rather
         # than gluing the next sentence on.
-        if _SENTENCE_END.search(word.text.strip()) and _long_enough(current, style):
+        if (_SENTENCE_END.search(word.text.strip()) and not is_abbreviation(word.text)
+                and _long_enough(current, style)):
             runs.append(current)
             current = []
 

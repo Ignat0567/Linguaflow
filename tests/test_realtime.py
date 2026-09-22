@@ -780,3 +780,33 @@ def test_a_translation_says_which_words_it_translated():
     assert translated[0].translation_source == "Hello."
     # Updates with no translation carry no source.
     assert session.finish().translation_source in ("", "How are")
+
+
+def test_live_translation_does_not_stop_at_an_abbreviation():
+    script = [
+        words((" Tools", 0.0, 0.4), (" wie", 0.4, 0.6), (" z.B.", 0.6, 1.0), (" Gmail", 1.0, 1.4)),
+        words((" Tools", 0.0, 0.4), (" wie", 0.4, 0.6), (" z.B.", 0.6, 1.0), (" Gmail", 1.0, 1.4),
+              (" verbinden.", 1.4, 2.0)),
+        words((" Tools", 0.0, 0.4), (" wie", 0.4, 0.6), (" z.B.", 0.6, 1.0), (" Gmail", 1.0, 1.4),
+              (" verbinden.", 1.4, 2.0), (" Gut", 2.0, 2.4)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="de", target_language="ru", pace=Pace(window=1.0),
+    )
+    sources = [
+        update.translation_source
+        for update in (session.feed(chunk) for chunk in chunks(4.0))
+        if update and update.translation
+    ]
+    assert sources and sources[0] == "Tools wie z.B. Gmail verbinden."
+
+
+def test_the_users_words_reach_the_live_prompt():
+    """«Слова из записи» reached file mode and never the live one; on a real
+    German video «ChatGBT», «Cloud» and «Google-Cheat» came right with them."""
+    session = LiveSession(
+        FakeTranscriber([]), source_language="de", terms=("ChatGPT", "Claude"),
+    )
+    prompt = session._prompt()
+    assert prompt is not None and prompt.endswith("ChatGPT, Claude.")
