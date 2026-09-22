@@ -315,6 +315,7 @@ class RealtimeScreen(QWidget):
         self._feed.addStretch(1)
         for line in visible[-KEPT_ON_SCREEN:]:
             self._feed.addWidget(_Caption(line, conversation))
+        self._scroll.refit()
 
     def _toggle_overlay(self) -> None:
         overlay = self.app.overlay
@@ -448,12 +449,49 @@ class _FeedScroll(QScrollArea):
         bar = self.verticalScrollBar()
         self.following = value >= bar.maximum() - self.NEAR
 
+    def refit(self) -> None:
+        """Size the lines for the width they actually have.
+
+        A scroll area sizes its widget by the height the layout wants at its
+        *preferred* width. Wrapped lines narrower than that need more
+        height than they were given: in a German meeting the third line of a
+        long sentence was drawn half under its own translation.
+        """
+        body = self.widget()
+        width = self.viewport().width()
+        if body is None or width <= 0:
+            return
+        margins = self.feed.contentsMargins()
+        room = width - margins.left() - margins.right()
+        # Measured, not left to the layout: Qt's height-for-width through a
+        # scroll area and a box layout gave every caption the same share,
+        # 119-129 px, to lines that needed up to 180.
+        for index in range(self.feed.count()):
+            caption = self.feed.itemAt(index).widget()
+            if isinstance(caption, _Caption):
+                caption.setMinimumHeight(
+                    caption.heightForWidth(min(room, caption.maximumWidth())))
+        height = self.feed.heightForWidth(width)
+        if height > 0:
+            body.setMinimumHeight(max(height, self.feed.minimumSize().height()))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.refit()
+
     def _grew(self, _low: int, high: int) -> None:
         if self.following:
             self.verticalScrollBar().setValue(high)
 
 
 class _Caption(QWidget):
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        # The feed's layout asks at the feed's width, but a caption is never
+        # wider than its maximum. Asked at 688 and laid out at 640, a long
+        # German sentence got the height of two lines and wrapped to three:
+        # its last line was drawn under its own translation.
+        return super().heightForWidth(min(width, self.maximumWidth()))
+
     def __init__(self, line: Line, conversation: bool) -> None:
         super().__init__()
         clear_fill(self)
