@@ -452,8 +452,20 @@ class BrowserScreen(QWidget):
             self._ahead_worker.cancel()
             self._ahead_worker = None
         if self._cue_voice is not None:
-            self._cue_voice.stop()
-            self._cue_voice = None
+            voice, self._cue_voice = self._cue_voice, None
+            voice.stop()
+            # A line being read is inside PortAudio until it ends. Left there,
+            # quitting the program with the voice on crashed it on the way
+            # out (access violation in ntdll): the interpreter was torn down
+            # under a thread still playing. Cut the line short and wait for
+            # the voice's threads to see the stop.
+            try:
+                import sounddevice as sd
+
+                sd.stop()
+            except Exception:  # noqa: BLE001 -- no audio device: nothing playing
+                pass
+            voice.join(timeout=3.0)
         self._track = None
         if self._clock is not None:
             self._clock.hold(False)
