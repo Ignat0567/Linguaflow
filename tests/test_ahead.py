@@ -228,3 +228,47 @@ def test_the_browser_translates_into_its_own_language_not_the_live_screens(tmp_p
     assert (again.settings.from_lang, again.settings.to_lang) == ("ru", "en")
     assert again.settings.browser_to_lang == "ru"
     assert again.settings.browser_from_lang == "auto"
+
+
+def test_the_voice_reads_sentences_not_screen_lines():
+    """Heard on a Langfuse talk: «…или нуждаетесь в более» and «эффективной
+    совместной работе…» were read as two sentences, the pitch falling on
+    «более» in the middle of one."""
+    from lt_ui.ahead import speech_lines
+
+    track = Track([
+        Line(37.4, 40.4, "If you struggle with", "Если вы нуждаетесь в более"),
+        Line(40.4, 42.0, "collaborating,", "эффективной совместной работе,"),
+        Line(42.1, 44.4, "Langfuse will help.", "Langfuse поможет."),
+        Line(44.7, 48.3, "All of it is open.", "Всё это открыто."),
+    ])
+    spoken = speech_lines(track)
+    assert [line.translated for line in spoken] == [
+        "Если вы нуждаетесь в более эффективной совместной работе, Langfuse поможет.",
+        "Всё это открыто.",
+    ]
+    assert (spoken[0].start, spoken[0].end) == (37.4, 44.4)
+
+
+def test_a_long_pause_ends_a_sentence_without_a_full_stop():
+    from lt_ui.ahead import SENTENCE_PAUSE, speech_lines
+
+    track = Track([
+        Line(0.0, 2.0, "and so", "и вот"),
+        Line(2.0 + SENTENCE_PAUSE + 1.0, 5.0, "next", "дальше."),
+    ])
+    assert len(speech_lines(track)) == 2
+
+
+def test_a_late_sentence_is_still_read_while_its_moment_lasts():
+    """Russian runs longer than English; the next sentence often starts a
+    little late. Dropping it for that would silence half a talk."""
+    track = Track([Line(10.0, 20.0, "long", "длинное предложение.")])
+    clock = _Clock()
+    voice, said = _voice(track, clock)
+    clock.set(13.0)  # three seconds late, seven still to go
+    voice.start()
+    _run_until(lambda: said)
+    voice.stop()
+    voice.join()
+    assert [text for text, _ in said] == ["длинное предложение."]

@@ -397,7 +397,7 @@ class BrowserScreen(QWidget):
 
         from lt_core.tts.speaker import Speaker
 
-        from ..ahead import CueVoice
+        from ..ahead import CueVoice, Track, speech_lines
         from ..store import MODEL_ROOT
 
         speaker = Speaker(self.app.store.settings.browser_to_lang, voices_dir=MODEL_ROOT / "piper")
@@ -408,8 +408,9 @@ class BrowserScreen(QWidget):
             made = speaker.fit(line.translated, line.start, max(0.5, line.end - line.start))
             return made.samples, made.rate
 
+        # The screen shows lines; the voice reads the sentences they make.
         return CueVoice(
-            track, self._clock.now, synth=synth,
+            Track(speech_lines(track), track.language), self._clock.now, synth=synth,
             play=lambda samples, rate: sd.play(samples, rate, blocking=True),
             announce=self._relay.speaking.emit,
         )

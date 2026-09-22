@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import bisect
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -59,6 +60,49 @@ class Track:
     def next_from(self, moment: float) -> int:
         """The first line starting at or after `moment` (len when none)."""
         return bisect.bisect_left(self._starts, moment)
+
+
+_SENTENCE_END = re.compile(r"[.!?…]['\"»”’)\]]*\s*$")
+
+#: A pause this long ends a sentence for the voice even without a full stop.
+SENTENCE_PAUSE = 1.5
+#: Nor is a spoken sentence allowed to run longer than this.
+SENTENCE_SPAN = 25.0
+
+
+def speech_lines(track: Track) -> list[Line]:
+    """The track's lines joined back into the sentences they were cut from.
+
+    A subtitle line is cut to fit the screen, often mid-sentence, and a
+    voice given one on its own reads it as a finished sentence: the pitch
+    falls on its last word. Heard on a Langfuse talk -- «…или нуждаетесь в
+    более» | «эффективной совместной работе…» came out as two sentences,
+    the first ending on «более». The screen keeps its lines; the voice gets
+    the sentence, from its first line's start to its last line's end.
+    """
+    joined: list[Line] = []
+    group: list[Line] = []
+
+    def close() -> None:
+        if group:
+            joined.append(Line(
+                group[0].start, group[-1].end,
+                " ".join(line.original for line in group if line.original),
+                " ".join(line.translated for line in group if line.translated),
+            ))
+            group.clear()
+
+    for line in track.lines:
+        if group and (
+            line.start - group[-1].end > SENTENCE_PAUSE
+            or line.end - group[0].start > SENTENCE_SPAN
+        ):
+            close()
+        group.append(line)
+        if _SENTENCE_END.search(line.translated):
+            close()
+    close()
+    return joined
 
 
 def track_from_result(result) -> Track:
@@ -129,10 +173,12 @@ class CueVoice:
     """Speak each line at its own moment on the video's clock.
 
     `clock()` returns (seconds into the video, playing). A line is spoken
-    when the clock reaches its start; a line the clock has passed by more
-    than LATE -- a seek, a long line before it -- is skipped rather than read
-    over whatever is being said by then. The next few lines are synthesised
-    ahead, fitted to their slot, so a line starts on time.
+    when the clock reaches its start. A late one -- the sentence before ran
+    long, as Russian after English does -- is still read while its moment in
+    the video lasts; one the clock has run past (a seek, or a sentence before
+    it that ran over all of it) is skipped rather than read over whatever is
+    being said by then. The next few lines are synthesised ahead, fitted to
+    their slot, so a line starts on time.
 
     `synth(line) -> (samples, rate)` and `play(samples, rate)` are injected;
     `announce(bool)` is told as a line starts and ends (the page ducks).
@@ -209,7 +255,7 @@ class CueVoice:
             moment, playing = self.clock()
             if index is None or not self._near(index, moment):
                 # First run, or the clock jumped (a seek): start from here.
-                index = self.track.next_from(moment - self.LATE)
+                index = self._first_unpassed(moment)
                 with self._lock:
                     self._cache = {k: v for k, v in self._cache.items() if k >= index}
                     self._requested = {k for k in self._requested if k >= index}
@@ -222,7 +268,10 @@ class CueVoice:
             if not playing or moment < line.start:
                 time.sleep(self.TICK)
                 continue
-            if moment - line.start > self.LATE:
+            if self._passed(line, moment):
+                # What is left of its moment in the video is not enough to
+                # say it in: a seek went past it, or the sentence before ran
+                # long over all of it.
                 self.skipped += 1
                 index += 1
                 continue
@@ -239,6 +288,18 @@ class CueVoice:
             finally:
                 if self.announce is not None:
                     self.announce(False)
+
+    def _passed(self, line: Line, moment: float) -> bool:
+        """Too little of the line's moment left in the video to say it in."""
+        return moment > max(line.start + self.LATE, line.end - self.LATE)
+
+    def _first_unpassed(self, moment: float) -> int:
+        """Where to start reading at `moment`: the first line not yet passed,
+        one already under way included."""
+        index = self.track.next_from(moment - 60.0)
+        while index < len(self.track) and self._passed(self.track.lines[index], moment):
+            index += 1
+        return index
 
     def _near(self, index: int, moment: float) -> bool:
         """Whether `index` is still the right place for `moment`."""
