@@ -265,7 +265,8 @@ class LiveWorker(QThread):
             session = LiveSession(
                 self.transcriber,
                 translator=self.translator,
-                source_language=settings.from_lang,
+                # Empty means detect: the session pins the language it hears.
+                source_language=settings.from_lang or None,
                 target_language=settings.to_lang,
                 pace=BALANCED,
             )
