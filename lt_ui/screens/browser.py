@@ -113,7 +113,7 @@ class BrowserScreen(QWidget):
         caption_box.addWidget(self._subcaption)
 
         # -- controls -----------------------------------------------------
-        self._pair = LanguagePair(self, compact=True)
+        self._pair = LanguagePair(self, compact=True, allow_auto=True)
         self._pair.changed.connect(self._sync_pair)
         self._translate = glass.Toggle(self)
         self._translate.toggled.connect(self._toggled)
@@ -156,7 +156,7 @@ class BrowserScreen(QWidget):
     # -- lifecycle ---------------------------------------------------------
     def refresh(self) -> None:
         settings = self.app.store.settings
-        self._pair.set_pair(settings.from_lang, settings.to_lang)
+        self._pair.set_pair(settings.browser_from_lang, settings.to_lang)
         self._speak.blockSignals(True)
         self._speak.setChecked(settings.realtime_voice)
         self._speak.blockSignals(False)
@@ -245,9 +245,28 @@ class BrowserScreen(QWidget):
     # -- settings ----------------------------------------------------------
     def _sync_pair(self) -> None:
         source, target = self._pair.pair()
-        self.app.store.settings.from_lang = source
+        self.app.store.settings.browser_from_lang = source
         self.app.store.settings.to_lang = target
         self.app.store.save_settings()
+
+    def _live_settings(self):
+        """The settings a browser session runs on.
+
+        A video's language is not the viewer's: measured on a German talk
+        run as English, Whisper wrote German as English words, looped
+        («oder Merck, bereitstellen, oder Merck, bereitstellen»), and the
+        first line took 15 s. So the browser detects unless told, and it is
+        always one speaker, whatever the Live screen's mode is.
+        """
+        from dataclasses import replace
+
+        settings = self.app.store.settings
+        chosen = settings.browser_from_lang
+        return replace(
+            settings,
+            from_lang="" if chosen in ("", "auto") else chosen,
+            realtime_mode="subtitles",
+        )
 
     def _sync_voice(self, on: bool) -> None:
         self.app.store.settings.realtime_voice = on
@@ -337,7 +356,8 @@ class BrowserScreen(QWidget):
             self._stack.setCurrentWidget(self._video)
             self._audio = self._video
             self._status.setText(_("Слушаю видео"))
-        self.app.engine.start_live(self.app.store.settings, source=self._source)
+        self._heard_language = ""
+        self.app.engine.start_live(self._live_settings(), source=self._source)
         if self._audio is self._video:
             self._video.play()
 
@@ -370,6 +390,10 @@ class BrowserScreen(QWidget):
     def _on_tap_state(self, state: str) -> None:
         if not self._mine or self._audio is not self._tap:
             return
+        if self._catch.holding:
+            # The video stands because it was held; «waiting for a video to
+            # play» would be telling the viewer to do something.
+            return
         self._status.setText({
             "listening": _("Слушаю видео"),
             "ad": _("Идёт реклама — её не перевожу"),
@@ -379,6 +403,12 @@ class BrowserScreen(QWidget):
     def _on_update(self, update) -> None:
         if not self._mine:
             return
+        heard = update.speaker_language
+        if heard and heard != getattr(self, "_heard_language", "") and not self._catch.holding:
+            self._heard_language = heard
+            from ..i18n import language_name
+
+            self._status.setText(_("Слушаю видео · {language}", language=language_name(heard)))
         if update.committed:
             self._original = append_committed(self._original, update)
             self._partial = ""

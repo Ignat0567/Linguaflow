@@ -151,8 +151,13 @@ class Settings:
     #: Where the browser screen was last. Empty means its home page.
     browser_url: str = ""
     #: Pause the browser's video when the translation read aloud falls too
-    #: far behind it (lt_ui.browser.CatchUp).
-    browser_catch_up: bool = True
+    #: far behind it (lt_ui.browser.CatchUp). Off by default: the voice no
+    #: longer costs recognition anything (it reads on its own thread), and a
+    #: video that stops for ten seconds at a time reads as a fault.
+    browser_catch_up: bool = False
+    #: The language of the videos watched in the browser; "auto" detects it.
+    #: Separate from the Live screen's, which is a person's own language.
+    browser_from_lang: str = "auto"
     #: Floating caption window over the meeting.
     overlay: bool = True
     #: True: the window stays on this monitor but is absent from Zoom/Meet

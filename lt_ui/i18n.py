@@ -159,6 +159,9 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Waiting for a video to play", "Warte, bis ein Video läuft",
     ),
     "Слушаю видео": ("Listening to the video", "Höre das Video"),
+    "Слушаю видео · {language}": (
+        "Listening to the video · {language}", "Höre das Video · {language}",
+    ),
     "Идёт реклама — её не перевожу": (
         "An ad is playing — not translating it",
         "Werbung läuft — wird nicht übersetzt",

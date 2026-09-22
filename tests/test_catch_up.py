@@ -195,3 +195,35 @@ def test_the_video_waits_until_the_captured_audio_has_been_heard(qapp):
     backlog[0] = 0.1
     _wait(qapp, 0.25)
     assert target.calls == [True, False]
+
+
+def test_a_held_video_is_not_reported_as_waiting_to_be_played(tmp_path):
+    """Measured: the hold's status was replaced 0.1 s later by «waiting for
+    a video to play» -- the tap saw a stopped video and said so."""
+    import sys
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication(sys.argv)
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    screen = window._browser
+    screen._mine = True
+    class _Tap:
+        def stop(self):
+            pass
+
+        def hold(self, held):
+            pass
+
+    screen._audio = screen._tap = _Tap()
+    screen._catch._holding = True
+    screen._on_held(True)
+    held_text = screen._status.text()
+    screen._on_tap_state("waiting")
+    assert screen._status.text() == held_text
+    screen._catch._holding = False
+    screen._mine = False
+    window.close()
