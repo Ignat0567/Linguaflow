@@ -212,6 +212,70 @@ def analyse(
     return cast
 
 
+#: A person whose voice sits this high is a woman whoever else is in the
+#: recording. Below it, "higher than the lowest person by MIN_SEPARATION and
+#: above PERSON_FLOOR" decides -- so a woman with a low voice beside a man is
+#: still told apart (159 Hz against 109 on the interview), and two men of
+#: different registers are not.
+PERSON_HIGH = 175.0
+PERSON_FLOOR = 150.0
+
+
+def cast_people(
+    cues: tuple[Cue, ...],
+    audio: np.ndarray,
+    rate: int,
+    people: list[int],
+    default: str | None = None,
+) -> Cast:
+    """A voice per person, `people` saying who speaks each cue.
+
+    Pitch is measured per line as in `analyse`, but decided per person, from
+    the median of all their lines: one man's animated sentences no longer
+    count against him, because they are his.
+    """
+    cast = Cast()
+    if not cues:
+        return cast
+    measured: list[Pitch | None] = []
+    for cue in cues:
+        start = max(0, int(cue.start * rate))
+        stop = min(audio.size, int(cue.end * rate))
+        pitch = estimate(audio[start:stop], rate) if stop > start else None
+        measured.append(pitch if pitch is not None and pitch.confident else None)
+    cast.pitches = measured
+    cast.unmeasured = sum(1 for pitch in measured if pitch is None)
+
+    heights: dict[int, float] = {}
+    for person in set(people):
+        own = [p.median for p, who in zip(measured, people) if who == person and p is not None]
+        if own:
+            heights[person] = float(np.median(own))
+    confident = [p.median for p in measured if p is not None]
+    lowest = min(heights.values()) if heights else 0.0
+
+    def register(height: float) -> str:
+        if height >= PERSON_HIGH:
+            return FEMALE
+        if height > PERSON_FLOOR and height - lowest >= MIN_SEPARATION:
+            return FEMALE
+        return MALE
+
+    if confident:
+        fallback = register(float(np.median(confident)))
+    else:
+        fallback = default or MALE
+    voice = {person: register(height) for person, height in heights.items()}
+    cast.genders = [voice.get(person, fallback) for person in people]
+    cast.from_recording = len(set(cast.genders)) > 1
+    cast.split = (
+        (min(h for p, h in heights.items() if voice[p] == FEMALE)
+         + max(h for p, h in heights.items() if voice[p] == MALE)) / 2
+        if cast.from_recording else DEFAULT_SPLIT
+    )
+    return cast
+
+
 def _smooth(
     genders: list[str], pitches: list[Pitch | None], split: float
 ) -> list[str]:

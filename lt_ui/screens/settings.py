@@ -193,19 +193,6 @@ class SettingsScreen(QWidget):
         where.body.addWidget(self._where_note)
         where.body.addWidget(self._service)
 
-        capture = SettingsGroup(_("Источник звука"))
-        self._capture = ChipGroup((
-            ("microphone", _("Микрофон")),
-            ("system", _("Звук системы")),
-        ), capture)
-        self._capture.changed.connect(self._sync_capture)
-        capture.body.addWidget(self._capture)
-        capture.body.addWidget(glass.label(
-            _("«Звук системы» — то, что играет из колонок, через "
-              "WASAPI loopback."),
-            12, 400, theme.TERTIARY, wrap=True,
-        ))
-
         overlay = SettingsGroup(_("Окно субтитров"))
         overlay_row = QHBoxLayout()
         overlay_row.setSpacing(12)
@@ -315,7 +302,7 @@ class SettingsScreen(QWidget):
         column.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         column.addWidget(title)
         column.addSpacing(28)
-        for group in (langs, voice, words, fmt, where_files, where, capture,
+        for group in (langs, voice, words, fmt, where_files, where,
                       overlay, notify, look, accent):
             group.setMaximumWidth(700)
             column.addWidget(group)
@@ -347,7 +334,6 @@ class SettingsScreen(QWidget):
         self._mode.set_value(settings.translation_mode)
         self._service.set_value(settings.online_service)
         self._service.setVisible(settings.translation_mode == TranslationMode.ONLINE)
-        self._capture.set_value(settings.capture_kind)
         self._overlay.blockSignals(True)
         self._overlay.setChecked(settings.overlay)
         self._overlay.blockSignals(False)
@@ -394,10 +380,6 @@ class SettingsScreen(QWidget):
 
     def _sync_service(self, value: str) -> None:
         self.app.store.settings.online_service = value
-        self._save()
-
-    def _sync_capture(self, value: str) -> None:
-        self.app.store.settings.capture_kind = value
         self._save()
 
     def _sync_overlay(self, on: bool) -> None:
@@ -595,27 +577,13 @@ class SettingsScreen(QWidget):
         spoken = language_name(code)
         if self.app.store.settings.match_voices and languages.has_voice_pair(code):
             self._voice_note.setText(_(
-                "Язык перевода — {language}. Мужские реплики читает голос "
-                "{male}, женские — {female}. Кто говорит, определяется по "
+                "Язык перевода — {language}. Мужские реплики читает мужской "
+                "голос, женские — женский. Кто говорит, определяется по "
                 "высоте голоса в оригинале, отдельно для каждой реплики.",
                 language=spoken,
-                male=_voice_label(language.piper_male),
-                female=_voice_label(language.piper_female),
             ))
         else:
             self._voice_note.setText(_(
-                "Язык перевода — {language}. Всё читает один голос, {voice}.",
-                language=spoken, voice=_voice_label(language.piper_voice),
+                "Язык перевода — {language}. Всё читает один голос.",
+                language=spoken,
             ))
-
-
-def _voice_label(voice: str) -> str:
-    """«ru_RU-ruslan-medium» -> «ruslan».
-
-    Left as the identifier Piper uses rather than prettified. Half of these
-    are names a person would recognise (ruslan, irina) and half are corpus
-    labels that are not (hfc_male), and «Hfc male» reads worse than the plain
-    identifier does.
-    """
-    parts = voice.split("-")
-    return parts[1] if len(parts) > 1 else voice

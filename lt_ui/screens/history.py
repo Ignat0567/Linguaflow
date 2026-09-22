@@ -30,25 +30,23 @@ class HistoryScreen(QWidget):
         self._clear.clicked.connect(self._on_clear)
         self._confirming = False
         header = QHBoxLayout()
-        header.setContentsMargins(4, 0, 4, 0)
+        header.setContentsMargins(4, 0, 4, 8)
         header.addStretch()
         header.addWidget(self._clear)
-        self._header = QWidget()
-        clear_fill(self._header)
-        # The stretch beside it only pushes if the row is as wide as the
-        # list it sits over.
-        self._header.setFixedWidth(700)
-        self._header.setLayout(header)
+
+        wrap = QWidget()
+        clear_fill(wrap)
+        wrap.setFixedWidth(700)
+        stacked = QVBoxLayout(wrap)
+        stacked.setContentsMargins(0, 0, 0, 0)
+        stacked.setSpacing(8)
+        stacked.addLayout(header)
+        stacked.addLayout(self._list)
+        self._header = wrap
 
         column.addWidget(title)
         column.addSpacing(20)
-        column.addWidget(self._header, 0, Qt.AlignHCenter)
-        column.addSpacing(8)
-        wrap = QWidget()
-        clear_fill(wrap)
-        wrap.setMaximumWidth(700)
-        wrap.setLayout(self._list)
-        column.addWidget(wrap)
+        column.addWidget(wrap, 0, Qt.AlignHCenter)
         column.addStretch()
 
     def refresh(self) -> None:
@@ -59,7 +57,7 @@ class HistoryScreen(QWidget):
                 widget.deleteLater()
         entries = self.app.store.entries
         self._reset_clear()
-        self._header.setVisible(bool(entries))
+        self._clear.setVisible(bool(entries))
         if not entries:
             empty = glass.label(_("Пока нет переводов."), 14, 400, theme.MUTED)
             empty.setAlignment(Qt.AlignCenter)

@@ -91,6 +91,41 @@ def test_cues_do_not_overlap():
         assert later.start >= earlier.end
 
 
+def test_a_word_stretched_across_a_pause_is_not_a_thirteen_second_cue():
+    """Real German lecture: Whisper timed 'eine' at 13.3 s and 'schlechte'
+    at another 13.3 s, so four one-word cues for one short sentence."""
+    segment = Segment(
+        text="Das ist eine schlechte Bewegung.",
+        start=29.22, end=59.33,
+        words=words([
+            (" Das", 29.22, 31.72),
+            (" ist", 31.72, 31.80),
+            (" eine", 31.80, 45.10),
+            (" schlechte", 45.18, 58.48),
+            (" Bewegung.", 58.56, 59.33),
+        ]),
+    )
+    result = build_cues(transcript([segment], language="de"))
+    assert not any(
+        cue.duration > 8.0 and len(cue.flat_text.split()) == 1
+        for cue in result
+    ), [ (cue.flat_text, round(cue.duration, 1)) for cue in result ]
+    assert "Bewegung" in " ".join(cue.flat_text for cue in result)
+
+
+def test_the_same_line_said_three_times_in_a_row_is_one_cue():
+    """Same lecture: 'Und dann aber auch in der Ukraine.' three times
+    over 3.8 seconds."""
+    line = "Und dann aber auch in der Ukraine."
+    copies = [
+        sentence(line, start, pace=0.15, language="de")
+        for start in (222.10, 223.96, 225.80)
+    ]
+    result = build_cues(transcript(copies, language="de"))
+    texts = [cue.flat_text.strip() for cue in result]
+    assert texts.count(line) == 1
+
+
 def test_original_token_spacing_is_preserved():
     """Regression: re-joining with a uniform space corrupted text.
 

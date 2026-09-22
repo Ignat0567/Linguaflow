@@ -55,9 +55,21 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     # -- navigation ----------------------------------------------------
     "Главная": ("Home", "Start"),
     "Реальное время": ("Live", "Echtzeit"),
+    "Браузер": ("Browser", "Browser"),
     "Загрузка": ("Upload", "Datei"),
     "История": ("History", "Verlauf"),
     "Настройки": ("Settings", "Einstellungen"),
+
+    # Names the core uses when it says «translating into …». Capitalised
+    # to match `languages.describe` after the first letter is raised.
+    "Русский": ("Russian", "Russisch"),
+    "Английский": ("English", "Englisch"),
+    "Немецкий": ("German", "Deutsch"),
+    "Китайский": ("Chinese", "Chinesisch"),
+    "Японский": ("Japanese", "Japanisch"),
+    "Испанский": ("Spanish", "Spanisch"),
+    "Итальянский": ("Italian", "Italienisch"),
+    "Французский": ("French", "Französisch"),
 
     # -- home ----------------------------------------------------------
     "Что переводим сегодня?": (
@@ -107,11 +119,77 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "Нажмите, чтобы начать запись": (
         "Press to start recording", "Zum Aufnehmen drücken",
     ),
+    "Субтитры появятся здесь": (
+        "Subtitles will appear here", "Untertitel erscheinen hier",
+    ),
     "Нажмите на кнопку, чтобы начать": (
         "Press the button to begin", "Zum Beginnen die Taste drücken",
     ),
     "Сохранить транскрипт": ("Save transcript", "Transkript speichern"),
     "Окно субтитров": ("Subtitle window", "Untertitelfenster"),
+    # -- browser ---------------------------------------------------------
+    "Адрес или поиск на YouTube": (
+        "Address or YouTube search", "Adresse oder YouTube-Suche",
+    ),
+    "Включите перевод и запустите видео": (
+        "Turn on translation and play a video",
+        "Übersetzung einschalten und ein Video abspielen",
+    ),
+    "Переводить видео": ("Translate video", "Video übersetzen"),
+    "Скачать и перевести": ("Download and translate", "Herunterladen und übersetzen"),
+    "Видео с этого сайта скачивается перед переводом — откройте пост и включите перевод": (
+        "Videos from this site are downloaded first — open the post and turn on translation",
+        "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
+    ),
+    "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "Готовлю перевод: {stage}": (
+        "Preparing the translation: {stage}", "Übersetzung wird vorbereitet: {stage}",
+    ),
+    "Перевод готов · {language} · {count} фраз": (
+        "Translation ready · {language} · {count} lines",
+        "Übersetzung fertig · {language} · {count} Zeilen",
+    ),
+    "Перевод готов · {language} · {count} фраз · мужской и женский голос": (
+        "Translation ready · {language} · {count} lines · a male and a female voice",
+        "Übersetzung fertig · {language} · {count} Zeilen · männliche und weibliche Stimme",
+    ),
+    "Видео сменилось — включите перевод снова": (
+        "The video changed — turn translation on again",
+        "Das Video hat gewechselt — Übersetzung erneut einschalten",
+    ),
+    "Догонять": ("Catch up", "Aufholen"),
+    "Пауза — перевод догоняет видео": (
+        "Paused — the translation is catching up",
+        "Pause — die Übersetzung holt auf",
+    ),
+    "← К странице": ("← Back to the page", "← Zurück zur Seite"),
+    "Не удалось прочитать звук из {name}": (
+        "Could not read the sound of {name}", "Der Ton von {name} ist nicht lesbar",
+    ),
+    "Ссылка — видео скачается, когда начнётся перевод": (
+        "Link — the video is downloaded when translation starts",
+        "Link — das Video wird beim Start der Übersetzung geladen",
+    ),
+    "Жду, когда заиграет видео": (
+        "Waiting for a video to play", "Warte, bis ein Video läuft",
+    ),
+    "Слушаю видео": ("Listening to the video", "Höre das Video"),
+    "Слушаю видео · {language}": (
+        "Listening to the video · {language}", "Höre das Video · {language}",
+    ),
+    "Идёт реклама — её не перевожу": (
+        "An ad is playing — not translating it",
+        "Werbung läuft — wird nicht übersetzt",
+    ),
+    "Сейчас идёт живой перевод на экране «Реальное время».": (
+        "A live translation is running on the Live screen.",
+        "Auf dem Bildschirm „Echtzeit“ läuft gerade eine Übersetzung.",
+    ),
+    "Сейчас переводится видео на экране «Браузер».": (
+        "A video is being translated on the Browser screen.",
+        "Auf dem Bildschirm „Browser“ wird gerade ein Video übersetzt.",
+    ),
+    # -- realtime (continued) --------------------------------------------
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),
@@ -138,8 +216,24 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Проверьте язык": ("Check the language", "Sprache prüfen"),
+    "Запись звучит как {heard}, а распознавали как {used}. "
+    "По неверному языку текст выходит связным и выдуманным — "
+    "проверьте выбор языка и звуковую дорожку файла.": (
+        "The recording sounds like {heard}, but it was transcribed as "
+        "{used}. Under the wrong language the text comes out fluent and "
+        "invented — check the language and the file's audio track.",
+        "Die Aufnahme klingt nach {heard}, transkribiert wurde sie als "
+        "{used}. Mit der falschen Sprache entsteht flüssiger, erfundener "
+        "Text — prüfen Sie Sprache und Tonspur der Datei.",
+    ),
     "ОК": ("OK", "OK"),
     "Начать перевод": ("Start translating", "Übersetzung starten"),
+    "уже {clock}": ("{clock} elapsed", "seit {clock}"),
+    "Распознавание готово — дальше перевод, озвучка и сборка видео": (
+        "Recognition is done — translation, voice and assembling the video still to come",
+        "Erkennung fertig — Übersetzung, Stimme und Videoschnitt folgen noch",
+    ),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",
         "… und {count} weitere Untertitel in den gespeicherten Dateien",
@@ -276,19 +370,19 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "No voice has been set for this language yet.",
         "Für diese Sprache ist noch keine Stimme festgelegt.",
     ),
-    "Язык перевода — {language}. Мужские реплики читает голос {male}, "
-    "женские — {female}. Кто говорит, определяется по высоте голоса в "
-    "оригинале, отдельно для каждой реплики.": (
-        "Translating into {language}. Male lines are read by {male}, female "
-        "lines by {female}. Who is speaking is decided from the pitch of the "
-        "original, line by line.",
-        "Übersetzung nach {language}. Männliche Zeilen liest {male}, "
-        "weibliche {female}. Wer spricht, wird aus der Stimmhöhe des Originals "
-        "bestimmt, Zeile für Zeile.",
+    "Язык перевода — {language}. Мужские реплики читает мужской "
+    "голос, женские — женский. Кто говорит, определяется по "
+    "высоте голоса в оригинале, отдельно для каждой реплики.": (
+        "Translating into {language}. Male lines are read in a male voice, "
+        "female lines in a female one. Who is speaking is decided from the "
+        "pitch of the original, line by line.",
+        "Übersetzung nach {language}. Männliche Zeilen liest eine männliche "
+        "Stimme, weibliche eine weibliche. Wer spricht, wird aus der "
+        "Stimmhöhe des Originals bestimmt, Zeile für Zeile.",
     ),
-    "Язык перевода — {language}. Всё читает один голос, {voice}.": (
-        "Translating into {language}. One voice reads everything: {voice}.",
-        "Übersetzung nach {language}. Eine Stimme liest alles: {voice}.",
+    "Язык перевода — {language}. Всё читает один голос.": (
+        "Translating into {language}. One voice reads everything.",
+        "Übersetzung nach {language}. Eine Stimme liest alles.",
     ),
 
     # -- the three settings added on Day 7 -----------------------------
@@ -317,6 +411,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Recognising ({minutes} min)", "Erkennung läuft ({minutes} Min.)",
     ),
     "Собираю субтитры": ("Building subtitles", "Untertitel werden gebaut"),
+    "Различаю голоса": ("Telling the voices apart", "Stimmen werden unterschieden"),
     "Язык оригинала совпал с языком перевода": (
         "The source language is the target language",
         "Ausgangs- und Zielsprache sind gleich",

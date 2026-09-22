@@ -112,3 +112,103 @@ def test_unsupported_language_is_rejected_by_name():
     transcriber = Transcriber.__new__(Transcriber)
     with pytest.raises(UnsupportedLanguage, match="pl"):
         Transcriber.transcribe(transcriber, "x.wav", options_cls(language="pl"))
+
+
+def test_yt_dlp_is_told_where_ffmpeg_is(tmp_path, monkeypatch):
+    """The ffmpeg in use is imageio-ffmpeg's, on no PATH. Without being told,
+    yt-dlp downloaded and then failed: «ffprobe and ffmpeg not found»."""
+    import subprocess
+    from pathlib import Path
+
+    from lt_core import media
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        media.subprocess, "run",
+        lambda command, **kw: seen.append(command) or subprocess.CompletedProcess(command, 1, "", ""),
+    )
+    with pytest.raises(media.MediaError):
+        media.fetch_url("https://www.youtube.com/watch?v=zzOlFH0iD0k", tmp_path)
+    command = seen[0]
+    location = command[command.index("--ffmpeg-location") + 1]
+    assert Path(location).is_file()
+
+
+def test_yt_dlp_is_given_the_bundled_javascript_runtime(tmp_path, monkeypatch):
+    """YouTube needs JavaScript run to list its formats; without a runtime a
+    download occasionally failed outright."""
+    import subprocess
+    from pathlib import Path
+
+    pytest.importorskip("deno")
+    from lt_core import media
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        media.subprocess, "run",
+        lambda command, **kw: seen.append(command) or subprocess.CompletedProcess(command, 1, "", ""),
+    )
+    with pytest.raises(media.MediaError):
+        media.fetch_url("https://www.youtube.com/watch?v=zzOlFH0iD0k", tmp_path)
+    command = seen[0]
+    runtime = command[command.index("--js-runtimes") + 1]
+    assert runtime.startswith("deno:")
+    assert Path(runtime[len("deno:"):]).is_file()
+
+
+def _scripted_run(monkeypatch, answers):
+    """subprocess.run answering yt-dlp from a script of (code, stdout, stderr)."""
+    import subprocess
+
+    from lt_core import media
+
+    calls: list[int] = []
+
+    def run(command, **kwargs):
+        index = min(len(calls), len(answers) - 1)
+        calls.append(index)
+        code, out, err = answers[index]
+        return subprocess.CompletedProcess(command, code, out, err)
+
+    monkeypatch.setattr(media.subprocess, "run", run)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    return calls
+
+
+def test_a_refused_download_is_tried_again(tmp_path, monkeypatch):
+    """YouTube refuses, now and then, a request it served a second before."""
+    from lt_core import media
+
+    clip = tmp_path / "clip.wav"
+    write_wav_file = __import__("wave").open(str(clip), "wb")
+    write_wav_file.setnchannels(1)
+    write_wav_file.setsampwidth(2)
+    write_wav_file.setframerate(16000)
+    write_wav_file.writeframes(b"\x00\x00" * 16000)
+    write_wav_file.close()
+    refused = (1, "", "ERROR: unable to download video data: HTTP Error 403: Forbidden")
+    calls = _scripted_run(monkeypatch, [refused, (0, str(clip), "")])
+    monkeypatch.setattr(media, "probe", lambda path: media.MediaInfo(
+        path=clip, duration=1.0, title="clip", has_audio=True, has_video=False))
+    info = media.fetch_url("https://www.youtube.com/watch?v=x", tmp_path)
+    assert len(calls) == 2
+    assert info.path == clip
+
+
+def test_a_download_that_cannot_work_is_not_retried(tmp_path, monkeypatch):
+    from lt_core import media
+
+    calls = _scripted_run(monkeypatch, [(1, "", "ERROR: [youtube] x: Video unavailable")])
+    with pytest.raises(media.MediaError):
+        media.fetch_url("https://www.youtube.com/watch?v=x", tmp_path)
+    assert len(calls) == 1
+
+
+def test_a_refusal_is_given_up_on_after_three_tries(tmp_path, monkeypatch):
+    from lt_core import media
+
+    refused = (1, "", "ERROR: unable to download video data: HTTP Error 403: Forbidden")
+    calls = _scripted_run(monkeypatch, [refused])
+    with pytest.raises(media.MediaError):
+        media.fetch_url("https://www.youtube.com/watch?v=x", tmp_path)
+    assert len(calls) == 1 + media.REFUSAL_RETRIES

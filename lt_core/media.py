@@ -135,8 +135,12 @@ def fetch_url(
     into: Path | str,
     timeout: float = 1800.0,
     want_video: bool = False,
+    cookies: Path | str | None = None,
 ) -> MediaInfo:
     """Download a URL with yt-dlp.
+
+    `cookies` is a Netscape cookies.txt carrying a signed-in session, for
+    sites that show a video only to someone logged in -- X, increasingly.
 
     Audio only by default: the video is downloaded and discarded otherwise,
     which on a long recording is gigabytes of traffic for nothing. Asked for
@@ -163,21 +167,36 @@ def fetch_url(
             "--format", "bestaudio/best",
             "--extract-audio", "--audio-format", "wav",
         ]
+    signed_in = ["--cookies", str(Path(cookies).resolve())] if cookies else []
     command = [
         str(Path(_python_exe())), "-m", "yt_dlp",
         "--no-playlist", "--no-warnings", "--quiet",
+        # yt-dlp extracts the audio and merges the video with ffmpeg, and
+        # looks for it on PATH. The ffmpeg this program uses is the one
+        # imageio-ffmpeg ships, which is on no PATH: without this every link
+        # failed with «ffprobe and ffmpeg not found» after downloading.
+        "--ffmpeg-location", _ffmpeg_exe(),
+        *_js_runtime(),
+        *signed_in,
         *wanted,
         "--print", "after_move:filepath",
         "--output", str(destination / "%(title).120B.%(ext)s"),
         url,
     ]
-    try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=timeout, creationflags=_NO_WINDOW,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise MediaError(f"Скачивание превысило {timeout / 60:.0f} мин.") from exc
+    import time
+
+    for attempt in range(1 + REFUSAL_RETRIES):
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout, creationflags=_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise MediaError(f"Скачивание превысило {timeout / 60:.0f} мин.") from exc
+        refused = completed.returncode != 0 and "HTTP Error 403" in (completed.stderr or "")
+        if not refused or attempt == REFUSAL_RETRIES:
+            break
+        time.sleep(1.0)
 
     if completed.returncode != 0:
         raise MediaError(
@@ -197,6 +216,38 @@ def fetch_url(
                      source_url=url)
 
 
+def _ffmpeg_exe() -> str:
+    import imageio_ffmpeg
+
+    # Store-Python virtualises paths given to subprocesses; resolve first.
+    return str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
+
+
+#: Further tries when YouTube refuses the download with 403. It does, now
+#: and then, to a request it served a second before: 1 in 13 downloads of
+#: one talk, each failing in about two seconds. A wrong address or a private
+#: video fails the same way every time, and is not retried.
+REFUSAL_RETRIES = 2
+
+
+def _js_runtime() -> list[str]:
+    """Point yt-dlp at the Deno the deno package ships, when it is there.
+
+    YouTube's pages now need JavaScript run to list their formats; without a
+    runtime yt-dlp warns that extraction is deprecated and some formats may
+    be missing, and a download occasionally failed outright (1 in 7 on one
+    talk). Passed by path, not left to PATH: an installed copy has no
+    reason to have its Scripts folder on it.
+    """
+    try:
+        import deno
+
+        path = Path(deno.find_deno_bin()).resolve()
+    except Exception:  # noqa: BLE001 -- not installed: yt-dlp goes on without
+        return []
+    return ["--js-runtimes", f"deno:{path}"] if path.is_file() else []
+
+
 def _python_exe() -> str:
     import sys
 
@@ -205,9 +256,37 @@ def _python_exe() -> str:
 
 
 def resolve(
-    target: str, download_dir: Path | str, want_video: bool = False
+    target: str, download_dir: Path | str, want_video: bool = False,
+    cookies: Path | str | None = None,
 ) -> MediaInfo:
     """Accept a path or a URL and return something decodable either way."""
     if is_url(target):
-        return fetch_url(target, download_dir, want_video=want_video)
+        return fetch_url(target, download_dir, want_video=want_video, cookies=cookies)
     return probe(target)
+
+
+def decode_audio(path: Path | str, rate: int = 48_000, channels: int = 2):
+    """The whole soundtrack as int16 frames, shape (n, channels).
+
+    For playing a downloaded video's sound ourselves: on some machines
+    QtMultimedia's audio output never starts (measured here -- every device,
+    both backends, a synthetic file too), while a PortAudio stream does.
+    """
+    import numpy as np
+    import imageio_ffmpeg
+
+    exe = str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
+    completed = subprocess.run(
+        [exe, "-nostdin", "-loglevel", "error", "-i", str(Path(path).resolve()),
+         "-vn", "-f", "s16le", "-acodec", "pcm_s16le",
+         "-ac", str(channels), "-ar", str(rate), "-"],
+        capture_output=True, creationflags=_NO_WINDOW,
+    )
+    if completed.returncode != 0 or not completed.stdout:
+        raise MediaError(
+            say("Не удалось прочитать звук из {name}", name=Path(path).name),
+            detail=completed.stderr.decode("utf-8", "replace")[-500:],
+        )
+    samples = np.frombuffer(completed.stdout, dtype=np.int16)
+    usable = (samples.size // channels) * channels
+    return samples[:usable].reshape(-1, channels)

@@ -1,6 +1,6 @@
 """Audio capture.
 
-Three sources, one interface. Whatever the origin, a source yields AudioChunks
+Every source, one interface. Whatever the origin, a source yields AudioChunks
 of mono float32 at 16 kHz with session-relative timestamps, so the ASR stage
 never learns where its audio came from.
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import wave
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -114,6 +115,7 @@ class AudioSource(ABC):
         chunk = AudioChunk(
             samples=mono16k.astype(np.float32, copy=False),
             start_time=self._samples_emitted / TARGET_SAMPLE_RATE,
+            captured_at=time.monotonic(),
         )
         self._samples_emitted += mono16k.size
 
@@ -155,6 +157,11 @@ class AudioSource(ABC):
     @property
     def dropped_blocks(self) -> int:
         return self._dropped_blocks
+
+    @property
+    def queued_seconds(self) -> float:
+        """Audio captured and not yet taken by the consumer (block-sized)."""
+        return self._queue.qsize() * BLOCK_SAMPLES / TARGET_SAMPLE_RATE
 
 
 class MicrophoneSource(AudioSource):
@@ -448,6 +455,165 @@ class DshowMicrophoneSource(AudioSource):
                     f"Обычно это значит, что устройство занято другой программой.",
                     detail=stderr,
                 )
+
+
+class PageAudioSource(AudioSource):
+    """Audio handed over by the embedded browser: one page's own <video>.
+
+    Nothing here opens a device. The page taps its video element through Web
+    Audio and the browser code calls `push` with what it drained, at whatever
+    rate the page's audio context runs (44.1 or 48 kHz). That is the point of
+    this source: it hears the video and only the video, so the translation
+    read aloud through the speakers can never come back in as speech -- no
+    echo gate, no second output device.
+
+    Two things are the page's to say and this source's to honour:
+
+    * An ad is playing. It plays in the same element as the video, and an
+      ad that is heard is an ad that is translated and read out. While
+      `set_gated(True)`, what arrives is replaced by silence of the same
+      length, so the timeline still moves.
+    * Nothing is arriving -- the tab went to a page without video, or the
+      browser code stopped draining. Like the loopback source, this one then
+      keeps its own clock and makes the silence up.
+
+    The page is drained in bursts a few hundred milliseconds apart, so the
+    made-up silence starts only well past one burst's worth of waiting;
+    anything shorter would fill the gap between two bursts and push every
+    later word late by that much.
+    """
+
+    #: How far behind the wall clock before silence is made up.
+    SILENCE_AFTER = 1.0
+
+    #: Bursts kept while the consumer is busy: tens of seconds at 250 ms.
+    INBOX = 120
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._inbox: queue.Queue[tuple[np.ndarray, int]] = queue.Queue(maxsize=self.INBOX)
+        self._gated = threading.Event()
+        self._silence_blocks = 0
+        self._gated_seconds = 0.0
+        # Held: the video was paused on purpose and its clock stops with it.
+        self._held_since: float | None = None
+        self._held_total = 0.0
+        self._clock_lock = threading.Lock()
+
+    @property
+    def silence_blocks(self) -> int:
+        """Blocks made up because the page sent nothing."""
+        return self._silence_blocks
+
+    @property
+    def gated_seconds(self) -> float:
+        """Seconds of page audio replaced by silence while an ad played."""
+        return self._gated_seconds
+
+    @property
+    def gated(self) -> bool:
+        return self._gated.is_set()
+
+    def set_gated(self, gated: bool) -> None:
+        if gated:
+            self._gated.set()
+        else:
+            self._gated.clear()
+
+    def hold(self, held: bool) -> None:
+        """Stop the clock while the video is paused so the reading can catch up.
+
+        Without this the paused seconds would be made up as silence, and
+        silence enough to fill the queue pushes out the oldest audio in it --
+        the speech not yet recognised, which is what the pause was for.
+        """
+        import time
+
+        with self._clock_lock:
+            now = time.monotonic()
+            if held and self._held_since is None:
+                self._held_since = now
+            elif not held and self._held_since is not None:
+                self._held_total += now - self._held_since
+                self._held_since = None
+
+    @property
+    def held(self) -> bool:
+        return self._held_since is not None
+
+    def _clock(self, started: float) -> float:
+        """Seconds the video has been running, not counting holds."""
+        import time
+
+        with self._clock_lock:
+            held = self._held_total
+            if self._held_since is not None:
+                held += time.monotonic() - self._held_since
+        return time.monotonic() - started - held
+
+    def push(self, samples: np.ndarray, rate: int) -> None:
+        """Hand over mono audio from the page. Safe from any thread.
+
+        int16 is taken as PCM and scaled; floats are taken as they are.
+        """
+        data = np.asarray(samples)
+        if data.size == 0:
+            return
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32768.0
+        item = (data.astype(np.float32, copy=False).reshape(-1), int(rate))
+        try:
+            self._inbox.put_nowait(item)
+        except queue.Full:
+            try:
+                self._inbox.get_nowait()
+                self._dropped_blocks += 1
+                self._inbox.put_nowait(item)
+            except (queue.Empty, queue.Full):
+                self._dropped_blocks += 1
+
+    def _run(self) -> None:
+        import time
+
+        block_seconds = BLOCK_SAMPLES / TARGET_SAMPLE_RATE
+        silence = np.zeros(BLOCK_SAMPLES, dtype=np.float32)
+        resampler: StreamResampler | None = None
+        rate = 0
+        carry = np.zeros(0, dtype=np.float32)
+        started = time.monotonic()
+        while not self._stop.is_set():
+            try:
+                samples, source_rate = self._inbox.get(timeout=block_seconds)
+            except queue.Empty:
+                # The held seconds are not in the clock, so a pause is never
+                # owed as silence.
+                behind = self._clock(started) - (
+                    self._samples_emitted / TARGET_SAMPLE_RATE
+                )
+                while behind >= self.SILENCE_AFTER and not self._stop.is_set():
+                    self._emit(silence)
+                    self._silence_blocks += 1
+                    behind -= block_seconds
+                continue
+            if resampler is None or source_rate != rate:
+                resampler = StreamResampler(source_rate, 1)
+                rate = source_rate
+            converted = resampler.process(samples)
+            if self._gated.is_set():
+                self._gated_seconds += converted.size / TARGET_SAMPLE_RATE
+                converted = np.zeros_like(converted)
+            carry = np.concatenate([carry, converted])
+            whole = (carry.size // BLOCK_SAMPLES) * BLOCK_SAMPLES
+            for offset in range(0, whole, BLOCK_SAMPLES):
+                self._emit(carry[offset:offset + BLOCK_SAMPLES])
+            carry = carry[whole:]
+        if resampler is not None:
+            tail = resampler.flush()
+            if self._gated.is_set():
+                tail = np.zeros_like(tail)
+            carry = np.concatenate([carry, tail])
+        if carry.size:
+            self._emit(carry)
 
 
 def open_source(device: DeviceInfo) -> AudioSource:

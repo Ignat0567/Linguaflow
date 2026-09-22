@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPainter
+from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtGui import QCursor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lt_core.subtitles.bilingual import fold_original
 from lt_core.subtitles.export import format_srt_time
 
 from .. import glass, theme
@@ -43,7 +45,9 @@ class UploadScreen(QWidget):
         super().__init__()
         self.app = app
         clear_fill(self)
-        self._path: Path | None = None
+        #: A file on disk, or a link kept as the string it is -- a Path would
+        #: turn «https://» into «https:\» on Windows.
+        self._path: Path | str | None = None
         self._pending = False
         self._result = None
         self._job_id = ""
@@ -99,13 +103,24 @@ class UploadScreen(QWidget):
         self._ready.show_file(target)
         self._stack.setCurrentWidget(self._ready)
 
+    def open_link(self, url: str) -> None:
+        """A video's address, fetched when the run starts, not before."""
+        self._path = url
+        self._ready.show_link(url)
+        self._stack.setCurrentWidget(self._ready)
+
+    def _display_name(self) -> str:
+        if isinstance(self._path, str):
+            return link_label(self._path)
+        return self._path.name if self._path else _("файл")
+
     def start(self) -> None:
         """Begin the run the user has now asked for."""
         if self._path is None:
             return
         self._pending = True
         self._job_id = new_id()
-        self._busy.reset(self._path.name)
+        self._busy.reset(self._display_name())
         self._stack.setCurrentWidget(self._busy)
         self.app.engine.prepare(self.app.store.settings)
 
@@ -134,7 +149,7 @@ class UploadScreen(QWidget):
         self.app.store.add(HistoryEntry(
             id=self._job_id,
             kind="file",
-            title=result.media.title or (self._path.name if self._path else _("файл")),
+            title=result.media.title or self._display_name(),
             source_language=result.transcript.language,
             target_language=result.target_language or settings.to_lang,
             duration=result.media.duration,
@@ -143,6 +158,7 @@ class UploadScreen(QWidget):
             outputs=outputs,
         ))
         self.app.history_changed()
+        self._busy.settle()
         try:
             self._done.show_result(result, settings)
         except Exception as error:  # noqa: BLE001 -- see below
@@ -164,16 +180,12 @@ class _Idle(QWidget):
         super().__init__()
         self.screen = screen
         clear_fill(self)
-        self.pair = LanguagePair(self, allow_auto=True)
+        self.pair = LanguagePair(
+            self, allow_auto=True,
+            from_caption=_("Исходный язык"),
+            to_caption=_("Перевод на"),
+        )
         self.pair.changed.connect(screen._sync_pair)
-
-        from_label = glass.eyebrow(_("Исходный язык"))
-        to_label = glass.eyebrow(_("Перевод на"))
-        captions = QHBoxLayout()
-        captions.setContentsMargins(4, 0, 4, 0)
-        captions.addWidget(from_label)
-        captions.addStretch()
-        captions.addWidget(to_label)
 
         zone = _Dropzone(screen)
         demo = glass.GlassButton(_("Выбрать файл"), zone, primary=True)
@@ -211,8 +223,7 @@ class _Idle(QWidget):
         pair_layout = QVBoxLayout(pair_wrap)
         pair_layout.setContentsMargins(0, 0, 0, 0)
         pair_layout.setSpacing(8)
-        pair_layout.addLayout(captions)
-        pair_layout.addWidget(self.pair)
+        pair_layout.addWidget(self.pair, 0, Qt.AlignHCenter)
         column.addWidget(pair_wrap)
         column.addSpacing(18)
         zone.setFixedWidth(560)
@@ -231,12 +242,26 @@ class _Dropzone(glass.GlassPanel):
         super().__init__(radius=28)
         self.screen = screen
         self.setAcceptDrops(True)
-        self.setCursor(self.cursor())
+        # Clicking it opens the file picker, so it is a control, and a
+        # control shows a hand. `setCursor(self.cursor())` -- what stood here
+        # -- sets the cursor to whatever it already was, which is nothing.
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.setAttribute(Qt.WA_Hover, True)
         self.setMinimumHeight(280)
+        self._hover = False
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._hover = False
+        self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        dashed_panel(self, painter, 28)
+        dashed_panel(self, painter, 28,
+                     theme.HOVER_LIFT if self._hover else 0.0)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
@@ -277,13 +302,12 @@ class _Ready(QWidget):
         self.screen = screen
         clear_fill(self)
 
-        self.pair = LanguagePair(self, allow_auto=True)
+        self.pair = LanguagePair(
+            self, allow_auto=True,
+            from_caption=_("Исходный язык"),
+            to_caption=_("Перевод на"),
+        )
         self.pair.changed.connect(screen._sync_pair)
-        captions = QHBoxLayout()
-        captions.setContentsMargins(4, 0, 4, 0)
-        captions.addWidget(glass.eyebrow(_("Исходный язык")))
-        captions.addStretch()
-        captions.addWidget(glass.eyebrow(_("Перевод на")))
 
         panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         panel.setFixedWidth(560)
@@ -319,8 +343,7 @@ class _Ready(QWidget):
         pair_layout = QVBoxLayout(pair_wrap)
         pair_layout.setContentsMargins(0, 0, 0, 0)
         pair_layout.setSpacing(8)
-        pair_layout.addLayout(captions)
-        pair_layout.addWidget(self.pair)
+        pair_layout.addWidget(self.pair, 0, Qt.AlignHCenter)
         column.addWidget(pair_wrap)
         column.addSpacing(18)
         column.addWidget(panel, 0, Qt.AlignHCenter)
@@ -328,6 +351,11 @@ class _Ready(QWidget):
     def show_file(self, path: Path) -> None:
         self._name.setText(path.name)
         self._meta.setText(self._describe(path))
+        self.sync()
+
+    def show_link(self, url: str) -> None:
+        self._name.setText(link_label(url))
+        self._meta.setText(_("Ссылка — видео скачается, когда начнётся перевод"))
         self.sync()
 
     @staticmethod
@@ -368,24 +396,46 @@ class _Busy(QWidget):
     #: The ring measures recognition, which finishes well before the job
     #: does -- translation, speech and muxing all come after it. Showing 100%
     #: while a video is still being assembled reads as finished-and-frozen,
-    #: so the ring stops just short until there is a result.
+    #: so the ring stops just short until there is a result. The comet on the
+    #: rim and the elapsed clock are what keep the wait from looking stuck.
     RUNNING_CEILING = 0.99
+    #: Recognition is mapped onto this much of the ring; past it, later
+    #: stages are still running and the hint says so.
+    RECOGNITION_SHARE = 0.80
 
     def __init__(self, screen: UploadScreen) -> None:
         super().__init__()
         self.screen = screen
         clear_fill(self)
+        self._active = False
+        self._origin: float | None = None
         self._ring = glass.ProgressRing(self, 160)
         self._stage = glass.label(_("Загружаю модели…"), 13, 400, 0.75)
         self._stage.setAlignment(Qt.AlignCenter)
+        self._stage.setWordWrap(True)
+        self._stage.setMaximumWidth(480)
+        self._hint = glass.label(
+            _("Распознавание готово — дальше перевод, озвучка и сборка видео"),
+            13, 400, 0.62, wrap=True,
+        )
+        self._hint.setAlignment(Qt.AlignCenter)
+        self._hint.setMaximumWidth(420)
+        self._hint.hide()
+        self._elapsed = glass.label(_("уже {clock}", clock="00:00"), 12, 400, theme.MUTED)
+        self._elapsed.setAlignment(Qt.AlignCenter)
         self._name = glass.label("", 12, 400, theme.MUTED)
         self._name.setAlignment(Qt.AlignCenter)
+        self._tick = QTimer(self)
+        self._tick.setInterval(250)
+        self._tick.timeout.connect(self._refresh_clock)
         column = QVBoxLayout(self)
         column.setAlignment(Qt.AlignCenter)
         column.setSpacing(18)
         column.addStretch()
         column.addWidget(self._ring, 0, Qt.AlignHCenter)
         column.addWidget(self._stage)
+        column.addWidget(self._hint)
+        column.addWidget(self._elapsed)
         column.addWidget(self._name)
         self._ok = glass.GlassButton(_("ОК"), self, primary=True, height=38)
         self._ok.clicked.connect(screen.reset)
@@ -394,20 +444,58 @@ class _Busy(QWidget):
         column.addWidget(self._ok, 0, Qt.AlignHCenter)
         column.addStretch()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._sync_motion()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._ring.set_running(False)
+        self._tick.stop()
+        super().hideEvent(event)
+
+    def _sync_motion(self) -> None:
+        moving = self._active and self.isVisible()
+        self._ring.set_running(moving)
+        if moving:
+            if not self._tick.isActive():
+                self._tick.start()
+            self._refresh_clock()
+        else:
+            self._tick.stop()
+
+    def _refresh_clock(self) -> None:
+        elapsed = 0.0 if self._origin is None else time.monotonic() - self._origin
+        self._elapsed.setText(_("уже {clock}", clock=format_clock(elapsed)))
+
     def reset(self, name: str) -> None:
+        self._active = True
+        self._origin = time.monotonic()
         self._ring.set_value(0.0)
         self._stage.setText(_("Загружаю модели…"))
+        self._hint.hide()
         self._name.setText(name)
         self._ok.hide()
+        self._refresh_clock()
+        self._sync_motion()
 
     def set_stage(self, text: str) -> None:
         self._stage.setText(text)
 
     def set_progress(self, fraction: float) -> None:
-        self._ring.set_value(min(fraction, self.RUNNING_CEILING))
+        capped = min(fraction, self.RUNNING_CEILING)
+        self._ring.set_value(capped)
+        self._hint.setVisible(self._active and capped >= self.RECOGNITION_SHARE)
+
+    def settle(self) -> None:
+        """The job finished; the result screen takes over from here."""
+        self._active = False
+        self._sync_motion()
 
     def stop(self, message: str) -> None:
         """The job ended without a result. Say so, and offer the way back."""
+        self._active = False
+        self._sync_motion()
+        self._hint.hide()
         self._stage.setText(message)
         self._ring.set_value(0.0)
         self._ok.show()
@@ -458,8 +546,34 @@ class _Done(QWidget):
         self._body.addLayout(header)
         self._body.addSpacing(20)
 
+        transcript = result.transcript
+        if transcript.language_looks_wrong:
+            # Whisper never refuses a language it is given: told that Russian
+            # speech is English, it writes fluent English that reads exactly
+            # like a good transcript. The only place this can be caught is
+            # here, before the reader believes it.
+            heard = display_name(transcript.detected_language)
+            panel = glass.GlassPanel(self, radius=14, accent_fill=True)
+            inside = QVBoxLayout(panel)
+            inside.setContentsMargins(16, 14, 16, 14)
+            inside.setSpacing(4)
+            inside.addWidget(glass.eyebrow(_("Проверьте язык")))
+            inside.addWidget(glass.label(
+                _("Запись звучит как {heard}, а распознавали как {used}. "
+                  "По неверному языку текст выходит связным и выдуманным — "
+                  "проверьте выбор языка и звуковую дорожку файла.",
+                  heard=heard, used=display_name(transcript.language)),
+                13, 500, theme.SECONDARY, wrap=True,
+            ))
+            self._body.addWidget(panel)
+            self._body.addSpacing(16)
+
         cues = result.cues
         translated = result.translated_cues or ()
+        if translated and len(translated) != len(cues):
+            # Empty translation shares were absorbed, so pairing by index
+            # would put someone else's words under the wrong timestamp.
+            cues = fold_original(cues, translated)
         for index, cue in enumerate(cues[:24]):
             other = translated[index].flat_text if index < len(translated) else ""
             self._body.addWidget(_CueRow(cue.start, cue.flat_text, other))
@@ -529,3 +643,17 @@ class _CueRow(QWidget):
             texts.addWidget(glass.label(translated, 14, 400, 0.68, wrap=True))
         row.addWidget(stamp, 0, Qt.AlignTop)
         row.addLayout(texts, 1)
+
+
+def link_label(url: str) -> str:
+    """A link as a short caption: its host and the last part of its path."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.netloc.removeprefix("www.")
+    tail = [piece for piece in parts.path.split("/") if piece]
+    if parts.path.startswith("/watch") and "v=" in parts.query:
+        return f"{host}/watch?{parts.query.split('&')[0]}"
+    if not tail:
+        return host or url
+    return f"{host}/…/{tail[-1]}" if len(tail) > 1 else f"{host}/{tail[0]}"

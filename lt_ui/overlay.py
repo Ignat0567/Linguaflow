@@ -6,9 +6,10 @@ screen share while remaining on the presenter's display. See lt_ui.affinity.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QFontMetrics,
     QGuiApplication,
     QMouseEvent,
     QPainter,
@@ -57,6 +58,7 @@ class OverlayWindow(QWidget):
         self._affinity_ok = True
         self._placing = False
 
+        self._last_caption: dict = {}
         self._share = glass.Toggle(self, on=store.settings.overlay_hidden_from_share)
         self._share.toggled.connect(self._on_share)
         self._share_label = _caption(
@@ -68,7 +70,8 @@ class OverlayWindow(QWidget):
         chrome = QHBoxLayout()
         chrome.setContentsMargins(4, 0, 0, 0)
         chrome.setSpacing(10)
-        chrome.addWidget(_caption(_("Субтитры"), 11, 600, theme.TERTIARY))
+        self._chrome_title = _caption(_("Субтитры"), 11, 600, theme.TERTIARY)
+        chrome.addWidget(self._chrome_title)
         chrome.addStretch()
         chrome.addWidget(self._share)
         chrome.addWidget(self._share_label)
@@ -77,14 +80,10 @@ class OverlayWindow(QWidget):
         self._speaker = _caption("", 11, 600, theme.TERTIARY)
         self._speaker.setAlignment(Qt.AlignCenter)
         self._speaker.hide()
-        self._translated = _caption(
-            _("Субтитры появятся после начала записи"), 28, 600, theme.PRIMARY
+        self._translated = _fitted(
+            _("Субтитры появятся после начала записи"), 28, 16, 600, theme.PRIMARY
         )
-        self._translated.setAlignment(Qt.AlignCenter)
-        self._translated.setWordWrap(True)
-        self._original = _caption("", 14, 400, theme.SECONDARY)
-        self._original.setAlignment(Qt.AlignCenter)
-        self._original.setWordWrap(True)
+        self._original = _fitted("", 14, 11, 400, theme.SECONDARY)
         self._original.hide()
 
         grip = QSizeGrip(self)
@@ -96,8 +95,10 @@ class OverlayWindow(QWidget):
         root.setSpacing(6)
         root.addLayout(chrome)
         root.addWidget(self._speaker)
-        root.addWidget(self._translated, 1)
-        root.addWidget(self._original)
+        # The translation gets the larger share of whatever height the user
+        # gave the window; neither may push past it.
+        root.addWidget(self._translated, 3)
+        root.addWidget(self._original, 2)
         grip_row = QHBoxLayout()
         grip_row.addStretch()
         grip_row.addWidget(grip)
@@ -119,6 +120,10 @@ class OverlayWindow(QWidget):
         speaker: str | None = None,
         listening: bool = False,
     ) -> None:
+        self._last_caption = {
+            "original": original, "translated": translated,
+            "speaker": speaker, "listening": listening,
+        }
         if speaker:
             self._speaker.setText(speaker)
             self._speaker.show()
@@ -237,11 +242,17 @@ class OverlayWindow(QWidget):
         The plate stays dark either way; what this fixes is `theme.restyle`
         having walked in and recoloured these labels along with the rest.
         """
+        self.setWindowTitle(_("Linguaflow — субтитры"))
+        self._chrome_title.setText(_("Субтитры"))
+        hidden = self.store.settings.overlay_hidden_from_share
+        self._share_label.setText(
+            _("Скрыто с демонстрации") if hidden else _("Видно на демонстрации")
+        )
+        self.set_caption(**self._last_caption)
         for label, alpha in (
+            (self._chrome_title, theme.TERTIARY),
             (self._share_label, theme.TERTIARY),
             (self._speaker, theme.TERTIARY),
-            (self._translated, theme.PRIMARY),
-            (self._original, theme.SECONDARY),
         ):
             label.setStyleSheet(_colour(alpha))
         self.update()
@@ -255,11 +266,6 @@ class OverlayWindow(QWidget):
         fill = QColor(theme.INK)
         fill.setAlpha(210)
         painter.fillPath(path, fill)
-        highlight = QPainterPath()
-        highlight.addRoundedRect(
-            QRectF(rect.x(), rect.y(), rect.width(), 2.0), 18, 18
-        )
-        painter.fillPath(highlight, theme.white(0.30))
         painter.setPen(QPen(theme.white(0.22), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
@@ -278,6 +284,98 @@ def _caption(text: str, size: int, weight: int, alpha: float) -> QLabel:
     widget.setStyleSheet(_colour(alpha))
     widget.setProperty(theme.ALPHA_PROPERTY, None)
     widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    return widget
+
+
+class FitLabel(QLabel):
+    """Wrapped text that always fits the label's own rectangle.
+
+    The window is the size the user dragged it to, and a long sentence at
+    28 px ran out of the bottom of it: the second line cut in half, the rest
+    gone. The text is set in the largest size between `largest` and
+    `smallest` that fits; when even the smallest does not, the beginning is
+    dropped for «…» -- in a subtitle the words just said are the ones that
+    matter.
+    """
+
+    def __init__(self, largest: int, smallest: int, weight: int) -> None:
+        super().__init__()
+        self.largest = largest
+        self.smallest = smallest
+        self.weight = weight
+        self._full = ""
+        self.setWordWrap(True)
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(1, 1)
+
+    # The layout must not size the window to the text; the text fits the
+    # window.
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(self.largest * 8, self.largest * 2)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(1, 1)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return False
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        self._fit()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # Shown again at the size it had when hidden, it gets no resize:
+        # the original under the translation came back unfitted and clipped.
+        super().showEvent(event)
+        self._fit()
+
+    def _fits(self, text: str, size: int) -> bool:
+        metrics = QFontMetrics(theme.font(size, self.weight))
+        box = metrics.boundingRect(
+            QRect(0, 0, max(1, self.width()), 100_000),
+            int(Qt.AlignCenter | Qt.TextWordWrap), text,
+        )
+        return box.height() <= self.height() and box.width() <= self.width()
+
+    def _fit(self) -> None:
+        text = self._full
+        size = self.largest
+        if not self.isVisible() or self.height() < 4:
+            # Not laid out yet: there is nothing to fit to, and trimming to
+            # a zero-sized box would throw the text away. The resize that
+            # comes with showing it fits it.
+            self.setFont(theme.font(size, self.weight))
+            super().setText(text)
+            return
+        while size > self.smallest and not self._fits(text, size):
+            size -= 1
+        if text and not self._fits(text, size):
+            words = text.split()
+            low, high = 1, len(words)
+            # The most words from the end that still fit.
+            while low < high:
+                middle = (low + high + 1) // 2
+                if self._fits("… " + " ".join(words[-middle:]), size):
+                    low = middle
+                else:
+                    high = middle - 1
+            text = "… " + " ".join(words[-low:])
+        self.setFont(theme.font(size, self.weight))
+        super().setText(text)
+
+
+def _fitted(text: str, largest: int, smallest: int, weight: int, alpha: float) -> FitLabel:
+    widget = FitLabel(largest, smallest, weight)
+    widget.setStyleSheet(_colour(alpha))
+    widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    widget.setText(text)
     return widget
 
 

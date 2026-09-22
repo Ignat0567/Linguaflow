@@ -28,6 +28,11 @@ class AudioChunk:
     # speech was playing. Carried rather than dropped so the caller can still
     # advance its clock; see lt_core.audio.echo_gate.
     muted: bool = False
+    # time.monotonic() when the source produced this chunk; 0 when unknown.
+    # The echo gate judges a chunk by when it was captured, not by when it is
+    # looked at: a consumer busy reading a line aloud looks at nothing, and
+    # afterwards looks at everything captured meanwhile.
+    captured_at: float = 0.0
 
     def __post_init__(self) -> None:
         if self.samples.dtype != np.float32:

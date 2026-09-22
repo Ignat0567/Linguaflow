@@ -111,7 +111,20 @@ def test_format_clock_hides_hours_until_needed():
 
 
 def test_format_date_uses_russian_months():
+    from lt_ui import i18n
+
+    i18n.set_language("ru")
     assert format_date("2026-09-17T12:04:00") == "17 сент 2026"
+
+
+def test_format_date_follows_the_interface_language():
+    from lt_ui import i18n
+
+    i18n.set_language("de")
+    assert format_date("2026-09-17T12:04:00") == "17. Sept. 2026"
+    i18n.set_language("en")
+    assert format_date("2026-09-17T12:04:00") == "17 Sept 2026"
+    i18n.set_language("ru")
 
 
 def test_new_ids_are_unique():
@@ -197,11 +210,11 @@ def test_window_opens_on_home_and_nav_switches(qapp, tmp_path):
 
     window = Window(Store(tmp_path))
     window.resize(960, 640)
-    assert window._stack.currentIndex() == 0
+    assert window.current_screen == "home"
     window.goto("settings")
-    assert window._stack.currentIndex() == 4
+    assert window.current_screen == "settings"
     window.goto("history")
-    assert window._stack.currentIndex() == 3
+    assert window.current_screen == "history"
     window.close()
 
 
@@ -249,6 +262,21 @@ def test_home_shows_recent_entries(qapp, tmp_path):
     window = Window(store)
     window._home.refresh()
     assert window._home._recent.count() >= 1
+    window.close()
+
+
+def test_the_home_subtitle_sits_under_the_middle_of_the_headline(qapp, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from lt_ui.window import Window
+    from lt_ui.store import Store
+
+    window = Window(Store(tmp_path))
+    window.resize(1280, 800)
+    window.show()
+    QApplication.processEvents()
+    title = window._home._title
+    sub = window._home._sub
+    assert abs(title.geometry().center().x() - sub.geometry().center().x()) <= 2
     window.close()
 
 
@@ -314,3 +342,107 @@ def test_overlay_uses_the_original_until_a_translation_arrives(qapp, tmp_path):
     assert "Waiting" in overlay._translated.text()
     assert overlay._original.isHidden()
     overlay.close()
+
+
+def test_a_long_translation_fits_the_subtitle_window(qapp, tmp_path):
+    """A long sentence at 28 px ran out of the bottom of the window."""
+    from lt_ui.overlay import OverlayWindow
+    from lt_ui.store import Store
+
+    overlay = OverlayWindow(Store(tmp_path))
+    overlay.reveal()
+    overlay.resize(765, 190)
+    long_text = " ".join(["очень длинное предложение перевода"] * 12) + " конец"
+    overlay.set_caption(original="kurz", translated=long_text, listening=True)
+    qapp.processEvents()
+    label = overlay._translated
+    try:
+        assert label.full_text() == long_text
+        shown = label.text()
+        # What is shown fits, and it is the end of what was said.
+        assert shown.startswith("…") and shown.endswith("конец")
+        assert label.font().pixelSize() == label.smallest
+        overlay.resize(1400, 700)
+        qapp.processEvents()
+        assert label.text() == long_text
+    finally:
+        overlay.hide()
+
+
+def test_the_live_feed_follows_new_lines_unless_scrolled_up(qapp, tmp_path):
+    from PySide6.QtTest import QTest
+
+    from lt_ui.screens.realtime import Line
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    window.resize(1280, 800)
+    window.show()
+    window.goto("realtime")
+    screen = window._realtime
+    bar = screen._scroll.verticalScrollBar()
+
+    def add(count):
+        for _ in range(count):
+            screen._lines.append(Line(original="Ein langer Satz, " * 8, translated="Длинная фраза. " * 6))
+        screen._render()
+        QTest.qWait(250)   # the old lines go by deleteLater, the layout settles after
+
+    try:
+        add(15)
+        assert bar.maximum() > 0 and bar.value() == bar.maximum()
+        # The record button is not covered by the panel any more.
+        assert screen._record.geometry().bottom() < screen._panel.geometry().top()
+        bar.setValue(0)
+        QTest.qWait(50)
+        add(2)
+        assert bar.value() == 0          # left where the reader put it
+        bar.setValue(bar.maximum())
+        QTest.qWait(50)
+        add(1)
+        assert bar.value() == bar.maximum()
+    finally:
+        window.hide()
+
+
+def test_a_live_line_is_the_sentence_that_was_translated(qapp, tmp_path):
+    """The screen closed its line when a translation arrived, by which time
+    the next sentence's first words were in it: the line ended «...geeinigt
+    haben. Das ist natürlich ein Extrem, aber es ist eigentlich bei» over the
+    first sentence's translation alone, and the next began mid-sentence."""
+    from lt_core.realtime.session import LiveUpdate
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    screen = window._realtime
+    screen._mine = True
+    screen._on_update(LiveUpdate(committed="Wir haben uns geeinigt."))
+    screen._on_update(LiveUpdate(committed="Das ist natürlich"))
+    screen._on_update(LiveUpdate(
+        committed="ein Extrem,", partial="aber es",
+        translation="Мы договорились.", translation_source="Wir haben uns geeinigt.",
+    ))
+    assert [(line.original, line.translated) for line in screen._lines] == [
+        ("Wir haben uns geeinigt.", "Мы договорились."),
+    ]
+    # What was already heard of the next sentence starts the next line.
+    assert screen._current.original == "Das ist natürlich ein Extrem,"
+    assert screen._current.partial == "aber es"
+
+
+def test_a_translation_without_its_source_still_closes_the_line(qapp, tmp_path):
+    """Conversation mode does not say what it translated: the old way."""
+    from lt_core.realtime.session import LiveUpdate
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    screen = window._realtime
+    screen._mine = True
+    screen._on_update(LiveUpdate(committed="Hello there.", speaker="A"))
+    screen._on_update(LiveUpdate(translation="Привет.", speaker="A"))
+    assert [(line.original, line.translated) for line in screen._lines] == [
+        ("Hello there.", "Привет."),
+    ]

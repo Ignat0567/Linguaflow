@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
+from . import system_backdrop
 from lt_core import messages
 
 from . import i18n
@@ -29,6 +30,7 @@ from . import theme
 from .backdrop import Backdrop
 from .engine import Engine
 from .overlay import OverlayWindow
+from .screens.browser import BrowserScreen
 from .screens.history import HistoryScreen
 from .screens.home import HomeScreen
 from .screens.realtime import RealtimeScreen
@@ -44,13 +46,6 @@ class _Scroll(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
-            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.22);"
-            " border-radius: 4px; min-height: 32px; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        )
         viewport = self.viewport()
         viewport.setAutoFillBackground(False)
         viewport.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -59,13 +54,38 @@ class _Scroll(QScrollArea):
         if child.layout() is not None:
             child.layout().setSizeConstraint(QLayout.SetMinimumSize)
         self.setWidget(child)
+        self.apply_sheet()
+
+    def apply_sheet(self) -> None:
+        handle = (
+            "rgba(13,15,26,0.22)" if theme.is_light() else "rgba(255,255,255,0.22)"
+        )
+        self.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
+            f"QScrollBar::handle:vertical {{ background: {handle};"
+            " border-radius: 4px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
 
 
 class Window(QWidget):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Linguaflow")
-        self.setMinimumSize(1020, 700)
+        # The window lets the desktop through, and the compositor is asked to
+        # frost it on the way, so that what shows through is a surface rather
+        # than somebody's browser. Two things are needed and only together:
+        # a window surface that really carries alpha, and the backdrop drawn
+        # into it at less than full strength. `setWindowOpacity` looks like
+        # the shorter road and is not -- it makes the whole window a layered
+        # one blended against the literal desktop, so the frosted sheet is
+        # composed behind an opaque surface and never seen. Measured: at 0.5
+        # opacity with the backdrop asked for and granted, a page of text
+        # behind the window was readable through it, word for word.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.blurred_behind = system_backdrop.blur_behind(self)
+        self.setMinimumSize(1200, 700)
         self.resize(1280, 800)
         self.store = store or Store()
         theme.set_accent(self.store.settings.accent)
@@ -91,7 +111,7 @@ class Window(QWidget):
         self.goto("home")
 
     def _build_shell(self) -> None:
-        """Build the nav and the five screens.
+        """Build the nav and the six screens.
 
         Called again when the interface language changes. Every caption is
         read from the catalogue when its widget is created, so the honest way
@@ -104,12 +124,14 @@ class Window(QWidget):
 
         self._home = HomeScreen(self)
         self._realtime = RealtimeScreen(self)
+        self._browser = BrowserScreen(self)
         self._upload = UploadScreen(self)
         self._history = HistoryScreen(self)
         self._settings = SettingsScreen(self)
         self._pages = {
             "home": self._home,
             "realtime": self._realtime,
+            "browser": self._browser,
             "upload": self._upload,
             "history": self._history,
             "settings": self._settings,
@@ -117,7 +139,11 @@ class Window(QWidget):
         self._stack = QStackedWidget()
         self._stack.setStyleSheet("background: transparent;")
         for screen in self._pages.values():
-            self._stack.addWidget(_Scroll(screen))
+            # The browser fills the height it is given; a scroll area would
+            # hand it only its minimum.
+            self._stack.addWidget(
+                screen if screen is self._browser else _Scroll(screen)
+            )
 
         self._mark = Wordmark(self)
         nav_row = QHBoxLayout()
@@ -150,6 +176,8 @@ class Window(QWidget):
         self._backdrop.invalidate()
         self._backdrop.resize(self.width(), self.height())
         theme.restyle(self)
+        for scroll in self.findChildren(_Scroll):
+            scroll.apply_sheet()
         self.overlay.restyle()
         self.update()
 
@@ -157,6 +185,7 @@ class Window(QWidget):
         i18n.set_language(self.store.settings.ui_language)
         messages.install(i18n.t)
         current = self.current_screen
+        self._browser.shutdown()
         if self._shell is not None:
             self._frame.removeWidget(self._shell)
             self._shell.setParent(None)
@@ -175,6 +204,7 @@ class Window(QWidget):
         return names[index] if 0 <= index < len(names) else "home"
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._browser.shutdown()
         self.overlay.hide()
         self.overlay.close()
         super().closeEvent(event)
@@ -188,6 +218,11 @@ class Window(QWidget):
         self._nav.set_active(name)
         widget.refresh()
 
+    def translate_link(self, url: str) -> None:
+        """Hand a video's address to the file screen, ready to start."""
+        self.goto("upload")
+        self._upload.open_link(url)
+
     def history_changed(self) -> None:
         self._home.refresh()
         self._history.refresh()
@@ -199,6 +234,16 @@ class Window(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
+        # The surface has to be cleared to nothing first and then painted
+        # over at less than full strength. Painting straight in `Source` mode
+        # at an opacity writes an opaque surface however low the opacity is,
+        # which is a window that looks right and lets nothing through --
+        # measured against a sheet of strong colour behind it, and the sheet
+        # did not show at all.
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        painter.setOpacity(theme.WINDOW_OPACITY)
         if not self._backdrop.plain.isNull():
             painter.drawPixmap(0, 0, self._backdrop.plain)
         else:
@@ -264,6 +309,16 @@ def _capture(window: Window, folder: Path) -> None:
         window.goto(name)
         QApplication.processEvents()
         window.grab().save(str(folder / f"ui_{name}.png"), "PNG")
+        if name == "upload":
+            busy = window._upload._busy
+            busy.reset("Anthropic.mp4")
+            busy.set_stage("Озвучиваю перевод")
+            busy.set_progress(0.80)
+            busy._ring._phase = 0.28
+            window._upload._stack.setCurrentWidget(busy)
+            QApplication.processEvents()
+            window.grab().save(str(folder / "ui_upload_busy.png"), "PNG")
+            window._upload.reset()
         if name == "settings":
             scroll = window._stack.currentWidget()
             bar = scroll.verticalScrollBar()

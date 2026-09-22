@@ -76,6 +76,17 @@ class TranscribeOptions:
     #: for a recording that needs it, and not the default.
     hallucination_silence_threshold: float | None = None
     initial_prompt: str | None = None
+    #: Check a named language against the recording, rather than taking it.
+    #:
+    #: Whisper never refuses a language it is given. Told that Russian speech
+    #: is English, it writes fluent English -- a translation, not a transcript
+    #: -- and reports a language probability of 1.0, because it was not asked.
+    #: Nothing downstream can tell that apart from a good transcript, so the
+    #: whole job comes out wrong and confident.
+    #:
+    #: Costs one detection pass over the opening audio: 1.8 s on a
+    #: twelve-minute recording, against 85 s for the job.
+    verify_language: bool = True
     #: Prime the model with a short, punctuated sample in the language being
     #: transcribed, so that it punctuates its own output.
     #:
@@ -144,6 +155,11 @@ _HALLUCINATIONS = tuple(re.compile(pattern, re.IGNORECASE | re.UNICODE) for patt
     r"thanks?\s*(?:you)?\s*for\s+watching\W*",
     r"please\s+(?:subscribe|like\s+and\s+subscribe)\W*",
     r"untertitel(?:ung)?\s+(?:von|im\s+auftrag|aufgrund|der)\s+" + _NAME + r".*",
+    # The German broadcaster credit, with or without a year either side.
+    # Heard live over a YouTube video's music: «Untertitelung des ZDF für
+    # funk, 2017» and «2017 Untertitelung des ZDF, 2020», both translated.
+    r"(?:\d{4}\W*)?untertitel(?:ung)?\s+(?:im\s+auftrag\s+)?des\s+"
+    r"(?:zdf|ard|wdr|ndr|swr|br|mdr|hr|rbb|sr)\b.*",
     r"vielen\s+dank\s+f(?:ü|u)rs?\s+(?:zuschauen|zusehen)\W*",
     r".*\bamara\.org\b.*",
     r".*\bdimatorzok\b.*",
@@ -154,6 +170,44 @@ def is_hallucinated(text: str) -> bool:
     """Whether a segment is the model's idea of a subtitle file with no speech."""
     cleaned = re.sub(r"\s+", " ", text).strip().strip("\"'«»„“”")
     return any(pattern.fullmatch(cleaned) for pattern in _HALLUCINATIONS)
+
+
+def is_prompt_echo(text: str, prompt: str | None) -> bool:
+    """Whether this segment is the priming sample coming back as speech.
+
+    Whisper copies the style of the prompt, and on silence it copies the
+    words too. Measured on a 19-minute German lecture: the closer
+    «Fangen wir an?» arrived twenty-eight times in the first seven minutes,
+    then real speech began. A recording that happens to open with the same
+    greeting loses a line; seven minutes of the prompt is worse.
+    """
+    if not prompt or not text.strip():
+        return False
+    sentences = [
+        re.sub(r"[.!?…,;:]+$", "", piece).strip().casefold()
+        for piece in re.split(r"[.!?]+", text)
+        if piece.strip()
+    ]
+    if not sentences:
+        return False
+    unique = list(dict.fromkeys(sentences))
+    body = unique[0] if len(unique) == 1 else " ".join(unique)
+    if len(body.split()) < 2:
+        return False
+    parts = [
+        re.sub(r"[.!?…,;:]+$", "", piece).strip().casefold()
+        for piece in re.split(r"[.!?]+", prompt)
+        if piece.strip()
+    ]
+    if not parts:
+        return False
+    closer = parts[-1]
+    sample = " ".join(parts)
+    if body == closer:
+        return True
+    if closer and (body in closer or closer in body):
+        return True
+    return len(body.split()) >= 3 and body in sample
 
 
 def _with_terms(prompt: str | None, terms: tuple[str, ...]) -> str | None:
@@ -229,14 +283,22 @@ class Transcriber:
         started = time.perf_counter()
 
         language = options.language
+        detected, detected_probability = "", 0.0
+        wants_detection = language is None and (
+            options.initial_prompt is None and options.punctuation_prompt
+        )
+        if wants_detection or (language is not None and options.verify_language):
+            # When no language was given, the sample for the prompt has to be
+            # in the recording's own language, and a prompt in the wrong one is
+            # the single way the prompt is known to cause harm -- so the
+            # language is settled off the opening seconds rather than guessed.
+            # When one was given, the same answer says whether it was right.
+            detected, detected_probability = self.detect_language(source)
+            if language is None:
+                language = detected
+
         prompt = options.initial_prompt
         if prompt is None and options.punctuation_prompt:
-            if language is None:
-                # The sample has to be in the recording's own language, and a
-                # prompt in the wrong one is the single way this is known to
-                # cause harm -- so the language is settled first, off the
-                # opening seconds, rather than guessed.
-                language, _confidence = self.detect_language(source)
             prompt = languages.punctuation_sample(language) or None
         prompt = _with_terms(prompt, options.terms)
 
@@ -256,12 +318,14 @@ class Transcriber:
 
         duration = total_duration if total_duration is not None else info.duration
         segments = tuple(
-            self._collect(raw_segments, options, duration, on_progress)
+            self._collect(raw_segments, options, duration, on_progress, prompt)
         )
         return Transcript(
             segments=segments,
             language=info.language,
             language_probability=float(info.language_probability),
+            detected_language=detected,
+            detected_probability=detected_probability,
             duration=float(duration),
             elapsed=time.perf_counter() - started,
             model=self.model_name,
@@ -306,6 +370,7 @@ class Transcriber:
         options: TranscribeOptions,
         duration: float,
         on_progress: Callable[[float, float], None] | None,
+        prompt: str | None = None,
     ):
         for raw in raw_segments:
             if on_progress is not None:
@@ -319,6 +384,8 @@ class Transcriber:
             if raw.no_speech_prob > options.max_no_speech_probability:
                 continue
             if options.drop_hallucinations and is_hallucinated(text):
+                continue
+            if options.punctuation_prompt and is_prompt_echo(text, prompt):
                 continue
 
             words = tuple(

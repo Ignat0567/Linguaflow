@@ -318,8 +318,41 @@ def test_translation_does_not_move_timings():
 
 
 def test_translated_cue_keeps_the_original_when_translation_is_empty():
+    """A failed translation of the whole cue. The source is better than a blank."""
     original = (cue(1, 0.0, 2.0, "Hello there"),)
     assert translate_cues(original, [""])[0].lines == ("Hello there",)
+
+
+def test_an_empty_share_does_not_put_the_source_language_back():
+    """Fewer translated words than cues used to leak the original into the
+    leftover slots. A German lecture's "Bewegung." sat untranslated at the
+    end of a Russian sentence because of it."""
+    original = (
+        cue(1, 0.0, 1.0, "Das ist"),
+        cue(2, 1.0, 2.0, "eine"),
+        cue(3, 2.0, 3.0, "schlechte"),
+        cue(4, 3.0, 4.0, "Bewegung."),
+    )
+    translated = translate_cues(original, ["Это", "плохое", "движение.", ""])
+    texts = [c.flat_text for c in translated]
+    assert "Bewegung" not in " ".join(texts)
+    assert " ".join(texts) == "Это плохое движение."
+    assert translated[-1].end == 4.0
+
+
+def test_bilingual_survives_absorbed_empty_shares():
+    """The lecture run died here: 122 original cues, 120 after absorption."""
+    original = (
+        cue(1, 0.0, 1.0, "Das ist"),
+        cue(2, 1.0, 2.0, "eine"),
+        cue(3, 2.0, 3.0, "schlechte"),
+        cue(4, 3.0, 4.0, "Bewegung."),
+    )
+    translated = translate_cues(original, ["Это", "плохое", "движение.", ""])
+    merged = merge_bilingual(original, translated)
+    assert len(merged) == len(translated)
+    assert "Bewegung" in merged[-1].text
+    assert "движение" in merged[-1].text
 
 
 def test_mismatched_translation_count_is_refused():
@@ -452,6 +485,56 @@ def test_cjk_sentence_end_closes_a_group():
     from lt_core.subtitles.bilingual import group_into_sentences
 
     cues = (cue(1, 0.0, 2.0, "大家早上好。"), cue(2, 2.0, 4.0, "感谢各位。"))
+    assert group_into_sentences(cues) == [[0], [1]]
+
+
+def test_an_unpunctuated_run_is_not_one_endless_sentence():
+    """Measured on a 21-minute recording: the recogniser stopped punctuating
+    and one "sentence" ran for 106 cues. Its translation is put back across
+    those cues by proportion, and nothing re-anchors that split, so the text
+    wanders further from the speech with every cue -- a median of 7.4 seconds
+    away on a 276-cue measurement, 23.5 at worst.
+    """
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = tuple(
+        cue(index + 1, index * 2.0, index * 2.0 + 2.0,
+            "so then we went over there and had a look at it")
+        for index in range(12)
+    )
+    groups = group_into_sentences(cues)
+    assert len(groups) > 1, "a run with no full stop in it was one group"
+    assert all(
+        sum(len(cues[position].flat_text.split()) for position in group) <= 40
+        for group in groups
+    )
+    assert [position for group in groups for position in group] == list(range(12)), (
+        "every cue must still appear exactly once, in order"
+    )
+
+
+def test_a_sentence_short_enough_to_translate_whole_is_left_whole():
+    """The cap exists for runs the recogniser never ended. A sentence that
+    fits in one piece must still reach the model in one piece."""
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = (
+        cue(1, 0.0, 2.0, "We cut infrastructure spending"),
+        cue(2, 2.0, 4.0, "by roughly twelve thousand"),
+        cue(3, 4.0, 6.0, "dollars per month."),
+    )
+    assert group_into_sentences(cues) == [[0, 1, 2]]
+
+
+def test_a_cue_longer_than_the_cap_still_forms_a_group_of_its_own():
+    """The group is made of whole cues, so a single over-long cue cannot be
+    divided here -- and must not be dropped or merged away either."""
+    from lt_core.subtitles.bilingual import group_into_sentences
+
+    cues = (
+        cue(1, 0.0, 2.0, " ".join(["word"] * 50)),
+        cue(2, 2.0, 4.0, "and then a short one"),
+    )
     assert group_into_sentences(cues) == [[0], [1]]
 
 
@@ -628,3 +711,48 @@ def test_the_request_carries_the_chosen_model_and_endpoint(monkeypatch):
     assert captured["url"].startswith("https://api.groq.com/openai/v1")
     assert captured["model"] == "llama-3.3-70b-versatile"
     assert captured["auth"] == "Bearer secret"
+
+
+# -- scale words as they are actually written ---------------------------
+
+@pytest.mark.parametrize("source, target", [
+    ("Here is another one with just 1.5 million views",
+     "Вот еще один с 1,5 миллионами просмотров"),
+    ("with 2 million people", "с 2 миллионами человек"),
+    ("in 5 thousand cities", "в 5 тысячах городов"),
+    ("4 billion views", "4 миллиардами просмотров"),
+    ("about 3 million subscribers", "около 3 миллионов подписчиков"),
+    ("a 1.5 million budget", "бюджет в 1,5 миллиона"),
+    ("1 billion euros", "1 Milliarde Euro"),
+    ("3 billion dollars", "3 miliardi di dollari"),
+    ("7 billion people", "7 milliards de personnes"),
+])
+def test_an_inflected_scale_word_is_not_a_changed_number(source, target):
+    """Russian declines a noun through six cases in two numbers, and the
+    table held the nominative. Measured on a twelve-minute recording:
+    "1.5 million views" came back as "1,5 миллионами просмотров" and was
+    reported as 1500000 becoming 1.5. Six of twelve ordinary sentences were
+    flagged the same way, and the cues a warning flags are exactly the ones
+    somebody is asked to stop and check by hand.
+    """
+    from lt_core.mt.numbers import compare
+
+    assert compare(source, target) == ((), ())
+
+
+def test_a_word_that_merely_begins_like_a_scale_is_not_one():
+    """Why the table holds whole forms and not stems: the five-millionth
+    subscriber is five, not five million."""
+    from lt_core.mt.numbers import extract
+
+    assert extract("5 миллионный подписчик") == [Decimal("5")]
+
+
+def test_the_corruption_this_audit_exists_for_is_still_caught():
+    """From the Day 0 spike: twelve thousand dollars became 12万美元, which
+    is a hundred and twenty thousand."""
+    from lt_core.mt.numbers import compare
+
+    missing, added = compare("cut costs by 12,000 dollars", "削减了12万美元")
+    assert missing == ("12000",)
+    assert added == ("120000",)

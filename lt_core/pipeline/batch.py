@@ -35,6 +35,19 @@ DEFAULT_FORMATS = ("srt", "txt")
 SPEED_HEADROOM = 1.18
 
 
+def _named(code: str) -> str:
+    """The language's name, capitalised, then through the message seam.
+
+    `describe` returns Russian in lowercase, which is right for a log and
+    wrong as a caption in a German window. Capitalising matches the
+    interface catalogue («Русский»), so the installed translator can
+    replace it.
+    """
+    name = languages.describe(code)
+    pretty = name[:1].upper() + name[1:] if name else code
+    return tell(pretty)
+
+
 @dataclass
 class BatchResult:
     media: MediaInfo
@@ -187,6 +200,7 @@ def transcribe_file(
     dub_video: bool = True,
     condense: bool = True,
     shortener: object | None = None,
+    cookies: Path | str | None = None,
 ) -> BatchResult:
     """Transcribe a file or URL and write the requested formats."""
     started = time.perf_counter()
@@ -206,7 +220,9 @@ def transcribe_file(
     stage(tell("Открываю источник"))
     # A dubbed copy needs the picture, and for a link that means downloading
     # it. Asked for, it is fetched; not asked for, only the audio comes down.
-    media = resolve(str(target), scratch, want_video=bool(voice and dub_video))
+    media = resolve(
+        str(target), scratch, want_video=bool(voice and dub_video), cookies=cookies
+    )
     if not media.has_audio:
         raise ValueError(f"В «{media.path.name}» нет звуковой дорожки.")
 
@@ -242,7 +258,10 @@ def transcribe_file(
         # and the original subtitles are already the right file.
         stage(tell("Язык оригинала совпал с языком перевода"))
     elif translator is not None and target_language:
-        stage(tell("Перевожу на {language}", language=languages.describe(target_language)))
+        stage(tell(
+            "Перевожу на {language}",
+            language=_named(target_language),
+        ))
         # Whole sentences, not cues. A cue is cut for reading speed and is
         # often a fragment, and a fragment is what makes this model invent.
         groups = group_into_sentences(cues)

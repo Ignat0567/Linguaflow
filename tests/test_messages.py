@@ -44,6 +44,20 @@ def test_an_installed_translator_is_used(language, expected):
     assert messages.say("Собираю субтитры") == expected
 
 
+def test_a_language_name_in_a_stage_message_is_translated():
+    """Otherwise a German window reads «Übersetzung nach русский»."""
+    from lt_core.pipeline.batch import _named
+
+    i18n.set_language("de")
+    messages.install(i18n.t)
+    assert _named("ru") == "Russisch"
+    assert messages.say("Перевожу на {language}", language=_named("en")) == (
+        "Übersetzung nach Englisch"
+    )
+    i18n.set_language("ru")
+    messages.install(None)
+
+
 def test_values_are_filled_after_translating():
     """So a translation carries the placeholder, not a frozen number."""
     i18n.set_language("en")

@@ -36,6 +36,11 @@ from .agreement import LocalAgreement
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]］】」』]*\s*$")
 _CLAUSE_END = re.compile(r"[,;:—–、，；：]['\"»”’)\]]*\s*$")
 
+#: Confidence at which a detected source language is pinned for the session.
+#: Speech is detected at 0.99-1.00 within a second (Day 4); a pause, music or
+#: silence comes out far lower, and those are the windows not to pin on.
+PIN_LANGUAGE_AT = 0.7
+
 #: How long a sentence may go unfinished before part of it is committed anyway.
 #:
 #: Long, because this is the safety valve and not the answer to latency: the
@@ -116,10 +121,22 @@ class LiveUpdate:
 
     #: Text confirmed on this tick. Never revised afterwards.
     committed: str = ""
+    #: Whether `committed` begins a new word. Whisper's tokens carry their own
+    #: leading space and `committed` is stripped, so without this a screen
+    #: appending tick after tick has to guess -- and both guesses are wrong
+    #: somewhere: glued, "with you today" + "for your" reads "todayfor";
+    #: spaced, "$12" + ",000" reads "$12 ,000". Use `append_committed`.
+    committed_space: bool = True
     #: The provisional tail. Replaced wholesale on the next tick.
     partial: str = ""
     #: Translation of whatever sentences completed on this tick.
     translation: str = ""
+    #: The source text `translation` translates -- the finished sentences,
+    #: not whatever was committed by the time they were. A screen that closed
+    #: its line when a translation arrived put the next sentence's first
+    #: words over the previous sentence's translation and began the next
+    #: line mid-sentence. Empty where not known (conversation mode).
+    translation_source: str = ""
     #: The sentence still being spoken, translated provisionally. Replaced
     #: wholesale on the next tick, exactly as `partial` is, and superseded by
     #: `translation` once the sentence finishes.
@@ -228,6 +245,8 @@ class LiveSession:
         self._consumed = 0.0
         self._last_run_at = 0.0
         self._untranslated: list[Word] = []
+        #: What the last translation was made from; see LiveUpdate.
+        self._translated_source = ""
         #: The last provisional translation, and the text it was made from, so
         #: a sentence that has not grown is not translated again.
         self._preview: tuple[str, str] = ("", "")
@@ -269,8 +288,10 @@ class LiveSession:
             translation = self._translate(force=True)
             return LiveUpdate(
                 committed="".join(word.text for word in tail).strip(),
+                committed_space=_starts_word(tail),
                 partial="",
                 translation=translation,
+                translation_source=self._translated_source if translation else "",
                 translation_language=self.target_language or "",
                 speaker_language=self.source_language or "",
                 speaker=self.speaker,
@@ -308,6 +329,10 @@ class LiveSession:
                 # detection would run on every two-second window, and this
                 # path already carries its own context above.
                 punctuation_prompt=False,
+                # For the same reason: a language named once cannot be worth
+                # re-checking a hundred times a minute. Conversation mode does
+                # its own detection, over a window sized for the question.
+                verify_language=False,
                 # File mode carries the previous window's text forward, which
                 # is what makes it punctuate. Here a window is two seconds and
                 # the text before it is already supplied above, deliberately,
@@ -319,11 +344,20 @@ class LiveSession:
         self.stats.asr_seconds += time.perf_counter() - started
         self.stats.ticks += 1
 
-        if self.source_language is None and transcript.language:
+        if (
+            self.source_language is None
+            and transcript.language
+            and any(word.text.strip() for word in transcript.words)
+            and transcript.language_probability >= PIN_LANGUAGE_AT
+        ):
             # Detect once, then pin. Re-detecting every tick lets the model
             # change its mind mid-session on a short or accented window, and a
             # translation whose source language flips halfway through is worse
             # than one that is confidently wrong about a single word.
+            #
+            # But not off a window with nothing in it: a video's opening
+            # music or silence gets a language too, at low confidence, and
+            # pinning that decodes the rest of the session in the wrong one.
             self.source_language = transcript.language
             self.detected_language = transcript.language
 
@@ -364,8 +398,10 @@ class LiveSession:
 
         return LiveUpdate(
             committed="".join(word.text for word in committed).strip(),
+            committed_space=_starts_word(committed),
             partial=partial,
             translation=translation,
+            translation_source=self._translated_source if translation else "",
             partial_translation=preview,
             translation_language=self.target_language or "",
             speaker_language=self.source_language or "",
@@ -499,6 +535,7 @@ class LiveSession:
         appeared at 40 s, they arrived a median of 10 s apart, and one of them
         was 496 characters of text delivered at once.
         """
+        self._translated_source = ""
         if self.translator is None or not self.target_language:
             self._untranslated.clear()
             return ""
@@ -522,6 +559,7 @@ class LiveSession:
         text = "".join(word.text for word in ready).strip()
         if not text:
             return ""
+        self._translated_source = text
         self._preview = ("", "")
         started = time.perf_counter()
         try:
@@ -535,3 +573,18 @@ class LiveSession:
         finally:
             self.stats.mt_seconds += time.perf_counter() - started
         return results[0] if results else ""
+
+
+def _starts_word(words) -> bool:
+    """Whether the first of these words came with Whisper's leading space."""
+    return not words or words[0].text[:1].isspace()
+
+
+def append_committed(text: str, update: LiveUpdate) -> str:
+    """`text` with this tick's committed words added, spaced as spoken."""
+    if not update.committed:
+        return text
+    if not text:
+        return update.committed
+    joiner = " " if update.committed_space else ""
+    return text.rstrip() + joiner + update.committed

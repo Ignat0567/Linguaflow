@@ -145,6 +145,61 @@ def test_a_word_is_not_committed_twice_when_its_timing_drifts_the_other_way():
     assert agreement.committed_text == "they win"
 
 
+def test_a_commit_never_ends_on_half_a_number():
+    """Measured on a live run: "reduced latency by 31%" was committed as
+    "...by 31" and translated straight away, because committed text is
+    translated as soon as it settles. It came back as "задержка на 31".
+
+    Whisper emits "31%" as " 31" and "%", and the missing leading space is the
+    only thing that says they are one word. The first hypothesis says
+    " percent.", the second says "%", so agreement rightly stops between them
+    -- and must not hand over the half it has.
+    """
+    agreement = LocalAgreement()
+    agreement.insert(words((" by", 1.0, 1.2), (" 31", 1.2, 1.6),
+                           (" percent.", 1.6, 2.2)))
+    committed = agreement.insert(words((" by", 1.0, 1.2), (" 31", 1.2, 1.6),
+                                       ("%", 1.6, 1.8), (" and", 1.8, 2.0)))
+    assert [w.text for w in committed] == [" by"]
+    assert agreement.committed_text == "by"
+
+
+def test_the_two_halves_commit_together_once_both_are_agreed():
+    agreement = LocalAgreement()
+    agreement.insert(words((" by", 1.0, 1.2), (" 31", 1.2, 1.6), ("%", 1.6, 1.8)))
+    agreement.insert(words((" by", 1.0, 1.2), (" 31", 1.2, 1.6), ("%", 1.6, 1.8),
+                           (" and", 1.8, 2.0)))
+    assert agreement.committed_text == "by 31%"
+
+
+def test_a_forced_commit_does_not_cut_a_word_either():
+    """The escape hatch for a word the model will not settle on must not
+    become a way to hand over half of one."""
+    agreement = LocalAgreement()
+    agreement.insert(words((" costs", 0.0, 0.5), (" $12", 0.5, 1.0),
+                           (",000", 1.0, 1.4)))
+    forced = agreement.force_commit_before(2.0)
+    assert [w.text for w in forced] == [" costs", " $12", ",000"]
+
+    agreement = LocalAgreement()
+    agreement.insert(words((" costs", 0.0, 0.5), (" $12", 0.5, 1.0),
+                           (",000", 1.4, 1.8)))
+    forced = agreement.force_commit_before(1.2)
+    assert [w.text for w in forced] == [" costs"], (
+        "it stopped before the continuation and kept the first half"
+    )
+
+
+def test_the_end_of_a_session_still_takes_everything():
+    """No further hypothesis is coming, so half a word is all there will ever
+    be of it -- and dropping it would lose the figure outright."""
+    agreement = LocalAgreement()
+    agreement.insert(words((" costs", 0.0, 0.5), (" $12", 0.5, 1.0),
+                           (",000", 1.0, 1.4)))
+    tail = agreement.flush()
+    assert "".join(w.text for w in tail).strip() == "costs $12,000"
+
+
 # -- pacing --------------------------------------------------------------
 
 def test_expected_delay_counts_two_windows():
@@ -635,3 +690,93 @@ def test_a_turn_change_releases_the_unfinished_sentence():
     assert released == "[ru] An unfinished thought"
 
 
+
+
+# -- joining committed text across ticks ----------------------------------
+
+def test_committed_text_from_two_ticks_is_spaced_as_spoken():
+    """Measured in the browser screen: "with you today" and "for your
+    commencement" arrived on two ticks, both stripped, and read «todayfor»."""
+    from lt_core.asr.types import Word
+    from lt_core.realtime.session import LiveUpdate, _starts_word, append_committed
+
+    words = [Word(" for", 1.0, 1.2, 0.9), Word(" your", 1.2, 1.4, 0.9)]
+    update = LiveUpdate(committed="for your", committed_space=_starts_word(words))
+    assert append_committed("with you today", update) == "with you today for your"
+
+
+def test_a_word_continued_on_the_next_tick_stays_joined():
+    """Whisper can split "$12,000" into " $12" and ",000". A space between
+    them is a different number to anyone reading it."""
+    from lt_core.asr.types import Word
+    from lt_core.realtime.session import LiveUpdate, _starts_word, append_committed
+
+    words = [Word(",000", 2.0, 2.3, 0.9)]
+    update = LiveUpdate(committed=",000", committed_space=_starts_word(words))
+    assert append_committed("It cost $12", update) == "It cost $12,000"
+
+
+def test_the_first_committed_text_needs_no_joiner():
+    from lt_core.realtime.session import LiveUpdate, append_committed
+
+    assert append_committed("", LiveUpdate(committed="Hello")) == "Hello"
+    assert append_committed("Hello", LiveUpdate(committed="")) == "Hello"
+
+
+class _UnsureTranscriber(FakeTranscriber):
+    """Unsure on its first ticks -- a video's opening music -- then sure."""
+
+    def __init__(self, script, answers):
+        super().__init__(script)
+        self.answers = answers
+
+    def transcribe(self, audio, options=None, on_progress=None, total_duration=None):
+        from dataclasses import replace
+
+        result = super().transcribe(audio, options, on_progress, total_duration)
+        language, probability = self.answers[min(self.calls - 1, len(self.answers) - 1)]
+        return replace(result, language=language, language_probability=probability)
+
+
+def test_the_language_is_not_pinned_off_an_unsure_window():
+    """A German talk run as English came out as English words and loops.
+    Detecting fixes that -- unless the opening music is detected, at low
+    confidence, as English and pinned for the rest of the video."""
+    transcriber = _UnsureTranscriber(
+        [words((" Hallo", 0, 0.5))],
+        answers=[("en", 0.31), ("en", 0.42), ("de", 0.99)],
+    )
+    session = LiveSession(transcriber, pace=Pace(window=1.0))
+    for chunk in chunks(4.5):
+        session.feed(chunk)
+    assert session.source_language == "de"
+
+
+def test_a_window_with_no_words_does_not_pin_a_language():
+    transcriber = _UnsureTranscriber([[]], answers=[("en", 0.95)])
+    session = LiveSession(transcriber, pace=Pace(window=1.0))
+    for chunk in chunks(2.5):
+        session.feed(chunk)
+    assert session.source_language is None
+
+
+def test_a_translation_says_which_words_it_translated():
+    """So a screen can put the sentence and its translation on one line,
+    rather than whatever had been committed by the time it arrived."""
+    script = [
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0)),
+        words((" Hello.", 0.0, 0.5), (" How", 0.5, 1.0), (" are", 1.0, 1.5)),
+    ]
+    session = LiveSession(
+        FakeTranscriber(script), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    translated = [
+        update
+        for update in (session.feed(chunk) for chunk in chunks(3.0))
+        if update and update.translation
+    ]
+    assert translated
+    assert translated[0].translation_source == "Hello."
+    # Updates with no translation carry no source.
+    assert session.finish().translation_source in ("", "How are")

@@ -9,7 +9,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (
+    Property,
+    QEasingCurve,
+    QPropertyAnimation,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QPixmap,
@@ -22,6 +31,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QGridLayout,
     QHBoxLayout,
     QSizePolicy,
     QVBoxLayout,
@@ -105,6 +115,8 @@ class LanguagePair(QWidget):
         parent: QWidget | None = None,
         compact: bool = False,
         allow_auto: bool = False,
+        from_caption: str = "",
+        to_caption: str = "",
     ) -> None:
         super().__init__(parent)
         clear_fill(self)
@@ -119,12 +131,26 @@ class LanguagePair(QWidget):
         swap = glass.TextLink("⇄", self, size=16, alpha=0.7)
         swap.clicked.connect(self._swap)
 
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        row.addWidget(self._from)
-        row.addWidget(swap)
-        row.addWidget(self._to)
+        if from_caption or to_caption:
+            # Labels in the same columns as the dropdowns. A stretch between
+            # two eyebrows puts «Перевод на» over empty space, not over the
+            # target language — which is what the upload screen was drawing.
+            grid = QGridLayout(self)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(8)
+            grid.addWidget(glass.eyebrow(from_caption), 0, 0)
+            grid.addWidget(glass.eyebrow(to_caption), 0, 2)
+            grid.addWidget(self._from, 1, 0)
+            grid.addWidget(swap, 1, 1, Qt.AlignCenter)
+            grid.addWidget(self._to, 1, 2)
+        else:
+            row = QHBoxLayout(self)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(10)
+            row.addWidget(self._from)
+            row.addWidget(swap)
+            row.addWidget(self._to)
 
     def _fill(self) -> None:
         self._from.blockSignals(True)
@@ -211,8 +237,8 @@ class GlassCard(glass.Hoverable):
         glass.paint_glass(
             self, painter, self.rect().adjusted(0, 0, -1, -1),
             theme.RADIUS_CARD,
-            theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
             accent_fill=self._accent,
+            lift=theme.HOVER_LIFT if self._hover else 0.0,
         )
 
 
@@ -230,14 +256,32 @@ class AccentSwatch(glass.Hoverable):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
         painter.setBrush(QColor(self.colour))
-        painter.setPen(
-            QPen(theme.ink(0.95), 2) if self.isChecked() else QPen(theme.ink(0.25), 1)
-        )
+        # Unchosen swatches sit behind a hairline; under the pointer that line
+        # comes forward, so the one being considered is visibly the one the
+        # click would take.
+        if self.isChecked():
+            painter.setPen(QPen(theme.ink(0.95), 3 if self._hover else 2))
+        else:
+            painter.setPen(QPen(theme.ink(0.55 if self._hover else 0.25),
+                                2 if self._hover else 1))
         painter.drawEllipse(rect)
 
 
 class NavItem(glass.Hoverable):
-    """One entry in the floating pill. Active is a solid white capsule."""
+    """One entry in the floating pill.
+
+    Nothing is drawn here but the word. The page that is open says so through
+    the word itself -- full strength and a heavier weight -- so that the
+    glass runner behind it is free to mean one thing only: where the pointer
+    is. See `NavBar`.
+    """
+
+    pointed = Signal(object, bool)
+
+    SIZE = 13
+    RESTING_WEIGHT = 600
+    OPEN_WEIGHT = 700
+    PADDING = 15
 
     def __init__(self, text: str, key: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -245,21 +289,30 @@ class NavItem(glass.Hoverable):
         self.setText(text)
         self.setCheckable(True)
         self.setFixedHeight(28)
-        self.setMinimumWidth(88)
+        # Measured at the heavier weight, because that is the widest this
+        # word is ever drawn: sizing to the lighter one clips the page you
+        # are actually on.
+        metrics = QFontMetrics(theme.font(self.SIZE, self.OPEN_WEIGHT))
+        self.setMinimumWidth(
+            max(88, metrics.horizontalAdvance(text) + self.PADDING * 2)
+        )
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        super().enterEvent(event)
+        self.pointed.emit(self, True)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        super().leaveEvent(event)
+        self.pointed.emit(self, False)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
-        if self.isChecked():
-            painter.fillPath(path, theme.ink(0.96))
-            painter.setPen(theme.base())
-        else:
-            painter.setPen(theme.ink(theme.text_alpha(
-                1.0 if self._hover else theme.SECONDARY)))
-        painter.setFont(theme.font(13, 600))
+        open_here = self.isChecked()
+        painter.setPen(theme.ink(theme.text_alpha(
+            theme.PRIMARY if open_here or self._hover else theme.SECONDARY)))
+        painter.setFont(theme.font(
+            self.SIZE, self.OPEN_WEIGHT if open_here else self.RESTING_WEIGHT))
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
@@ -389,7 +442,7 @@ class Wordmark(QWidget):
 
 
 class NavBar(glass.GlassPanel):
-    """The floating pill: the five destinations, centred."""
+    """The floating pill: the six destinations, centred."""
 
     chosen = Signal(str)
 
@@ -397,17 +450,27 @@ class NavBar(glass.GlassPanel):
     #: here: a class body runs at import, before the stored interface
     #: language has been applied, and the nav would stay in Russian while
     #: every other caption changed.
-    SCREENS = ("home", "realtime", "upload", "history", "settings")
+    SCREENS = ("home", "realtime", "browser", "upload", "history", "settings")
 
     @staticmethod
     def captions() -> tuple[tuple[str, str], ...]:
         return (
             ("home", _("Главная")),
             ("realtime", _("Реальное время")),
+            ("browser", _("Браузер")),
             ("upload", _("Загрузка")),
             ("history", _("История")),
             ("settings", _("Настройки")),
         )
+
+    #: How long the runner takes to reach what the pointer is on.
+    #:
+    #: Long enough to be seen travelling, short enough that it has arrived
+    #: before a hand moving between two destinations gets there.
+    GLIDE_MS = 190
+
+    #: How long it takes to appear and to go again.
+    FADE_MS = 140
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, radius=theme.RADIUS_PILL, tint=theme.tint(raised=True))
@@ -422,13 +485,100 @@ class NavBar(glass.GlassPanel):
         self._items: dict[str, NavItem] = {}
         for index, (key, text) in enumerate(self.captions()):
             item = NavItem(text, key, self)
-            if key == "realtime":
-                item.setMinimumWidth(128)
             self._group.addButton(item, index)
             self._items[key] = item
+            item.pointed.connect(self._point_at)
             row.addWidget(item)
         self._group.idClicked.connect(self._emit)
+
+        self._pointed: NavItem | None = None
+        self._runner = QRectF()
+        self._shown = 0.0
+        self._glide = QPropertyAnimation(self, b"runner", self)
+        self._glide.setDuration(self.GLIDE_MS)
+        self._glide.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade = QPropertyAnimation(self, b"shown", self)
+        self._fade.setDuration(self.FADE_MS)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
         self.set_active("home")
+
+    # -- the runner -----------------------------------------------------
+    #
+    # One pane of glass, and it means one thing: where the pointer is. It is
+    # not there when the pointer is not. Which page is open is said by the
+    # word itself, in `NavItem`, so that nothing has to be read twice.
+
+    def get_runner(self) -> QRectF:
+        return self._runner
+
+    def set_runner(self, rect: QRectF) -> None:
+        self._runner = rect
+        self.update()
+
+    runner = Property(QRectF, get_runner, set_runner)
+
+    def get_shown(self) -> float:
+        return self._shown
+
+    def set_shown(self, value: float) -> None:
+        self._shown = value
+        self.update()
+
+    shown = Property(float, get_shown, set_shown)
+
+    def _fade_to(self, target: float) -> None:
+        if self._shown == target:
+            return
+        self._fade.stop()
+        self._fade.setStartValue(self._shown)
+        self._fade.setEndValue(target)
+        self._fade.start()
+
+    def _point_at(self, item: NavItem, entering: bool) -> None:
+        if entering:
+            # Already on screen: travel. Not on screen: appear where the
+            # pointer is, rather than sliding in from wherever it last was.
+            arriving = self._shown <= 0.0
+            self._pointed = item
+            wanted = QRectF(item.geometry())
+            self._glide.stop()
+            if arriving:
+                self.set_runner(wanted)
+            elif wanted != self._runner:
+                self._glide.setStartValue(self._runner)
+                self._glide.setEndValue(wanted)
+                self._glide.start()
+            self._fade_to(1.0)
+            return
+
+        if self._pointed is not item:
+            return
+        self._pointed = None
+        # Leaving one destination for the next arrives here first, and going
+        # out immediately would put the runner out at the moment it should be
+        # setting off. Deciding on the next turn of the loop lets the arrival
+        # -- in whichever order Qt delivers it -- be seen first.
+        QTimer.singleShot(0, self._retire)
+
+    def _retire(self) -> None:
+        """Go, if the pointer really has left rather than moved along."""
+        if self._pointed is not None:
+            return
+        self._glide.stop()
+        self._fade_to(0.0)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self._runner.isNull() or self._shown <= 0.0:
+            return
+        painter = QPainter(self)
+        painter.setOpacity(self._shown)
+        glass.paint_glass(
+            self, painter, self._runner.toRect(), theme.RADIUS_PILL,
+            theme.nav_runner(),
+        )
+
+    # -- destinations ----------------------------------------------------
 
     def _emit(self, index: int) -> None:
         if 0 <= index < len(self.SCREENS):
@@ -452,12 +602,14 @@ class SettingsGroup(glass.GlassPanel):
         self.body = layout
 
 
-def dashed_panel(widget: QWidget, painter: QPainter, radius: int = 28) -> None:
+def dashed_panel(
+    widget: QWidget, painter: QPainter, radius: int = 28, lift: float = 0.0
+) -> None:
     """The upload dropzone: glass fill, dashed rather than solid edge."""
     rect = widget.rect().adjusted(1, 1, -2, -2)
     path = glass.paint_glass(
-        widget, painter, rect, radius, None, border=0.0
+        widget, painter, rect, radius, None, border=0.0, lift=lift
     )
-    painter.setPen(QPen(theme.ink(0.35), 1.5, Qt.DashLine))
+    painter.setPen(QPen(theme.ink(0.55 if lift else 0.35), 1.5, Qt.DashLine))
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(path)

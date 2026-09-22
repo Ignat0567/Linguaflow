@@ -8,9 +8,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from lt_core.subtitles.export import to_srt, write
+from lt_core.realtime.session import append_committed
 from lt_core.subtitles.cues import Cue
 
 from .. import glass, theme
@@ -39,6 +40,9 @@ class RealtimeScreen(QWidget):
         self._lines: list[Line] = []
         self._current = Line()
         self._pending_start = False
+        #: True while the engine's live session is this screen's. The
+        #: browser screen runs its own sessions on the same engine.
+        self._mine = False
         self._ever = False
         self._saved: Path | None = None
 
@@ -55,6 +59,21 @@ class RealtimeScreen(QWidget):
         mode_row.setContentsMargins(8, 4, 8, 4)
         mode_row.setSpacing(0)
         mode_row.addWidget(self._modes)
+
+        # Where the sound comes from sits beside what is done with it: a
+        # talk in the room and a call on the speakers are the same session
+        # with a different ear, and it was two screens away in Settings.
+        self._capture = ChipGroup((
+            ("microphone", _("Микрофон")),
+            ("system", _("Звук системы")),
+        ), self, stretch=False)
+        self._capture.changed.connect(self._sync_capture)
+        capture_pill = glass.GlassPanel(self, radius=theme.RADIUS_PILL)
+        capture_pill.setFixedHeight(42)
+        capture_row = QHBoxLayout(capture_pill)
+        capture_row.setContentsMargins(8, 4, 8, 4)
+        capture_row.setSpacing(0)
+        capture_row.addWidget(self._capture)
 
         # Reading the translation out loud is an option, not a third kind of
         # session. It used to be one, which meant a conversation -- where
@@ -74,6 +93,7 @@ class RealtimeScreen(QWidget):
         controls.addStretch()
         controls.addWidget(self._pair)
         controls.addWidget(mode_pill)
+        controls.addWidget(capture_pill)
         controls.addWidget(speak_pill)
         controls.addStretch()
 
@@ -87,12 +107,17 @@ class RealtimeScreen(QWidget):
         self._panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         self._panel.setMinimumHeight(200)
         self._panel.setMaximumWidth(760)
-        self._feed = QVBoxLayout(self._panel)
-        self._feed.setContentsMargins(32, 28, 32, 28)
-        self._feed.setSpacing(18)
-        self._feed.setAlignment(Qt.AlignCenter)
+        # The lines scroll inside the panel. They used to be laid straight
+        # into it, the last eight of them: on a meeting with long sentences
+        # eight lines were taller than the window, and the panel grew up
+        # over the controls and the record button.
+        self._scroll = _FeedScroll(self._panel)
+        panel_layout = QVBoxLayout(self._panel)
+        panel_layout.setContentsMargins(8, 12, 8, 12)
+        panel_layout.addWidget(self._scroll)
+        self._feed = self._scroll.feed
         self._placeholder = glass.label(
-            _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
+            _("Субтитры появятся здесь"), 13, 400, theme.MUTED
         )
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._feed.addWidget(self._placeholder)
@@ -139,6 +164,7 @@ class RealtimeScreen(QWidget):
         settings = self.app.store.settings
         self._pair.set_pair(settings.from_lang, settings.to_lang)
         self._modes.set_value(settings.realtime_mode)
+        self._capture.set_value(settings.capture_kind)
         self._speak.blockSignals(True)
         self._speak.setChecked(settings.realtime_voice)
         self._speak.blockSignals(False)
@@ -159,12 +185,19 @@ class RealtimeScreen(QWidget):
         self.app.store.save_settings()
         self._render()
 
+    def _sync_capture(self, kind: str) -> None:
+        self.app.store.settings.capture_kind = kind
+        self.app.store.save_settings()
+
     def _sync_voice(self, on: bool) -> None:
         self.app.store.settings.realtime_voice = on
         self.app.store.save_settings()
 
     def _toggled(self, on: bool) -> None:
         if on:
+            if self.app.engine.live_running and not self._mine:
+                self._refuse(_("Сейчас переводится видео на экране «Браузер»."))
+                return
             self._pending_start = True
             self._lines.clear()
             self._current = Line()
@@ -183,6 +216,7 @@ class RealtimeScreen(QWidget):
         if not self._pending_start:
             return
         self._pending_start = False
+        self._mine = True
         self._status.setText(_("Слушаю…"))
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
@@ -190,13 +224,22 @@ class RealtimeScreen(QWidget):
         self.app.engine.start_live(self.app.store.settings)
 
     def _on_fail(self, message: str) -> None:
+        if not (self._mine or self._pending_start):
+            return
+        self._mine = False
         self._pending_start = False
+        self._refuse(message)
+
+    def _refuse(self, message: str) -> None:
         self._status.setText(message)
         self._record.blockSignals(True)
         self._record.setChecked(False)
         self._record.blockSignals(False)
 
     def _on_stopped(self) -> None:
+        if not self._mine:
+            return
+        self._mine = False
         self._ever = True
         self._record.blockSignals(True)
         self._record.setChecked(False)
@@ -207,6 +250,8 @@ class RealtimeScreen(QWidget):
         self._push_overlay()
 
     def _on_update(self, update) -> None:
+        if not self._mine:
+            return
         current = self._current
         if update.speaker and current.speaker and update.speaker != current.speaker:
             if current.original or current.translated:
@@ -216,20 +261,33 @@ class RealtimeScreen(QWidget):
         if not current.speaker:
             current.speaker = update.speaker
         if update.committed:
-            current.original += update.committed
+            current.original = append_committed(current.original, update)
             current.partial = ""
         if update.partial:
             current.partial = update.partial
         current.partial_translated = update.partial_translation
         if update.translation:
-            current.translated = (
+            translated = (
                 f"{current.translated} {update.translation}".strip()
                 if current.translated else update.translation
             )
-            current.partial_translated = ""
-            if current.original:
-                self._lines.append(current)
-                self._current = Line(speaker=update.speaker)
+            rest = _after(current.original, update.translation_source)
+            if rest is not None:
+                # The line is exactly the sentences translated; whatever of
+                # the next one was already heard starts the next line.
+                if update.translation_source:
+                    self._lines.append(Line(
+                        original=update.translation_source, translated=translated,
+                        speaker=current.speaker,
+                    ))
+                self._current = Line(speaker=update.speaker, original=rest,
+                                     partial=current.partial)
+            else:
+                current.translated = translated
+                current.partial_translated = ""
+                if current.original:
+                    self._lines.append(current)
+                    self._current = Line(speaker=update.speaker)
         self._render()
         self._push_overlay()
 
@@ -245,14 +303,18 @@ class RealtimeScreen(QWidget):
             visible.append(self._current)
         if not visible:
             placeholder = glass.label(
-                _("Нажмите на кнопку, чтобы начать"), 13, 400, theme.MUTED
+                _("Субтитры появятся здесь"), 13, 400, theme.MUTED
             )
             placeholder.setAlignment(Qt.AlignCenter)
+            self._feed.addStretch(1)
             self._feed.addWidget(placeholder)
+            self._feed.addStretch(1)
             return
         conversation = self.app.store.settings.realtime_mode == "conversation"
-        for line in visible[-8:]:
-            self._feed.addWidget(_Caption(line, conversation), 0, Qt.AlignCenter)
+        # Newest at the bottom, under a stretch, as a chat reads.
+        self._feed.addStretch(1)
+        for line in visible[-KEPT_ON_SCREEN:]:
+            self._feed.addWidget(_Caption(line, conversation))
 
     def _toggle_overlay(self) -> None:
         overlay = self.app.overlay
@@ -321,6 +383,74 @@ class RealtimeScreen(QWidget):
             _("Сохранено · {duration}", duration=format_clock(duration))
         )
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+def _after(text: str, source: str) -> str | None:
+    """`text` with the translated `source` taken off its front, or None
+    when `source` is unknown or is not how `text` begins.
+
+    Compared word by word, because the two were joined from the same words
+    by different hands and may differ in spacing.
+    """
+    if not source:
+        return None
+    words, prefix = text.split(), source.split()
+    if words[: len(prefix)] != prefix:
+        return None
+    return " ".join(words[len(prefix):])
+
+
+#: Lines kept in the panel to scroll back through. Every update rebuilds
+#: them, so not the whole meeting: the transcript is saved in full anyway.
+KEPT_ON_SCREEN = 80
+
+
+class _FeedScroll(QScrollArea):
+    """The panel's lines, following the newest unless scrolled up.
+
+    Scrolled to the bottom, it stays there as lines arrive. Scrolled up to
+    read something again, it stays where it was put until taken back down.
+    """
+
+    #: How near the bottom still counts as "at the bottom", in pixels.
+    NEAR = 24
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        viewport = self.viewport()
+        viewport.setAutoFillBackground(False)
+        viewport.setAttribute(Qt.WA_TranslucentBackground, True)
+        body = QWidget()
+        clear_fill(body)
+        self.feed = QVBoxLayout(body)
+        self.feed.setContentsMargins(24, 16, 24, 16)
+        self.feed.setSpacing(18)
+        self.setWidget(body)
+        handle = (
+            "rgba(13,15,26,0.22)" if theme.is_light() else "rgba(255,255,255,0.22)"
+        )
+        self.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
+            f"QScrollBar::handle:vertical {{ background: {handle};"
+            " border-radius: 4px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        self.following = True
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(self._moved)
+        bar.rangeChanged.connect(self._grew)
+
+    def _moved(self, value: int) -> None:
+        bar = self.verticalScrollBar()
+        self.following = value >= bar.maximum() - self.NEAR
+
+    def _grew(self, _low: int, high: int) -> None:
+        if self.following:
+            self.verticalScrollBar().setValue(high)
 
 
 class _Caption(QWidget):

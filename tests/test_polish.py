@@ -416,9 +416,538 @@ def test_the_ring_stops_short_while_work_continues(window):
     assert busy._ring._value >= 0.98
 
 
+def test_the_progress_ring_keeps_moving_while_running(window):
+    """A parked 80% used to look frozen. The comet on the rim is the pulse."""
+    ring = window._upload._busy._ring
+    ring.set_running(True)
+    assert ring.is_running
+    before = ring._phase
+    ring._advance()
+    assert ring._phase != before
+    ring.set_running(False)
+    assert not ring.is_running
+
+
+def test_elapsed_time_ticks_on_the_busy_screen(window):
+    import time
+
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    busy._origin = time.monotonic() - 94
+    busy._refresh_clock()
+    assert "01:34" in busy._elapsed.text()
+
+
+def test_after_recognition_the_busy_screen_says_work_continues(window):
+    """80% is the end of recognition, not of the job. Say so, or the wait
+    looks like a hang."""
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    assert busy._hint.isHidden()
+    busy.set_progress(0.80)
+    assert not busy._hint.isHidden()
+    assert "перевод" in busy._hint.text()
+
+
+def test_a_failure_stops_the_busy_motion(window):
+    busy = window._upload._busy
+    busy.reset("clip.mp4")
+    busy._ring.set_running(True)
+    window._upload._on_fail("нет звука")
+    assert not busy._ring.is_running
+    assert busy._hint.isHidden()
+
+
 def test_starting_again_hides_the_button(window):
     window.goto("upload")
     window._upload._stack.setCurrentWidget(window._upload._busy)
     window._upload._on_fail("ошибка")
     window._upload._busy.reset("clip.mp4")
     assert window._upload._busy._ok.isHidden()
+
+
+# -- a language the recording contradicts -------------------------------
+
+def _finished(detected: str, probability: float):
+    """A finished job, of the shape the result screen is handed."""
+    from types import SimpleNamespace
+
+    from lt_core.asr.types import Transcript
+    from lt_core.subtitles.cues import Cue
+
+    transcript = Transcript(
+        segments=(), language="en", language_probability=1.0, duration=12.0,
+        detected_language=detected, detected_probability=probability,
+    )
+    return SimpleNamespace(
+        transcript=transcript,
+        media=SimpleNamespace(title="лекция.m4a", duration=12.0),
+        cues=(Cue(index=1, start=0.0, end=2.0, lines=("Hello there.",)),),
+        translated_cues=(Cue(index=1, start=0.0, end=2.0, lines=("Здравствуйте.",)),),
+        outputs={},
+    )
+
+
+def _texts(widget) -> str:
+    """Every label on the widget, folded -- the eyebrow style uppercases."""
+    from PySide6.QtWidgets import QLabel
+
+    return " ".join(
+        child.text() for child in widget.findChildren(QLabel)).casefold()
+
+
+def test_a_recording_in_another_language_says_so_on_the_result(window):
+    """Told that Russian speech is English, Whisper writes fluent English that
+    reads exactly like a good transcript. The result screen is the last place
+    it can be caught before the reader believes it."""
+    from types import SimpleNamespace
+
+    window.goto("upload")
+    done = window._upload._done
+    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    done.show_result(_finished("ru", 1.0), settings)
+    shown = _texts(done)
+    assert i18n._("Проверьте язык").casefold() in shown
+    assert "звуковую дорожку" in shown, (
+        "the reason, not just the heading"
+    )
+    assert "русский" in shown, "the language actually heard"
+
+
+def test_a_recording_that_agrees_says_nothing(window):
+    from types import SimpleNamespace
+
+    window.goto("upload")
+    done = window._upload._done
+    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    done.show_result(_finished("en", 1.0), settings)
+    assert i18n._("Проверьте язык").casefold() not in _texts(done)
+
+
+# -- nothing clickable stays silent -------------------------------------
+
+def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
+    """The complaint that started this was one card on one screen. This is
+    the same question asked of every control the app actually builds, which
+    is the only way the answer stays true as screens are added.
+
+    The pointer is delivered as a real enter and leave, so a control is
+    judged by what it draws rather than by which base class it inherits.
+    """
+    from PySide6.QtCore import QEvent, QPropertyAnimation, Qt
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import (
+        QAbstractButton, QApplication, QComboBox, QLineEdit, QWidget,
+    )
+
+    def painted(widget) -> bytes:
+        image = QImage(widget.size(), QImage.Format_ARGB32)
+        image.fill(0)
+        widget.render(image)
+        return image.constBits().tobytes()
+
+    def settle(widgets) -> None:
+        """Run any animation the pointer just started to its end.
+
+        A control that answers by animating has not answered yet on the
+        frame the event arrives, and a test that looks then would call it
+        silent.
+        """
+        QApplication.processEvents()
+        for widget in widgets:
+            for animation in widget.findChildren(QPropertyAnimation):
+                if animation.state() == QPropertyAnimation.Running:
+                    animation.setCurrentTime(animation.duration())
+        QApplication.processEvents()
+
+    def answers(widget) -> bool:
+        """Something visible changes when the pointer arrives.
+
+        Not necessarily on the widget itself: the navigation bar draws one
+        pane of glass that runs between its five destinations, so a
+        destination is answered by its parent rather than by its own pixels.
+        """
+        watched = [widget]
+        if widget.parentWidget() is not None:
+            watched.append(widget.parentWidget())
+        QApplication.sendEvent(widget, QEvent(QEvent.Leave))
+        settle(watched)
+        resting = [painted(w) for w in watched]
+        QApplication.sendEvent(widget, QEvent(QEvent.Enter))
+        settle(watched)
+        hovered = [painted(w) for w in watched]
+        QApplication.sendEvent(widget, QEvent(QEvent.Leave))
+        settle(watched)
+        return bool(resting[0]) and any(
+            before != after for before, after in zip(resting, hovered)
+        )
+
+    window.resize(1280, 860)
+    window.show()
+    silent: list[str] = []
+    checked = 0
+    try:
+        for screen in ("home", "upload", "realtime", "settings", "history"):
+            window.goto(screen)
+            QApplication.processEvents()
+            for widget in window.findChildren(QWidget):
+                if isinstance(widget, (QComboBox, QLineEdit)):
+                    # Drawn by Qt's style sheets rather than the shared
+                    # painter; theirs is checked as CSS in test_appearance.
+                    continue
+                if widget.testAttribute(Qt.WA_TransparentForMouseEvents):
+                    # A label inside a card inherits the card's hand cursor
+                    # and cannot receive the mouse; the card answers for it.
+                    continue
+                clickable = (
+                    isinstance(widget, QAbstractButton)
+                    or widget.cursor().shape() == Qt.PointingHandCursor
+                )
+                if not clickable or not widget.isVisible():
+                    continue
+                checked += 1
+                if not answers(widget):
+                    label = getattr(widget, "text", lambda: "")() or ""
+                    silent.append(f"{screen}: {type(widget).__name__} {label!r}")
+    finally:
+        window.hide()
+
+    assert checked > 30, (
+        f"only {checked} controls were reached; a sweep that finds nothing "
+        f"to look at passes for the wrong reason"
+    )
+    assert silent == [], silent
+
+
+# -- one capsule, travelling ---------------------------------------------
+
+def _nav(window):
+    from lt_ui.widgets import NavBar, NavItem
+
+    bar = window.findChild(NavBar)
+    return bar, {item.key: item for item in bar.findChildren(NavItem)}
+
+
+# -- no lit band along the top of anything -------------------------------
+
+def _top_rows(widget, count: int = 6):
+    """Mean lightness of each of the first rows of a widget's own pixels."""
+    from PySide6.QtGui import QColor, QImage
+
+    image = QImage(widget.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    widget.render(image)
+    rows = []
+    for y in range(count):
+        # The rounded corners are transparent, so only the middle is read.
+        sample = range(image.width() // 3, 2 * image.width() // 3)
+        rows.append(sum(QColor(image.pixelColor(x, y)).lightness()
+                        for x in sample) / len(list(sample)))
+    return rows
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_no_glass_surface_wears_a_lit_band_along_its_top(window, mode):
+    """Reported from use: the bright two-pixel edge along the top of the
+    navigation, the mode chips and the switch pill. It was the recipe's inset
+    highlight, drawn on every glass surface -- and absent from the picker and
+    the text field, which are styled by Qt rather than painted, which is why
+    those two looked right and everything else did not.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui.widgets import NavBar
+
+    window.store.settings.appearance = mode
+    window.apply_appearance()
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar = window.findChild(NavBar)
+        rows = _top_rows(bar)
+        # Row nought is the hairline edge, which runs all the way round the
+        # shape and is meant to be there. The band sat beneath it.
+        body = max(rows[3:])
+        assert rows[1] <= body + 4 and rows[2] <= body + 4, (
+            f"a band is lit beneath the top edge: {rows}"
+        )
+    finally:
+        window.hide()
+
+
+# -- the runner belongs to the pointer, the page to its word --------------
+
+def _nav(window):
+    from lt_ui.widgets import NavBar, NavItem
+
+    bar = window.findChild(NavBar)
+    return bar, {item.key: item for item in bar.findChildren(NavItem)}
+
+
+def _painted_alone(widget) -> bytes:
+    from PySide6.QtGui import QImage
+
+    image = QImage(widget.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    widget.render(image)
+    return image.constBits().tobytes()
+
+
+def _finish(animation):
+    from PySide6.QtCore import QPropertyAnimation
+
+    if animation.state() == QPropertyAnimation.Running:
+        animation.setCurrentTime(animation.duration())
+
+
+def test_nothing_runs_in_the_bar_until_the_pointer_is_in_it(window):
+    """Asked for: the open page says so through its own word, and the pane of
+    glass appears only under the pointer."""
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar, _items = _nav(window)
+        _finish(bar._fade)
+        assert bar.shown == 0.0
+    finally:
+        window.hide()
+
+
+def test_the_open_page_is_told_apart_by_its_word_alone(window):
+    """Which is what the runner is freed up to stop saying."""
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        _bar, items = _nav(window)
+        open_item, other = items["realtime"], items["history"]
+        assert open_item.isChecked() and not other.isChecked()
+        assert open_item.OPEN_WEIGHT > open_item.RESTING_WEIGHT
+        assert _painted_alone(open_item) != _painted_alone(other), (
+            "the two words are drawn identically"
+        )
+    finally:
+        window.hide()
+
+
+def test_the_runner_appears_where_the_pointer_is_and_then_travels(window):
+    from PySide6.QtCore import QEvent, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("realtime")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+        _finish(bar._fade)
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
+        assert bar.runner == QRectF(items["upload"].geometry()), (
+            "it slid in from somewhere instead of appearing under the pointer"
+        )
+        _finish(bar._fade)
+        assert bar.shown == 1.0
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Enter))
+        QApplication.processEvents()
+        assert bar._glide.endValue() == QRectF(items["settings"].geometry()), (
+            "it jumped between destinations instead of travelling"
+        )
+        _finish(bar._glide)
+        assert bar.runner == QRectF(items["settings"].geometry())
+        assert bar.shown == 1.0, "it should not blink on the way across"
+
+        QApplication.sendEvent(items["settings"], QEvent(QEvent.Leave))
+        QApplication.processEvents()
+        _finish(bar._fade)
+        assert bar.shown == 0.0, "it stayed behind after the pointer left"
+    finally:
+        window.hide()
+
+
+def test_leaving_one_destination_for_the_next_does_not_put_it_out(window):
+    """Qt can deliver the arrival before the departure. Taken literally that
+    fades the runner out just as it should be setting off."""
+    from PySide6.QtCore import QEvent, QRectF
+    from PySide6.QtWidgets import QApplication
+
+    window.resize(1280, 860)
+    window.show()
+    try:
+        window.goto("home")
+        QApplication.processEvents()
+        bar, items = _nav(window)
+
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["history"], QEvent(QEvent.Enter))
+        QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
+        QApplication.processEvents()
+        _finish(bar._glide)
+        _finish(bar._fade)
+        assert bar.shown == 1.0
+        assert bar.runner == QRectF(items["history"].geometry())
+    finally:
+        window.hide()
+
+
+# -- how much of the window there is ------------------------------------
+
+def test_the_window_itself_is_translucent(window):
+    """Everything the window draws goes through this, text included, so it is
+    the one appearance setting that can cost legibility rather than only
+    looks.
+
+    Not `setWindowOpacity`, which was the first attempt: it makes the whole
+    window a layered one blended against the literal desktop, so the frosted
+    sheet the compositor composes behind it is never seen. Measured at 0.5
+    with the backdrop asked for and granted -- a page of text behind the
+    window was readable through it, word for word.
+    """
+    from PySide6.QtCore import Qt
+
+    from lt_ui import theme
+
+    assert 0.0 < theme.WINDOW_OPACITY < 1.0
+    assert window.testAttribute(Qt.WA_TranslucentBackground), (
+        "the surface has to carry alpha for anything to come through it"
+    )
+
+
+def test_the_window_asks_for_the_desktop_behind_it_to_be_blurred(window):
+    """Without it the desktop shows through exactly as it is -- text, icons,
+    other windows -- competing with the interface over it."""
+    import inspect
+
+    from lt_ui import system_backdrop
+
+    assert hasattr(window, "blurred_behind")
+    source = inspect.getsource(system_backdrop.blur_behind)
+    assert "SetWindowCompositionAttribute" in source
+
+
+@pytest.mark.parametrize("mode, fill", [("dark", "TINT_DARK"), ("light", "TINT_LIGHT")])
+def test_the_styled_controls_keep_step_with_the_painted_ones(mode, fill):
+    """The picker and the text field are the only two surfaces drawn by Qt's
+    style sheets rather than by the shared recipe, and twice now they have
+    drifted from it in ways a user had to report: once carrying a hover rule
+    nothing else had, once missing the top band everything else wore. Their
+    fill is written as a number in CSS, so nothing but this keeps it in step.
+    """
+    import re
+
+    from lt_ui import glass, theme
+
+    wanted = getattr(theme, fill)
+    for widget in (glass.GlassSelect, glass.GlassInput):
+        sheet = getattr(widget, mode.upper())
+        found = re.search(r"background: rgba\(255,255,255,([\d.]+)\);", sheet)
+        assert found, widget.__name__
+        assert abs(float(found.group(1)) - wanted) <= 0.12, (
+            f"{widget.__name__} in {mode}: {found.group(1)} against {wanted}"
+        )
+
+
+# -- a switch that is on looks like a switch that is on ------------------
+
+def _switch_image(toggle):
+    from PySide6.QtGui import QImage
+
+    image = QImage(toggle.size(), QImage.Format_ARGB32)
+    image.fill(0)
+    toggle.render(image)
+    return image.constBits().tobytes()
+
+
+def test_a_switch_restored_from_settings_points_the_right_way(app):
+    """Reported from use: after a restart every switch that was on was lit in
+    the accent colour and had its knob over on the left, where off lives.
+
+    The knob moved on `toggled`, and everything that restores a saved setting
+    blocks that signal first -- otherwise setting the switch writes the
+    setting straight back. So the fill knew and the knob did not.
+    """
+    from lt_ui import glass
+
+    restored = glass.Toggle()
+    restored.blockSignals(True)
+    restored.setChecked(True)
+    restored.blockSignals(False)
+
+    born_on = glass.Toggle(on=True)
+    assert _switch_image(restored) == _switch_image(born_on), (
+        "a switch turned on quietly does not look like one that was born on"
+    )
+
+
+def test_a_switch_turned_off_quietly_points_the_other_way(app):
+    from lt_ui import glass
+
+    restored = glass.Toggle(on=True)
+    restored.blockSignals(True)
+    restored.setChecked(False)
+    restored.blockSignals(False)
+
+    assert _switch_image(restored) == _switch_image(glass.Toggle())
+
+
+def test_the_settings_screen_shows_every_saved_switch_the_right_way(window):
+    """The whole point of the above, on the screen it was reported on."""
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui import glass
+
+    window.store.settings.voiceover = True
+    window.store.settings.match_voices = True
+    window.store.settings.notify = True
+    window.goto("settings")
+    window._settings.refresh()
+    QApplication.processEvents()
+
+    wrong = [
+        toggle for toggle in window._settings.findChildren(glass.Toggle)
+        if toggle.isChecked() and toggle._position != glass.Toggle.ON
+    ]
+    assert wrong == [], f"{len(wrong)} switches are lit and pointing left"
+
+
+# -- the audio source is chosen where the live session is started -----------
+
+def test_the_live_screen_chooses_where_its_sound_comes_from(window):
+    from lt_ui.screens.settings import SettingsScreen
+
+    window.goto("realtime")
+    chips = window._realtime._capture
+    assert chips.value() == window.store.settings.capture_kind == "microphone"
+    chips.set_value("system")
+    chips.changed.emit("system")
+    assert window.store.settings.capture_kind == "system"
+    # Settings no longer carries a second copy of the same switch.
+    assert not hasattr(window.findChild(SettingsScreen), "_capture")
+
+
+def test_the_window_is_never_narrower_than_its_navigation(window):
+    """A window squeezed below its layout's minimum drew one nav word over
+    the next -- «Реальное время» ran into «Браузер» at the old 1020."""
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui.widgets import NavBar
+
+    window.resize(window.minimumWidth(), window.minimumHeight())
+    window.show()
+    try:
+        QApplication.processEvents()
+        bar = window.findChild(NavBar)
+        assert bar.width() >= bar.minimumSizeHint().width()
+    finally:
+        window.hide()
