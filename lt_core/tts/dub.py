@@ -74,6 +74,11 @@ CATCH_UP_AFTER = 1.0
 #: ... but no faster than this: about 12 %, against about 9 % normally and
 #: the 18 % that was heard as hurried.
 CATCH_UP_SCALE = 0.78
+#: Far behind, the old ceiling comes back until the dub has caught up. A fast
+#: interviewer outran the 12 % one: on six minutes of Karpathy the dub fell
+#: 19.8 s behind the picture. A hurried line is the lesser fault than a
+#: translation of what was said twenty seconds ago.
+FAR_BEHIND, FAR_BEHIND_SCALE = 3.0, 0.72
 
 
 @dataclass
@@ -180,8 +185,10 @@ def synthesise_track(
             begin = spoken_until + LINE_GAP
             late = begin - cue.start
             if late > CATCH_UP_AFTER:
-                hurried = voice.fit(text, begin, max(0.05, cue.start + slot - begin),
-                                    fastest=CATCH_UP_SCALE)
+                hurried = voice.fit(
+                    text, begin, max(0.05, cue.start + slot - begin),
+                    fastest=FAR_BEHIND_SCALE if late > FAR_BEHIND else CATCH_UP_SCALE,
+                )
                 if hurried.duration < utterance.duration:
                     utterance = hurried
             result.delayed += 1
