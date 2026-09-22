@@ -183,13 +183,21 @@ def fetch_url(
         "--output", str(destination / "%(title).120B.%(ext)s"),
         url,
     ]
+    import os
     import time
 
+    # yt-dlp prints the saved path in the console's code page unless told
+    # otherwise, and that is read back here as UTF-8. On a Russian Windows
+    # (cp1251) «für» came back «fr»: the file was on disk and was reported
+    # missing, so every title with an umlaut failed.
+    environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    started = time.time()
     for attempt in range(1 + REFUSAL_RETRIES):
         try:
             completed = subprocess.run(
                 command, capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=timeout, creationflags=_NO_WINDOW,
+                env=environment,
             )
         except subprocess.TimeoutExpired as exc:
             raise MediaError(f"Скачивание превысило {timeout / 60:.0f} мин.") from exc
@@ -210,7 +218,16 @@ def fetch_url(
         raise MediaError("yt-dlp не сообщил, куда сохранил файл.",
                          detail=completed.stdout[-500:])
 
-    info = probe(Path(downloaded[-1]))
+    saved = Path(downloaded[-1])
+    if not saved.exists():
+        # A name that still did not survive the round trip: the file this
+        # download just wrote is the newest one in its folder.
+        fresh = [item for item in destination.iterdir()
+                 if item.is_file() and item.stat().st_mtime >= started - 1
+                 and item.suffix.lower() not in {".part", ".ytdl", ".txt"}]
+        if fresh:
+            saved = max(fresh, key=lambda item: item.stat().st_mtime)
+    info = probe(saved)
     return MediaInfo(path=info.path, duration=info.duration, title=info.path.stem,
                      has_audio=info.has_audio, has_video=info.has_video,
                      source_url=url)
