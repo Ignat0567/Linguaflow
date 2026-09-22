@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from lt_core.subtitles.export import to_srt, write
 from lt_core.realtime.session import append_committed
@@ -107,10 +107,15 @@ class RealtimeScreen(QWidget):
         self._panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         self._panel.setMinimumHeight(200)
         self._panel.setMaximumWidth(760)
-        self._feed = QVBoxLayout(self._panel)
-        self._feed.setContentsMargins(32, 28, 32, 28)
-        self._feed.setSpacing(18)
-        self._feed.setAlignment(Qt.AlignCenter)
+        # The lines scroll inside the panel. They used to be laid straight
+        # into it, the last eight of them: on a meeting with long sentences
+        # eight lines were taller than the window, and the panel grew up
+        # over the controls and the record button.
+        self._scroll = _FeedScroll(self._panel)
+        panel_layout = QVBoxLayout(self._panel)
+        panel_layout.setContentsMargins(8, 12, 8, 12)
+        panel_layout.addWidget(self._scroll)
+        self._feed = self._scroll.feed
         self._placeholder = glass.label(
             _("Субтитры появятся здесь"), 13, 400, theme.MUTED
         )
@@ -288,11 +293,15 @@ class RealtimeScreen(QWidget):
                 _("Субтитры появятся здесь"), 13, 400, theme.MUTED
             )
             placeholder.setAlignment(Qt.AlignCenter)
+            self._feed.addStretch(1)
             self._feed.addWidget(placeholder)
+            self._feed.addStretch(1)
             return
         conversation = self.app.store.settings.realtime_mode == "conversation"
-        for line in visible[-8:]:
-            self._feed.addWidget(_Caption(line, conversation), 0, Qt.AlignCenter)
+        # Newest at the bottom, under a stretch, as a chat reads.
+        self._feed.addStretch(1)
+        for line in visible[-KEPT_ON_SCREEN:]:
+            self._feed.addWidget(_Caption(line, conversation))
 
     def _toggle_overlay(self) -> None:
         overlay = self.app.overlay
@@ -361,6 +370,59 @@ class RealtimeScreen(QWidget):
             _("Сохранено · {duration}", duration=format_clock(duration))
         )
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+#: Lines kept in the panel to scroll back through. Every update rebuilds
+#: them, so not the whole meeting: the transcript is saved in full anyway.
+KEPT_ON_SCREEN = 80
+
+
+class _FeedScroll(QScrollArea):
+    """The panel's lines, following the newest unless scrolled up.
+
+    Scrolled to the bottom, it stays there as lines arrive. Scrolled up to
+    read something again, it stays where it was put until taken back down.
+    """
+
+    #: How near the bottom still counts as "at the bottom", in pixels.
+    NEAR = 24
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        viewport = self.viewport()
+        viewport.setAutoFillBackground(False)
+        viewport.setAttribute(Qt.WA_TranslucentBackground, True)
+        body = QWidget()
+        clear_fill(body)
+        self.feed = QVBoxLayout(body)
+        self.feed.setContentsMargins(24, 16, 24, 16)
+        self.feed.setSpacing(18)
+        self.setWidget(body)
+        handle = (
+            "rgba(13,15,26,0.22)" if theme.is_light() else "rgba(255,255,255,0.22)"
+        )
+        self.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: transparent; width: 8px; margin: 4px; }"
+            f"QScrollBar::handle:vertical {{ background: {handle};"
+            " border-radius: 4px; min-height: 32px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        self.following = True
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(self._moved)
+        bar.rangeChanged.connect(self._grew)
+
+    def _moved(self, value: int) -> None:
+        bar = self.verticalScrollBar()
+        self.following = value >= bar.maximum() - self.NEAR
+
+    def _grew(self, _low: int, high: int) -> None:
+        if self.following:
+            self.verticalScrollBar().setValue(high)
 
 
 class _Caption(QWidget):

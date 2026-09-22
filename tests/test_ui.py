@@ -342,3 +342,65 @@ def test_overlay_uses_the_original_until_a_translation_arrives(qapp, tmp_path):
     assert "Waiting" in overlay._translated.text()
     assert overlay._original.isHidden()
     overlay.close()
+
+
+def test_a_long_translation_fits_the_subtitle_window(qapp, tmp_path):
+    """A long sentence at 28 px ran out of the bottom of the window."""
+    from lt_ui.overlay import OverlayWindow
+    from lt_ui.store import Store
+
+    overlay = OverlayWindow(Store(tmp_path))
+    overlay.reveal()
+    overlay.resize(765, 190)
+    long_text = " ".join(["очень длинное предложение перевода"] * 12) + " конец"
+    overlay.set_caption(original="kurz", translated=long_text, listening=True)
+    qapp.processEvents()
+    label = overlay._translated
+    try:
+        assert label.full_text() == long_text
+        shown = label.text()
+        # What is shown fits, and it is the end of what was said.
+        assert shown.startswith("…") and shown.endswith("конец")
+        assert label.font().pixelSize() == label.smallest
+        overlay.resize(1400, 700)
+        qapp.processEvents()
+        assert label.text() == long_text
+    finally:
+        overlay.hide()
+
+
+def test_the_live_feed_follows_new_lines_unless_scrolled_up(qapp, tmp_path):
+    from PySide6.QtTest import QTest
+
+    from lt_ui.screens.realtime import Line
+    from lt_ui.store import Store
+    from lt_ui.window import Window
+
+    window = Window(Store(tmp_path))
+    window.resize(1280, 800)
+    window.show()
+    window.goto("realtime")
+    screen = window._realtime
+    bar = screen._scroll.verticalScrollBar()
+
+    def add(count):
+        for _ in range(count):
+            screen._lines.append(Line(original="Ein langer Satz, " * 8, translated="Длинная фраза. " * 6))
+        screen._render()
+        QTest.qWait(250)   # the old lines go by deleteLater, the layout settles after
+
+    try:
+        add(15)
+        assert bar.maximum() > 0 and bar.value() == bar.maximum()
+        # The record button is not covered by the panel any more.
+        assert screen._record.geometry().bottom() < screen._panel.geometry().top()
+        bar.setValue(0)
+        QTest.qWait(50)
+        add(2)
+        assert bar.value() == 0          # left where the reader put it
+        bar.setValue(bar.maximum())
+        QTest.qWait(50)
+        add(1)
+        assert bar.value() == bar.maximum()
+    finally:
+        window.hide()
