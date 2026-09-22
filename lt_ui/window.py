@@ -85,7 +85,7 @@ class Window(QWidget):
         # behind the window was readable through it, word for word.
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.blurred_behind = system_backdrop.blur_behind(self)
-        self.setMinimumSize(1020, 700)
+        self.setMinimumSize(1200, 700)
         self.resize(1280, 800)
         self.store = store or Store()
         theme.set_accent(self.store.settings.accent)

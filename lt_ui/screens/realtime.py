@@ -60,6 +60,21 @@ class RealtimeScreen(QWidget):
         mode_row.setSpacing(0)
         mode_row.addWidget(self._modes)
 
+        # Where the sound comes from sits beside what is done with it: a
+        # talk in the room and a call on the speakers are the same session
+        # with a different ear, and it was two screens away in Settings.
+        self._capture = ChipGroup((
+            ("microphone", _("Микрофон")),
+            ("system", _("Звук системы")),
+        ), self, stretch=False)
+        self._capture.changed.connect(self._sync_capture)
+        capture_pill = glass.GlassPanel(self, radius=theme.RADIUS_PILL)
+        capture_pill.setFixedHeight(42)
+        capture_row = QHBoxLayout(capture_pill)
+        capture_row.setContentsMargins(8, 4, 8, 4)
+        capture_row.setSpacing(0)
+        capture_row.addWidget(self._capture)
+
         # Reading the translation out loud is an option, not a third kind of
         # session. It used to be one, which meant a conversation -- where
         # hearing it matters most -- was the one place it could not be had.
@@ -78,6 +93,7 @@ class RealtimeScreen(QWidget):
         controls.addStretch()
         controls.addWidget(self._pair)
         controls.addWidget(mode_pill)
+        controls.addWidget(capture_pill)
         controls.addWidget(speak_pill)
         controls.addStretch()
 
@@ -143,6 +159,7 @@ class RealtimeScreen(QWidget):
         settings = self.app.store.settings
         self._pair.set_pair(settings.from_lang, settings.to_lang)
         self._modes.set_value(settings.realtime_mode)
+        self._capture.set_value(settings.capture_kind)
         self._speak.blockSignals(True)
         self._speak.setChecked(settings.realtime_voice)
         self._speak.blockSignals(False)
@@ -162,6 +179,10 @@ class RealtimeScreen(QWidget):
         self.app.store.settings.realtime_mode = mode
         self.app.store.save_settings()
         self._render()
+
+    def _sync_capture(self, kind: str) -> None:
+        self.app.store.settings.capture_kind = kind
+        self.app.store.save_settings()
 
     def _sync_voice(self, on: bool) -> None:
         self.app.store.settings.realtime_voice = on

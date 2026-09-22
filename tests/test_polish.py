@@ -919,3 +919,35 @@ def test_the_settings_screen_shows_every_saved_switch_the_right_way(window):
         if toggle.isChecked() and toggle._position != glass.Toggle.ON
     ]
     assert wrong == [], f"{len(wrong)} switches are lit and pointing left"
+
+
+# -- the audio source is chosen where the live session is started -----------
+
+def test_the_live_screen_chooses_where_its_sound_comes_from(window):
+    from lt_ui.screens.settings import SettingsScreen
+
+    window.goto("realtime")
+    chips = window._realtime._capture
+    assert chips.value() == window.store.settings.capture_kind == "microphone"
+    chips.set_value("system")
+    chips.changed.emit("system")
+    assert window.store.settings.capture_kind == "system"
+    # Settings no longer carries a second copy of the same switch.
+    assert not hasattr(window.findChild(SettingsScreen), "_capture")
+
+
+def test_the_window_is_never_narrower_than_its_navigation(window):
+    """A window squeezed below its layout's minimum drew one nav word over
+    the next -- «Реальное время» ran into «Браузер» at the old 1020."""
+    from PySide6.QtWidgets import QApplication
+
+    from lt_ui.widgets import NavBar
+
+    window.resize(window.minimumWidth(), window.minimumHeight())
+    window.show()
+    try:
+        QApplication.processEvents()
+        bar = window.findChild(NavBar)
+        assert bar.width() >= bar.minimumSizeHint().width()
+    finally:
+        window.hide()
