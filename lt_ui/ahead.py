@@ -21,7 +21,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -33,6 +33,8 @@ class Line:
     end: float
     original: str
     translated: str
+    #: "male" / "female" when the original was measured, "" when not.
+    voice: str = ""
 
 
 class Track:
@@ -89,6 +91,7 @@ def speech_lines(track: Track) -> list[Line]:
                 group[0].start, group[-1].end,
                 " ".join(line.original for line in group if line.original),
                 " ".join(line.translated for line in group if line.translated),
+                group[0].voice,
             ))
             group.clear()
 
@@ -96,6 +99,9 @@ def speech_lines(track: Track) -> list[Line]:
         if group and (
             line.start - group[-1].end > SENTENCE_PAUSE
             or line.end - group[0].start > SENTENCE_SPAN
+            # Another person answering is another sentence, whatever the
+            # punctuation says.
+            or line.voice != group[-1].voice
         ):
             close()
         group.append(line)
@@ -120,6 +126,21 @@ def track_from_result(result) -> Track:
     return Track(lines, language=result.transcript.language)
 
 
+def cast_track(track: Track, audio, rate: int) -> tuple[Track, object]:
+    """Each line marked male or female by the pitch of the original under it.
+
+    The file dub's own casting (`lt_core.tts.casting`): one voice for the
+    whole video unless the recording shows two registers with an empty band
+    between them, so one animated speaker is not read by two voices.
+    """
+    from lt_core.tts import casting
+
+    cast = casting.analyse(tuple(track.lines), audio, rate)
+    lines = [replace(line, voice=gender)
+             for line, gender in zip(track.lines, cast.genders)]
+    return Track(lines, language=track.language), cast
+
+
 class AheadWorker(QThread):
     """Fetch a video's sound and run it through the file pipeline."""
 
@@ -129,7 +150,7 @@ class AheadWorker(QThread):
 
     def __init__(self, url: str, folder: Path, transcriber, translator,
                  source_language: str | None, target_language: str,
-                 parent: QObject | None = None) -> None:
+                 parent: QObject | None = None, match_voices: bool = False) -> None:
         super().__init__(parent)
         self.url = url
         self.folder = folder
@@ -137,6 +158,10 @@ class AheadWorker(QThread):
         self.translator = translator
         self.source_language = source_language
         self.target_language = target_language
+        #: Measure who speaks each line, so a woman is read by a woman.
+        self.match_voices = match_voices
+        #: The casting, once made (`casting.Cast`), for the status line.
+        self.cast = None
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -165,8 +190,17 @@ class AheadWorker(QThread):
             if not self._cancelled:
                 self.failed.emit(str(error))
             return
+        track = track_from_result(result)
+        if self.match_voices and len(track) and not self._cancelled:
+            try:
+                from lt_core.tts.dub import _load
+
+                rate = 16_000
+                track, self.cast = cast_track(track, _load(result.media.path, rate), rate)
+            except Exception:  # noqa: BLE001 -- one voice is still a translation
+                self.cast = None
         if not self._cancelled:
-            self.done.emit(track_from_result(result))
+            self.done.emit(track)
 
 
 class CueVoice:

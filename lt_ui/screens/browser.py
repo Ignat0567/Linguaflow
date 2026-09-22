@@ -365,6 +365,7 @@ class BrowserScreen(QWidget):
             None if chosen in ("", "auto") else chosen,
             self.app.store.settings.browser_to_lang,
             self,
+            match_voices=self.app.store.settings.match_voices,
         )
         worker.stage.connect(
             lambda stage: self._status.setText(_("Готовлю перевод: {stage}", stage=stage))
@@ -386,10 +387,12 @@ class BrowserScreen(QWidget):
             self._cue_voice.start()
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
-        self._status.setText(_(
-            "Перевод готов · {language} · {count} фраз",
-            language=language_name(track.language), count=len(track),
-        ))
+        if {line.voice for line in track.lines} >= {"male", "female"}:
+            ready = _("Перевод готов · {language} · {count} фраз · мужской и женский голос")
+        else:
+            ready = _("Перевод готов · {language} · {count} фраз")
+        self._status.setText(ready.format(
+            language=language_name(track.language), count=len(track)))
         self._clock.hold(False)
 
     def _make_voice(self, track):
@@ -400,12 +403,21 @@ class BrowserScreen(QWidget):
         from ..ahead import CueVoice, Track, speech_lines
         from ..store import MODEL_ROOT
 
-        speaker = Speaker(self.app.store.settings.browser_to_lang, voices_dir=MODEL_ROOT / "piper")
+        language = self.app.store.settings.browser_to_lang
+        names = voice_names(language)
+        speakers: dict[str, Speaker] = {}
+
+        def speaker_for(gender: str) -> Speaker:
+            name = names.get(gender) or names[""]
+            if name not in speakers:
+                speakers[name] = Speaker(language, voice=name, voices_dir=MODEL_ROOT / "piper")
+            return speakers[name]
 
         def synth(line):
             # Fitted to its own slot, as the file dub does: up to what still
             # sounds like a person, never stretched.
-            made = speaker.fit(line.translated, line.start, max(0.5, line.end - line.start))
+            made = speaker_for(line.voice).fit(
+                line.translated, line.start, max(0.5, line.end - line.start))
             return made.samples, made.rate
 
         # The screen shows lines; the voice reads the sentences they make.
@@ -636,6 +648,23 @@ class BrowserScreen(QWidget):
             self._render()
         else:
             overlay.hide()
+
+
+def voice_names(language: str) -> dict[str, str]:
+    """The Piper voice for "" (unmeasured), "male" and "female" lines.
+
+    The man is the language's own voice where that is a man's -- for Russian
+    dmitri, the one listened to and kept over ruslan and denis -- and its
+    male voice otherwise (English's own voice is a woman's).
+    """
+    from lt_core import languages
+
+    single = languages.voice_for(language)
+    if not languages.has_voice_pair(language):
+        return {"": single}
+    female = languages.voice_for(language, "female")
+    male = single if single != female else languages.voice_for(language, "male")
+    return {"": single, "male": male, "female": female}
 
 
 def _pill(caption: str, toggle, parent: QWidget) -> QWidget:

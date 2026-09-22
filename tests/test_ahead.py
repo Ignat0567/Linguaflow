@@ -272,3 +272,35 @@ def test_a_late_sentence_is_still_read_while_its_moment_lasts():
     voice.stop()
     voice.join()
     assert [text for text, _ in said] == ["длинное предложение."]
+
+
+# -- a woman in the video is read by a woman ---------------------------------
+
+def test_a_sentence_is_not_carried_across_to_the_other_speaker():
+    from lt_ui.ahead import Line, Track, speech_lines
+
+    track = Track([
+        Line(0.0, 2.0, "So what do you", "Так что вы", "female"),
+        Line(2.1, 4.0, "think about it", "об этом думаете", "female"),
+        Line(4.2, 6.0, "I think that", "Я думаю, что", "male"),
+    ])
+    joined = speech_lines(track)
+    assert [(line.voice, line.translated) for line in joined] == [
+        ("female", "Так что вы об этом думаете"),
+        ("male", "Я думаю, что"),
+    ]
+
+
+def test_the_male_voice_is_the_one_kept_for_russian():
+    from lt_ui.screens.browser import voice_names
+
+    russian = voice_names("ru")
+    # dmitri was listened to and kept over ruslan and denis.
+    assert russian["male"] == russian[""] == "ru_RU-dmitri-medium"
+    assert russian["female"] == "ru_RU-irina-medium"
+    # English's own voice is a woman's: the man is its male voice.
+    english = voice_names("en")
+    assert english["male"] == "en_US-hfc_male-medium"
+    assert english["female"] == "en_US-lessac-medium"
+    # A language with one voice reads everyone with it.
+    assert set(voice_names("fr")) == {""}

@@ -149,6 +149,10 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Translation ready · {language} · {count} lines",
         "Übersetzung fertig · {language} · {count} Zeilen",
     ),
+    "Перевод готов · {language} · {count} фраз · мужской и женский голос": (
+        "Translation ready · {language} · {count} lines · a male and a female voice",
+        "Übersetzung fertig · {language} · {count} Zeilen · männliche und weibliche Stimme",
+    ),
     "Видео сменилось — включите перевод снова": (
         "The video changed — turn translation on again",
         "Das Video hat gewechselt — Übersetzung erneut einschalten",
