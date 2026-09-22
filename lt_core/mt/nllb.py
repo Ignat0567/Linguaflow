@@ -26,6 +26,7 @@ from pathlib import Path
 
 from .. import languages
 from ..runtime import bootstrap
+from .loanwords import germanise
 from .types import NLLB_CODES, TranslationError
 
 #: The larger distilled model, int8. Measured on German meeting speech
@@ -231,6 +232,7 @@ class NllbTranslator:
         ownership: list[int] = []
         for position, text in enumerate(texts):
             for sentence in split_sentences(text):
+                sentence = germanise(sentence, source)
                 batch.append(tokenizer.convert_ids_to_tokens(tokenizer.encode(sentence)))
                 ownership.append(position)
 
