@@ -259,3 +259,71 @@ def test_track_language_uses_the_code_a_container_understands():
     assert languages.track_language("ru") == "rus"
     assert languages.track_language("de") == "deu"
     assert languages.track_language("qq") == "und"
+
+
+# -- people told apart by voice, then cast per person ------------------------
+
+def test_a_low_voiced_woman_beside_a_man_is_read_by_the_female_voice():
+    """The interview that pitch alone could not split: she sat at 159 Hz,
+    he at 109, and his animated lines reached hers."""
+    from lt_core.tts.casting import cast_people
+
+    heights = [109, 112, 160, 106, 158, 150, 110, 162]   # his 150 is animated
+    people = [0, 0, 1, 0, 1, 0, 0, 1]
+    audio = np.concatenate([tone(h, 1.0) for h in heights])
+    cast = cast_people(cues_of(len(heights)), audio, 16_000, people)
+    assert cast.genders == [MALE, MALE, FEMALE, MALE, FEMALE, MALE, MALE, FEMALE]
+    assert cast.from_recording
+
+
+def test_two_men_of_different_registers_stay_men():
+    from lt_core.tts.casting import cast_people
+
+    heights = [100, 104, 140, 138, 102, 142]
+    people = [0, 0, 1, 1, 0, 1]
+    audio = np.concatenate([tone(h, 1.0) for h in heights])
+    cast = cast_people(cues_of(len(heights)), audio, 16_000, people)
+    assert set(cast.genders) == {MALE}
+    assert not cast.from_recording
+
+
+def test_two_women_stay_women():
+    from lt_core.tts.casting import cast_people
+
+    heights = [185, 190, 225, 230]
+    people = [0, 0, 1, 1]
+    audio = np.concatenate([tone(h, 1.0) for h in heights])
+    cast = cast_people(cues_of(len(heights)), audio, 16_000, people)
+    assert set(cast.genders) == {FEMALE}
+
+
+def test_a_line_too_short_to_recognise_belongs_to_its_neighbours_speaker():
+    from lt_core.tts.speakers import speaker_of
+
+    assert speaker_of([0, None, 0, 1, None, None, 1]) == [0, 0, 0, 1, 1, 1, 1]
+    # Equally near both: the turn it follows.
+    assert speaker_of([0, None, 1]) == [0, 0, 1]
+    assert speaker_of([None, None]) == [0, 0]
+
+
+def test_a_scrap_of_a_group_goes_to_the_nearest_real_person():
+    from lt_core.tts.speakers import _absorb_scraps
+
+    a, b = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+    near_b = np.array([0.1, 0.99, 0.1]) / np.linalg.norm([0.1, 0.99, 0.1])
+    prints = np.stack([a] * 30 + [b] * 10 + [near_b])
+    labels = np.array([5] * 30 + [7] * 10 + [9])
+    result = _absorb_scraps(labels, prints)
+    # Numbered by how much each person talks; the scrap joined b.
+    assert result.tolist() == [0] * 30 + [1] * 11
+
+
+
+def test_a_short_line_joins_the_neighbour_nearer_in_time():
+    """«Hi,» | «listeners» -- the greeting goes with what follows it at
+    once, not with the guest who stopped talking seconds before."""
+    from lt_core.tts.speakers import speaker_of
+
+    spans = [Cue(1, 20.0, 26.0, ("a",)), Cue(2, 28.1, 28.6, ("Hi,",)),
+             Cue(3, 28.7, 33.0, ("listeners",))]
+    assert speaker_of([0, None, 1], spans) == [0, 1, 1]

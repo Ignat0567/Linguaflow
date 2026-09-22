@@ -26,6 +26,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from lt_core.messages import say
+
 
 @dataclass(frozen=True)
 class Line:
@@ -126,16 +128,24 @@ def track_from_result(result) -> Track:
     return Track(lines, language=result.transcript.language)
 
 
-def cast_track(track: Track, audio, rate: int) -> tuple[Track, object]:
-    """Each line marked male or female by the pitch of the original under it.
+def cast_track(track: Track, audio, rate: int, model=None) -> tuple[Track, object]:
+    """Each line marked male or female, for a voice of the same register.
 
-    The file dub's own casting (`lt_core.tts.casting`): one voice for the
-    whole video unless the recording shows two registers with an empty band
-    between them, so one animated speaker is not read by two voices.
+    With a speaker model the people are told apart by their voices first
+    and each person gets one register (`lt_core.tts.speakers`); without one,
+    the file dub's per-line pitch casting, which keeps one voice for the
+    video unless the registers are clearly apart.
     """
     from lt_core.tts import casting
 
-    cast = casting.analyse(tuple(track.lines), audio, rate)
+    cues = tuple(track.lines)
+    if model is not None:
+        from lt_core.tts import speakers
+
+        people = speakers.speaker_of(speakers.identify(cues, audio, rate, model), cues)
+        cast = casting.cast_people(cues, audio, rate, people)
+    else:
+        cast = casting.analyse(cues, audio, rate)
     lines = [replace(line, voice=gender)
              for line, gender in zip(track.lines, cast.genders)]
     return Track(lines, language=track.language), cast
@@ -150,7 +160,8 @@ class AheadWorker(QThread):
 
     def __init__(self, url: str, folder: Path, transcriber, translator,
                  source_language: str | None, target_language: str,
-                 parent: QObject | None = None, match_voices: bool = False) -> None:
+                 parent: QObject | None = None, match_voices: bool = False,
+                 speaker_dir: Path | None = None) -> None:
         super().__init__(parent)
         self.url = url
         self.folder = folder
@@ -160,6 +171,8 @@ class AheadWorker(QThread):
         self.target_language = target_language
         #: Measure who speaks each line, so a woman is read by a woman.
         self.match_voices = match_voices
+        #: Where the speaker model is kept (fetched there on first use).
+        self.speaker_dir = speaker_dir
         #: The casting, once made (`casting.Cast`), for the status line.
         self.cast = None
         self._cancelled = False
@@ -192,13 +205,26 @@ class AheadWorker(QThread):
             return
         track = track_from_result(result)
         if self.match_voices and len(track) and not self._cancelled:
-            try:
-                from lt_core.tts.dub import _load
+            from lt_core.tts.dub import _load
 
-                rate = 16_000
-                track, self.cast = cast_track(track, _load(result.media.path, rate), rate)
-            except Exception:  # noqa: BLE001 -- one voice is still a translation
-                self.cast = None
+            rate = 16_000
+            audio = _load(result.media.path, rate)
+            model = None
+            if self.speaker_dir is not None:
+                from lt_core.tts import speakers
+
+                try:
+                    model = speakers.ensure_model(self.speaker_dir)
+                except Exception:  # noqa: BLE001 -- offline: pitch alone will do
+                    model = None
+            self.stage.emit(say("Различаю голоса"))
+            try:
+                track, self.cast = cast_track(track, audio, rate, model)
+            except Exception:  # noqa: BLE001 -- the speaker model failed: pitch alone
+                try:
+                    track, self.cast = cast_track(track, audio, rate)
+                except Exception:  # noqa: BLE001 -- one voice is still a translation
+                    self.cast = None
         if not self._cancelled:
             self.done.emit(track)
 

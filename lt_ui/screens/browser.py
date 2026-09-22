@@ -355,6 +355,7 @@ class BrowserScreen(QWidget):
 
     def _run_ahead(self) -> None:
         from ..ahead import AheadWorker
+        from ..store import MODEL_ROOT
 
         chosen = self.app.store.settings.browser_from_lang
         worker = AheadWorker(
@@ -366,6 +367,7 @@ class BrowserScreen(QWidget):
             self.app.store.settings.browser_to_lang,
             self,
             match_voices=self.app.store.settings.match_voices,
+            speaker_dir=MODEL_ROOT / "speaker",
         )
         worker.stage.connect(
             lambda stage: self._status.setText(_("Готовлю перевод: {stage}", stage=stage))

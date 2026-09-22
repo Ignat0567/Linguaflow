@@ -411,6 +411,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Recognising ({minutes} min)", "Erkennung läuft ({minutes} Min.)",
     ),
     "Собираю субтитры": ("Building subtitles", "Untertitel werden gebaut"),
+    "Различаю голоса": ("Telling the voices apart", "Stimmen werden unterschieden"),
     "Язык оригинала совпал с языком перевода": (
         "The source language is the target language",
         "Ausgangs- und Zielsprache sind gleich",
