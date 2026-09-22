@@ -171,6 +171,11 @@ def fetch_url(
     command = [
         str(Path(_python_exe())), "-m", "yt_dlp",
         "--no-playlist", "--no-warnings", "--quiet",
+        # yt-dlp extracts the audio and merges the video with ffmpeg, and
+        # looks for it on PATH. The ffmpeg this program uses is the one
+        # imageio-ffmpeg ships, which is on no PATH: without this every link
+        # failed with «ffprobe and ffmpeg not found» after downloading.
+        "--ffmpeg-location", _ffmpeg_exe(),
         *signed_in,
         *wanted,
         "--print", "after_move:filepath",
@@ -201,6 +206,13 @@ def fetch_url(
     return MediaInfo(path=info.path, duration=info.duration, title=info.path.stem,
                      has_audio=info.has_audio, has_video=info.has_video,
                      source_url=url)
+
+
+def _ffmpeg_exe() -> str:
+    import imageio_ffmpeg
+
+    # Store-Python virtualises paths given to subprocesses; resolve first.
+    return str(Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve())
 
 
 def _python_exe() -> str:

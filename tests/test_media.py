@@ -112,3 +112,23 @@ def test_unsupported_language_is_rejected_by_name():
     transcriber = Transcriber.__new__(Transcriber)
     with pytest.raises(UnsupportedLanguage, match="pl"):
         Transcriber.transcribe(transcriber, "x.wav", options_cls(language="pl"))
+
+
+def test_yt_dlp_is_told_where_ffmpeg_is(tmp_path, monkeypatch):
+    """The ffmpeg in use is imageio-ffmpeg's, on no PATH. Without being told,
+    yt-dlp downloaded and then failed: «ffprobe and ffmpeg not found»."""
+    import subprocess
+    from pathlib import Path
+
+    from lt_core import media
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        media.subprocess, "run",
+        lambda command, **kw: seen.append(command) or subprocess.CompletedProcess(command, 1, "", ""),
+    )
+    with pytest.raises(media.MediaError):
+        media.fetch_url("https://www.youtube.com/watch?v=zzOlFH0iD0k", tmp_path)
+    command = seen[0]
+    location = command[command.index("--ffmpeg-location") + 1]
+    assert Path(location).is_file()
