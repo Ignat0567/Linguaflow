@@ -8,6 +8,7 @@ through Qt signals -- which are thread-safe, unlike touching a widget.
 
 from __future__ import annotations
 
+import queue
 import threading
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from lt_core.pipeline.batch import BatchResult, transcribe_file
 from lt_core.realtime.conversation import ConversationSession, Side
 from lt_core.realtime.session import BALANCED, LiveSession, LiveUpdate
 from lt_core.runtime import bootstrap
-from lt_core.tts.speaker import Playback, Speaker, VoiceError
+from lt_core.tts.speaker import Speaker, VoiceError
 from lt_core.video.mux import MuxError
 
 from .store import MODEL_ROOT, ROOT, Settings, display_name, split_terms
@@ -186,6 +187,11 @@ class LiveWorker(QThread):
         self._source = None
         self.captions: list[LiveUpdate] = []
         self.audio_seconds = 0.0
+        #: Session seconds of audio taken in so far. The reader's clock.
+        self.heard = 0.0
+        #: Lines read aloud, and lines skipped to catch up, this session.
+        self.read_lines = 0
+        self.skipped_lines = 0
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -211,7 +217,6 @@ class LiveWorker(QThread):
         # round, so a single voice would read half the session in the wrong
         # one.
         voices: dict[str, Speaker] = {}
-        playback = Playback()
         if speak:
             wanted = [settings.to_lang]
             if settings.realtime_mode == "conversation":
@@ -253,6 +258,7 @@ class LiveWorker(QThread):
             self.failed.emit(str(error))
             return
         self._source = source
+        reader = _Reader(voices, gate, session, clock=lambda: self.heard) if speak else None
 
         try:
             for chunk in source.stream():
@@ -260,6 +266,7 @@ class LiveWorker(QThread):
                     break
                 if gate is not None:
                     chunk = gate.filter(chunk)
+                self.heard = chunk.end_time
                 produced = session.feed(chunk)
                 updates = produced if isinstance(produced, list) else [produced]
                 for item in updates:
@@ -269,10 +276,12 @@ class LiveWorker(QThread):
                     if item.has_content:
                         self.captions.append(item)
                         self.update.emit(item)
-                        if speak:
-                            _read_out(item, voices, gate, session, playback)
+                        if reader is not None:
+                            reader.put(item)
         except CaptureError as error:
             self.failed.emit(str(error))
+            if reader is not None:
+                reader.close(drain=False)
             return
         finally:
             source.stop()
@@ -288,9 +297,80 @@ class LiveWorker(QThread):
                 continue
             self.captions.append(final)
             self.update.emit(final)
-            if speak:
-                _read_out(final, voices, gate, session, playback)
+            if reader is not None:
+                reader.put(final)
+        if reader is not None:
+            reader.close(drain=True)
+            self.read_lines, self.skipped_lines = reader.read, reader.skipped
         self.stopped.emit()
+
+
+class _Reader:
+    """Reads settled lines aloud on its own thread.
+
+    The live worker used to read each line itself, and while it read it
+    heard nothing. The capture queue holds eight seconds; a fast speaker and
+    a translation longer than its original fill that, and the oldest audio
+    is dropped -- speech never recognised, with nothing on screen to say so.
+    Measured on a fast speaker, 60 s with the voice on: 13.8 s lost.
+
+    Here hearing never waits for speaking. What can still fall behind is the
+    voice itself, and it is not allowed to fall behind for ever: a line older
+    than SKIP_AFTER is not read if a newer one is already waiting. Its text
+    stays on screen; only its reading is skipped, so the voice speaks about
+    what is being said now rather than about a minute ago.
+    """
+
+    #: Seconds a line may have waited before the voice skips it for a newer.
+    SKIP_AFTER = 8.0
+
+    def __init__(self, voices: dict[str, Speaker], gate: EchoGate | None,
+                 session, clock) -> None:
+        self.voices = voices
+        self.gate = gate
+        self.session = session
+        self.clock = clock
+        self.read = 0
+        self.skipped = 0
+        self._queue: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, name="Reader", daemon=True)
+        self._thread.start()
+
+    def put(self, update) -> None:
+        if update.translation:
+            self._queue.put(update)
+
+    def close(self, drain: bool = True, timeout: float = 60.0) -> None:
+        """Stop after the lines already queued (drain) or at once."""
+        if not drain:
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+        self._queue.put(None)
+        self._thread.join(timeout=timeout)
+
+    def _newer_waiting(self) -> bool:
+        """A line queued behind this one -- not the stop marker, which is
+        not a line and must not cost the last thing said its reading."""
+        with self._queue.mutex:
+            return any(item is not None for item in self._queue.queue)
+
+    def _run(self) -> None:
+        while True:
+            update = self._queue.get()
+            if update is None:
+                return
+            behind = max(0.0, self.clock() - (update.audio_time or 0.0))
+            if behind > self.SKIP_AFTER and self._newer_waiting():
+                self.skipped += 1
+                continue
+            try:
+                _read_out(update, self.voices, self.gate, self.session, behind)
+                self.read += 1
+            except Exception:  # noqa: BLE001 -- a line that fails is a line unheard
+                continue
 
 
 #: How far the reading may fall behind before it is read faster.
@@ -308,7 +388,7 @@ CATCH_UP_AFTER = 1.0
 
 
 def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
-              session, playback: Playback) -> None:
+              session, behind: float = 0.0) -> float:
     """Read a settled line out in the language it was translated into.
 
     Only settled lines: a provisional translation is replaced on the next tick,
@@ -318,13 +398,17 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
     listener can hear which of them is talking. Two voices a few Hz apart are
     one voice -- measured on a real dialogue, the two languages' default voices
     came out at 179 and 182 Hz.
+
+    `behind` is how long the line has waited for the voice; past
+    CATCH_UP_AFTER it is read as fast as a voice still sounds human.
+    Returns the seconds it took.
     """
     if not update.translation:
-        return
+        return 0.0
     language = update.translation_language
     voice = voices.get(language) or next(iter(voices.values()), None)
     if voice is None:
-        return
+        return 0.0
 
     register = ""
     if hasattr(session, "register_of") and update.speaker_language:
@@ -343,16 +427,14 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
             voices[wanted] = chosen
         voice = chosen
 
-    behind = playback.behind(update.audio_time)
-    spoken = _speak(voice, update.translation, gate, hurry=behind > CATCH_UP_AFTER)
-    playback.done(update.audio_time, spoken)
+    return _speak(voice, update.translation, gate, hurry=behind > CATCH_UP_AFTER)
 
 
 def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
            hurry: bool = False) -> float:
-    """Play a line; return how long it took. Blocks this worker, which is the
-    point: capture continues on its own thread, and the echo gate keeps our
-    voice out of the transcript.
+    """Play a line; return how long it took. Blocks the reader thread; the
+    live worker goes on hearing meanwhile, and the echo gate -- judging by
+    when audio was captured -- keeps our voice out of the transcript.
 
     `hurry` asks for the line as fast as it can still be said, which is how a
     backlog is worked off. `fit` clamps that at the point where the voice stops
