@@ -104,6 +104,22 @@ def test_an_overrun_is_reported_not_hidden():
 
 # -- track assembly ------------------------------------------------------
 
+def test_each_spoken_line_is_reported_once_in_order():
+    """The ring follows the lines. An empty one is still a step: the walk
+    counted it, and a missing step would leave the ring short of the stage."""
+    cues = (
+        cue(1, 0.0, 1.0, "first"),
+        cue(2, 2.0, 2.4, "   "),
+        cue(3, 3.0, 4.0, "second"),
+    )
+    seen: list[tuple[int, int]] = []
+    dubbing.synthesise_track(
+        cues, FakeSpeaker(), 8.0, rate=16_000,
+        on_line=lambda done, total: seen.append((done, total)),
+    )
+    assert seen == [(1, 2), (2, 2)]
+
+
 def test_each_line_lands_at_its_own_timestamp():
     """Within EARLY_START of it, and never after it.
 

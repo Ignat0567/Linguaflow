@@ -7,7 +7,6 @@ actually place: a language pair, a chip group, a clickable card, the nav.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from pathlib import Path
 
 from PySide6.QtCore import (
     Property,
@@ -39,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from lt_core import languages
+from lt_core.install import install_root
 
 from . import glass, theme
 from .i18n import _
@@ -339,7 +339,7 @@ class Wordmark(QWidget):
     DEPTH = 3
     SHADOW_STEPS = 5
 
-    SOURCE = Path(__file__).resolve().parent.parent / "assets" / "wordmark.png"
+    SOURCE = install_root() / "assets" / "wordmark.png"
 
     def __init__(self, parent: QWidget | None = None, size: int = SIZE) -> None:
         super().__init__(parent)

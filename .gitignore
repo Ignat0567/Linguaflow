@@ -9,6 +9,9 @@ downloads/
 models/
 spike/audio/
 data/
+build/
+dist/
+packaging/output/
 
 # embedded-browser probes: downloaded uBOL/filter lists, throwaway profiles, outputs
 spike/_vendor/

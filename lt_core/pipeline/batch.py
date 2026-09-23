@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import languages
+from ..install import model_root
 from ..messages import say as tell
 from ..asr.transcriber import Transcriber, TranscribeOptions
 from ..asr.types import Transcript
@@ -34,6 +35,174 @@ DEFAULT_FORMATS = ("srt", "txt")
 #: ones that sounded wrong. The voice now goes no faster than about 9 %
 #: (MIN_LENGTH_SCALE), so the text is shortened to fit that.
 SPEED_HEADROOM = 1.10
+
+#: The ring stops here until the caller has the result in hand. The last
+#: hundredth is theirs to emit: a full ring while the window is still
+#: switching to the result reads as finished and frozen.
+_RING_BEFORE_RESULT = 0.99
+
+
+def recognition_mark(*, voice: bool) -> float:
+    """Where recognition ends on the ring, for the job that was actually asked for.
+
+    A dub still has the translation to measure and speak, which on a long
+    recording takes as long as the recognition did. Four fifths leaves that
+    work somewhere to move. A transcript does not: recognition is the job,
+    and holding the ring at four fifths through a translation of a few
+    seconds is the same freeze the mark was meant to avoid.
+    """
+    return 0.80 if voice else 0.92
+
+
+def progress_plan(
+    *,
+    translate: bool,
+    voice: bool,
+    condense: bool,
+    shorten: bool,
+    video: bool,
+) -> tuple[tuple[str, float, float], ...]:
+    """Each stage's share of the ring, as (name, start, end).
+
+    The shares are not a promise of remaining time. Recognition is the only
+    stage with a clock, so it keeps `recognition_mark`. Everything after it
+    divides what is left, and only a stage that will actually run gets a
+    share -- a band reserved for a voice nobody asked for would sit still,
+    which is the defect this is here to remove.
+    """
+    # A dub without a translation never speaks: there is nothing to read.
+    # Treat that as a transcript, so the plan and the run agree.
+    speaks = bool(voice and translate)
+    tail: list[tuple[str, float]] = []
+    if translate:
+        tail.append(("translate", 3.0))
+    if speaks and condense:
+        tail.append(("condense", 8.0))
+    if speaks and condense and shorten:
+        tail.append(("shorten", 5.0))
+    if speaks:
+        tail.append(("speak", 9.0))
+    if speaks and video:
+        tail.append(("mux", 2.0))
+    if not tail:
+        return (("recognize", 0.0, _RING_BEFORE_RESULT),)
+    if not speaks:
+        mark = recognition_mark(voice=False)
+    else:
+        mark = recognition_mark(voice=True)
+    total = sum(weight for _name, weight in tail)
+    cursor = mark
+    phases = [("recognize", 0.0, mark)]
+    for index, (name, weight) in enumerate(tail):
+        end = (
+            _RING_BEFORE_RESULT
+            if index == len(tail) - 1
+            else cursor + (_RING_BEFORE_RESULT - mark) * weight / total
+        )
+        phases.append((name, cursor, end))
+        cursor = end
+    return tuple(phases)
+
+
+class _Meter:
+    """Reports one rising fraction, and never goes back over a stage it closed."""
+
+    def __init__(
+        self,
+        phases: tuple[tuple[str, float, float], ...],
+        emit: Callable[[float], None] | None,
+    ) -> None:
+        self._spans = {name: (start, end) for name, start, end in phases}
+        self._emit = emit
+        self._phase: str | None = None
+        self._lo = 0.0
+        self._hi = 0.0
+        self._closed: set[str] = set()
+
+    def enter(self, name: str) -> None:
+        if name not in self._spans or name in self._closed:
+            self._phase = None
+            return
+        self._phase = name
+        self._lo, self._hi = self._spans[name]
+        self._send(self._lo)
+
+    def advance(self, done: float, total: float) -> None:
+        self.advance_within(0.0, 1.0, done, total)
+
+    def advance_within(
+        self, start: float, end: float, done: float, total: float
+    ) -> None:
+        if self._phase is None or self._phase in self._closed or total <= 0:
+            return
+        frac = min(1.0, max(0.0, done / total))
+        lo = self._lo + (self._hi - self._lo) * start
+        hi = self._lo + (self._hi - self._lo) * end
+        self._send(lo + (hi - lo) * frac)
+
+    def leave(self) -> None:
+        if self._phase is None or self._phase in self._closed:
+            return
+        self._send(self._hi)
+        self._closed.add(self._phase)
+        self._phase = None
+
+    def skip(self, *names: str) -> None:
+        """Close stages that turned out to have nothing to do, in order."""
+        for name in names:
+            if name not in self._spans or name in self._closed:
+                continue
+            _start, end = self._spans[name]
+            self._send(end)
+            self._closed.add(name)
+            self._phase = None
+
+    def _send(self, value: float) -> None:
+        if self._emit is not None:
+            self._emit(min(_RING_BEFORE_RESULT, max(0.0, value)))
+
+
+def _rewriter(translator, shortener):
+    """The online rewriter a dub will use, or None when nothing will be sent.
+
+    An explicit shortener wins; otherwise the translator's own provider, and
+    only when that provider can rewrite. One decision, shared by the progress
+    plan and the pass itself, so the ring does not reserve a band for a
+    request that will never be made.
+    """
+    from ..mt.shorten_with_model import can_shorten
+
+    rewriter = shortener
+    if rewriter is None and translator is not None:
+        provider = getattr(translator, "provider", None)
+        if provider is not None and can_shorten(provider):
+            rewriter = provider
+    if rewriter is not None and can_shorten(rewriter):
+        return rewriter
+    return None
+
+
+def _counted(measure, meter: _Meter, total: int, band: tuple[float, float]):
+    """Count calls to `measure` into a slice of the stage the meter is in.
+
+    Measuring a line is synthesising it. On a long recording that pass is
+    most of what happens after recognition, and it already walks the lines
+    one by one -- the fraction is that walk, not a timer.
+    """
+    done = 0
+
+    def wrapped(text: str) -> float:
+        nonlocal done
+        value = measure(text)
+        done += 1
+        meter.advance_within(band[0], band[1], done, max(total, 1))
+        return value
+
+    return wrapped
+
+
+def _line_count(cues) -> int:
+    return sum(1 for cue in cues if cue.flat_text.strip())
 
 
 def _named(code: str) -> str:
@@ -191,6 +360,7 @@ def transcribe_file(
     style: CueStyle | None = None,
     on_stage: Callable[[str], None] | None = None,
     on_progress: Callable[[float, float], None] | None = None,
+    on_fraction: Callable[[float], None] | None = None,
     download_dir: Path | str | None = None,
     translator: Translator | None = None,
     target_language: str | None = None,
@@ -227,18 +397,40 @@ def transcribe_file(
     if not media.has_audio:
         raise ValueError(f"В «{media.path.name}» нет звуковой дорожки.")
 
+    # Known before any stage runs, and the same objects the later branches
+    # use. A band for a pass that will not happen is a ring that sits still.
+    will_translate = translator is not None and bool(target_language)
+    rewriter = _rewriter(translator, shortener) if voice and condense else None
+    meter = _Meter(progress_plan(
+        translate=will_translate,
+        voice=bool(voice) and will_translate,
+        condense=bool(voice and condense and will_translate),
+        shorten=rewriter is not None and will_translate,
+        video=bool(voice and dub_video and media.has_video and will_translate),
+    ), on_fraction)
+
     stage(tell("Распознаю ({minutes} мин)", minutes=f"{media.duration / 60:.1f}"))
+    meter.enter("recognize")
+
+    def on_asr(done: float, total: float) -> None:
+        # Seconds stay seconds for the command line's bar. The ring hears
+        # the same clock as a fraction of the recognition stage only.
+        if on_progress is not None:
+            on_progress(done, total)
+        meter.advance(done, total)
+
     transcript = transcriber.transcribe(
         media.path,
         options=options,
-        on_progress=on_progress,
+        on_progress=on_asr,
         total_duration=media.duration or None,
     )
 
     # The model's last segment rarely ends exactly at the file's end, so the
     # bar would otherwise freeze short of 100% and look stalled.
-    if on_progress is not None and media.duration:
-        on_progress(media.duration, media.duration)
+    if media.duration:
+        on_asr(media.duration, media.duration)
+    meter.leave()
 
     stage(tell("Собираю субтитры"))
     cues = build_cues(transcript, style)
@@ -258,11 +450,13 @@ def transcribe_file(
         # into. Translating a language into itself is a hard error downstream,
         # and the original subtitles are already the right file.
         stage(tell("Язык оригинала совпал с языком перевода"))
+        meter.skip("translate", "condense", "shorten", "speak", "mux")
     elif translator is not None and target_language:
         stage(tell(
             "Перевожу на {language}",
             language=_named(target_language),
         ))
+        meter.enter("translate")
         # Whole sentences, not cues. A cue is cut for reading speed and is
         # often a fragment, and a fragment is what makes this model invent.
         groups = group_into_sentences(cues)
@@ -291,17 +485,18 @@ def transcribe_file(
                 outputs, formats, destination, media, transcript, cues,
                 translated_cues, target_language, bilingual,
             )
+        meter.leave()
 
     dub = None
     condensed: list = []
     shorten_report = None
     if voice and translated_cues:
         from ..mt.condense import condense_cues
-        from ..mt.shorten_with_model import can_shorten, shorten_cues
+        from ..mt.shorten_with_model import shorten_cues
         from ..tts.dub import mix
         from ..tts.speaker import VoiceBank, write_wav
 
-        voices_dir = Path(__file__).resolve().parents[2] / "models" / "piper"
+        voices_dir = model_root() / "piper"
         pair = match_voices and languages.has_voice_pair(target_language)
         bank = VoiceBank(target_language, voices_dir=voices_dir,
                          single=languages.voice_for(target_language))
@@ -312,6 +507,7 @@ def transcribe_file(
             # the voice that will actually speak, whose pace is measured
             # rather than assumed.
             stage(tell("Сокращаю перевод под тайминг"))
+            meter.enter("condense")
             pace, overhead = bank.for_gender().pace()
 
             def measure(text: str, _bank=bank) -> float:
@@ -323,8 +519,10 @@ def transcribe_file(
             # more context to shorten within.
             spoken_units, condensed = condense_cues(
                 spoken_units, target_language, pace,
-                headroom=SPEED_HEADROOM, overhead=overhead, measure=measure,
+                headroom=SPEED_HEADROOM, overhead=overhead,
+                measure=_counted(measure, meter, _line_count(spoken_units), (0.0, 1.0)),
             )
+            meter.leave()
             # The rules remove filler, and a machine translation has little.
             # Whatever still does not fit is rewritten by a model.
             #
@@ -335,17 +533,23 @@ def transcribe_file(
             # it in four seconds and does it well. Only the lines that do not
             # fit need rewriting -- 101 of 243 here -- so only those need to
             # leave, and the translation can stay on this machine.
-            rewriter = shortener
-            if rewriter is None and translator is not None:
-                if can_shorten(translator.provider):
-                    rewriter = translator.provider
-            if rewriter is not None and can_shorten(rewriter):
+            if rewriter is not None:
                 stage(tell("Сокращаю остальное моделью"))
+                meter.enter("shorten")
+                # The pass measures every line again, then asks the model.
+                # Those are the two waits, so each owns half the band.
                 spoken_units, condensed, shorten_report = shorten_cues(
                     spoken_units, target_language, pace, rewriter,
                     headroom=SPEED_HEADROOM, overhead=overhead,
-                    measure=measure, records=condensed,
+                    measure=_counted(
+                        measure, meter, _line_count(spoken_units), (0.0, 0.5)
+                    ),
+                    records=condensed,
+                    on_batch=lambda done, total: meter.advance_within(
+                        0.5, 1.0, done, total
+                    ),
                 )
+                meter.leave()
                 if shorten_report.summary():
                     stage(shorten_report.summary())
 
@@ -364,6 +568,10 @@ def transcribe_file(
             translated_cues, target_language, bilingual,
         )
 
+        # Opened before the speaker model is fetched: telling the voices
+        # apart is part of this stage, and the ring should already be in it
+        # rather than parked on the stage before.
+        meter.enter("speak")
         speaker_model = None
         if pair:
             # Told apart by voice, not by pitch alone; fetched on first use,
@@ -382,7 +590,9 @@ def transcribe_file(
         # read and not where a thought ends.
         dub = mix(media.path, spoken_units or translated_cues, bank,
                   media.duration, keep_original=keep_original_audio,
-                  match_voices=pair, speaker_model=speaker_model)
+                  match_voices=pair, speaker_model=speaker_model,
+                  on_line=meter.advance)
+        meter.leave()
         outputs["audio"] = write_wav(
             destination / f"{media.path.stem}.{target_language}.wav",
             dub.samples, dub.rate,
@@ -394,6 +604,7 @@ def transcribe_file(
             from ..video.mux import MuxError, replace_audio
 
             stage(tell("Собираю видео с переводом"))
+            meter.enter("mux")
             try:
                 muxed = replace_audio(
                     media.path,
@@ -412,6 +623,12 @@ def transcribe_file(
                 stage(tell("Видео собрать не удалось: {reason}", reason=str(exc)))
             else:
                 outputs["video"] = muxed.path
+            meter.leave()
+
+    # A stage the plan reserved and the run never reached -- nothing to
+    # speak, no picture to mux -- is closed here. Skipping one already
+    # closed does not move the ring backwards.
+    meter.skip("translate", "condense", "shorten", "speak", "mux")
 
     return BatchResult(
         media=media,

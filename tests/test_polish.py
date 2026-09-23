@@ -447,6 +447,30 @@ def test_after_recognition_the_busy_screen_says_work_continues(window):
     busy.set_progress(0.80)
     assert not busy._hint.isHidden()
     assert "перевод" in busy._hint.text()
+    assert "озвучка" in busy._hint.text()
+
+
+def test_the_hint_names_only_the_work_still_to_come(window):
+    """A transcript does not grow a voice, and a voice does not grow a video.
+    The sentence used to promise both whenever recognition ended."""
+    from lt_core.pipeline.batch import recognition_mark
+
+    busy = window._upload._busy
+
+    busy.reset("clip.mp4", voice=True, video=False)
+    assert busy._recognition_at == recognition_mark(voice=True)
+    busy.set_progress(0.80)
+    assert "озвучка" in busy._hint.text()
+    assert "сборк" not in busy._hint.text()
+
+    busy.reset("clip.mp4", voice=False, video=False)
+    assert busy._recognition_at == recognition_mark(voice=False)
+    busy.set_progress(0.80)
+    assert busy._hint.isHidden()
+    busy.set_progress(recognition_mark(voice=False))
+    assert not busy._hint.isHidden()
+    assert "перевод" in busy._hint.text()
+    assert "озвучк" not in busy._hint.text()
 
 
 def test_a_failure_stops_the_busy_motion(window):

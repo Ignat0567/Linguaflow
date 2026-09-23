@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,11 +17,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lt_core.pipeline.batch import recognition_mark
 from lt_core.subtitles.bilingual import fold_original
 from lt_core.subtitles.export import format_srt_time
 
 from .. import glass, theme
 from ..i18n import _
+from ..paths import videos_dir
 from ..store import (
     ROOT,
     HistoryEntry,
@@ -120,7 +123,13 @@ class UploadScreen(QWidget):
             return
         self._pending = True
         self._job_id = new_id()
-        self._busy.reset(self._display_name())
+        settings = self.app.store.settings
+        voice = settings.voiceover
+        self._busy.reset(
+            self._display_name(),
+            voice=voice,
+            video=voice and settings.dub_video,
+        )
         self._stack.setCurrentWidget(self._busy)
         self.app.engine.prepare(self.app.store.settings)
 
@@ -281,8 +290,12 @@ class _Dropzone(glass.GlassPanel):
         # unpacking into it shadows the import for the whole function -- the
         # very next argument is a `_()` call, so the dialog raised
         # UnboundLocalError before it ever opened.
+        # An installed copy lives in Program Files, which is the wrong
+        # place to start looking for a recording. A checkout starts where
+        # the files under development are.
+        start = videos_dir() if getattr(sys, "frozen", False) else ROOT
         path, _chosen_filter = QFileDialog.getOpenFileName(
-            self, _("Выберите медиафайл"), str(ROOT), _filter()
+            self, _("Выберите медиафайл"), str(start), _filter()
         )
         if path:
             self.screen.open_path(path)
@@ -393,14 +406,16 @@ class _Busy(QWidget):
     way out is now on the screen that needs it.
     """
 
-    #: The ring measures recognition, which finishes well before the job
-    #: does -- translation, speech and muxing all come after it. Showing 100%
-    #: while a video is still being assembled reads as finished-and-frozen,
-    #: so the ring stops just short until there is a result. The comet on the
-    #: rim and the elapsed clock are what keep the wait from looking stuck.
+    #: Recognition ends at a mark the pipeline shares with this screen, and
+    #: the stages after it move the ring as their own lines finish. Showing
+    #: 100% while a video is still being assembled reads as finished and
+    #: frozen, so the drawing stops just short until there is a result. The
+    #: comet on the rim and the elapsed clock cover a stage that has no
+    #: lines to count yet.
     RUNNING_CEILING = 0.99
-    #: Recognition is mapped onto this much of the ring; past it, later
-    #: stages are still running and the hint says so.
+    #: Where a dubbed job's recognition ends. A job without a voice uses
+    #: `recognition_mark` instead, so the hint does not claim the recording
+    #: is finished while Whisper is still on it.
     RECOGNITION_SHARE = 0.80
 
     def __init__(self, screen: UploadScreen) -> None:
@@ -409,6 +424,7 @@ class _Busy(QWidget):
         clear_fill(self)
         self._active = False
         self._origin: float | None = None
+        self._recognition_at = self.RECOGNITION_SHARE
         self._ring = glass.ProgressRing(self, 160)
         self._stage = glass.label(_("Загружаю модели…"), 13, 400, 0.75)
         self._stage.setAlignment(Qt.AlignCenter)
@@ -467,11 +483,19 @@ class _Busy(QWidget):
         elapsed = 0.0 if self._origin is None else time.monotonic() - self._origin
         self._elapsed.setText(_("уже {clock}", clock=format_clock(elapsed)))
 
-    def reset(self, name: str) -> None:
+    def reset(self, name: str, *, voice: bool = True, video: bool = True) -> None:
         self._active = True
         self._origin = time.monotonic()
+        self._recognition_at = recognition_mark(voice=voice)
         self._ring.set_value(0.0)
         self._stage.setText(_("Загружаю модели…"))
+        if voice and video:
+            hint = _("Распознавание готово — дальше перевод, озвучка и сборка видео")
+        elif voice:
+            hint = _("Распознавание готово — дальше перевод и озвучка")
+        else:
+            hint = _("Распознавание готово — дальше перевод и сохранение файлов")
+        self._hint.setText(hint)
         self._hint.hide()
         self._name.setText(name)
         self._ok.hide()
@@ -484,7 +508,7 @@ class _Busy(QWidget):
     def set_progress(self, fraction: float) -> None:
         capped = min(fraction, self.RUNNING_CEILING)
         self._ring.set_value(capped)
-        self._hint.setVisible(self._active and capped >= self.RECOGNITION_SHARE)
+        self._hint.setVisible(self._active and capped >= self._recognition_at - 1e-9)
 
     def settle(self) -> None:
         """The job finished; the result screen takes over from here."""

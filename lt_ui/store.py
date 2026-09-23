@@ -5,8 +5,8 @@ reload. A real session that took twelve minutes to transcribe is worth
 finding again tomorrow, and the language pair a user set should still be
 the language pair when they open the app.
 
-Nothing here talks to a server. The files live next to the models, in
-`data/`, so a copy of the project carries its own memory.
+Nothing here talks to a server. Settings, history and keys live in the
+per-user folder; the models stay with the installation.
 """
 
 from __future__ import annotations
@@ -18,16 +18,17 @@ from datetime import datetime
 from pathlib import Path
 
 from lt_core import languages
+from lt_core.install import install_root, model_root
 from lt_core.mt.types import TranslationMode
 
 from .i18n import UI_LANGUAGES
 from .keys import KeyStore
 from .paths import default_output_dir, resolve_data_dir
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = install_root()
 #: Gigabytes, identical for every user, read-only in use: they stay with the
 #: installation rather than being copied into each profile.
-MODEL_ROOT = ROOT / "models"
+MODEL_ROOT = model_root()
 
 SCREENS = ("home", "realtime", "browser", "upload", "history", "settings")
 

@@ -234,6 +234,14 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Recognition is done — translation, voice and assembling the video still to come",
         "Erkennung fertig — Übersetzung, Stimme und Videoschnitt folgen noch",
     ),
+    "Распознавание готово — дальше перевод и озвучка": (
+        "Recognition is done — translation and voice still to come",
+        "Erkennung fertig — Übersetzung und Stimme folgen noch",
+    ),
+    "Распознавание готово — дальше перевод и сохранение файлов": (
+        "Recognition is done — translation and saving the files still to come",
+        "Erkennung fertig — Übersetzung und Speichern der Dateien folgen noch",
+    ),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",
         "… und {count} weitere Untertitel in den gespeicherten Dateien",

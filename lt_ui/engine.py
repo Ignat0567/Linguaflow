@@ -124,13 +124,12 @@ class BatchWorker(QThread):
         if settings.sub_format == "vtt":
             formats.append("vtt")
 
-        def on_progress(done: float, total: float) -> None:
-            fraction = done / total if total else 0.0
-            # Recognition is a share of the job, not the whole of it.
-            # Translation, speech and muxing come after and can take longer;
-            # they have no seconds to report, so the ring holds at 80% and
-            # the busy screen keeps moving around it.
-            self.progress.emit(min(0.80, fraction * 0.80))
+        def on_fraction(fraction: float) -> None:
+            # The pipeline reports the whole job: recognition on its clock,
+            # and each later stage as the lines of that stage are finished.
+            # The busy screen still stops the drawing short of a full ring
+            # until this worker emits 1.0 with the result.
+            self.progress.emit(fraction)
 
         try:
             result = transcribe_file(
@@ -143,7 +142,7 @@ class BatchWorker(QThread):
                     terms=split_terms(settings.terms),
                 ),
                 on_stage=self.stage.emit,
-                on_progress=on_progress,
+                on_fraction=on_fraction,
                 # Scratch for anything fetched from a link. User data: an
                 # installed copy cannot write beside its own executable.
                 download_dir=self.data_root / "downloads",

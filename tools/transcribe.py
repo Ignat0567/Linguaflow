@@ -28,10 +28,11 @@ from lt_core.media import MediaError, resolve  # noqa: E402
 from lt_core.mt.cloud import ONLINE_SERVICES  # noqa: E402
 from lt_core.mt.translator import build_translator  # noqa: E402
 from lt_core.mt.types import TranslationError, TranslationMode  # noqa: E402
+from lt_core.install import model_root  # noqa: E402
 from lt_core.pipeline.batch import transcribe_file  # noqa: E402
 from lt_core.subtitles.export import EXPORTERS, format_srt_time  # noqa: E402
 
-MODEL_ROOT = Path(__file__).resolve().parent.parent / "models"
+MODEL_ROOT = model_root()
 
 
 def _bar(done: float, total: float, width: int = 28) -> str:

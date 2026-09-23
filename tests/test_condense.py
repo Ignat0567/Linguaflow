@@ -161,6 +161,35 @@ def test_a_provider_that_cannot_rewrite_is_not_asked():
     assert can_shorten(FakeProvider([]))
 
 
+def test_each_batch_is_reported_when_it_returns():
+    """A slow batch used to be invisible. The ring hears the batches, and a
+    batch that failed is still a batch that finished."""
+
+    class OneAtATime:
+        shorten_lines_per_request = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def shorten(self, lines, language):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("этот запрос не вернулся")
+            return ["Короче."] * len(lines)
+
+    seen: list[tuple[int, int]] = []
+    cues = (
+        cue(1, 0.0, 1.0, "Этот довольно длинный текст никак не помещается"),
+        cue(2, 2.0, 3.0, "И этот тоже никак не успевает прозвучать целиком"),
+    )
+    _out, _records, report = shorten_cues(
+        cues, "ru", 17.8, OneAtATime(), headroom=1.18,
+        on_batch=lambda done, total: seen.append((done, total)),
+    )
+    assert seen == [(1, 2), (2, 2)]
+    assert report.lost == 1
+
+
 def test_the_model_is_given_the_budget_for_each_line():
     provider = FakeProvider(["Короче."])
     shorten_cues(long_cues(), "ru", 17.8, provider, headroom=1.18)

@@ -26,10 +26,11 @@ from PySide6.QtGui import (
     QPixmap,
 )
 
+from lt_core.install import install_root
+
 from . import theme
 
-ROOT = Path(__file__).resolve().parent.parent
-BACKGROUND = ROOT / "assets" / "background.jpg"
+BACKGROUND = install_root() / "assets" / "background.jpg"
 
 #: The blur is computed on a copy this many times smaller. A 24-pixel radius
 #: on a downscaled image is visually identical once scaled back -- the result

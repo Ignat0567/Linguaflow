@@ -26,9 +26,10 @@ from lt_core.audio.devices import default_device, find_device  # noqa: E402
 from lt_core.mt.translator import build_translator  # noqa: E402
 from lt_core.mt.types import TranslationError, TranslationMode  # noqa: E402
 from lt_core.realtime.conversation import ConversationSession, Side  # noqa: E402
+from lt_core.install import model_root  # noqa: E402
 from lt_core.realtime.session import PACES, LiveSession  # noqa: E402
 
-MODEL_ROOT = Path(__file__).resolve().parent.parent / "models"
+MODEL_ROOT = model_root()
 
 
 def main() -> int:

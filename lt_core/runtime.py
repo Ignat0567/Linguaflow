@@ -24,20 +24,36 @@ from pathlib import Path
 _done = False
 
 
+def _nvidia_roots() -> list[Path]:
+    """Where the pip CUDA wheels put their DLLs, in a venv and in a build.
+
+    A checkout finds them under site-packages. A frozen program has no
+    site-packages: the installer lays the same tree inside the bundle, and
+    the Windows loader will not search there on its own.
+    """
+    roots = [Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"]
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        roots.append(Path(bundled) / "nvidia")
+    return roots
+
+
 def _add_cuda_dll_dirs() -> list[str]:
-    """Make the venv's bundled CUDA libraries visible to the Windows loader."""
+    """Make the bundled CUDA libraries visible to the Windows loader."""
     if sys.platform != "win32":
         return []
-    # Store-Python virtualises paths handed to subprocesses and to the DLL
-    # loader, so resolve() before use.
-    nvidia = (Path(sys.prefix) / "Lib" / "site-packages" / "nvidia").resolve()
+    # Store-Python virtualises paths handed to the DLL loader, so resolve()
+    # before use.
     added = []
-    for bindir in sorted(nvidia.glob("*/bin")):
-        try:
-            os.add_dll_directory(str(bindir.resolve()))
-        except OSError:
+    for nvidia in _nvidia_roots():
+        if not nvidia.is_dir():
             continue
-        added.append(bindir.parent.name)
+        for bindir in sorted(nvidia.glob("*/bin")):
+            try:
+                os.add_dll_directory(str(bindir.resolve()))
+            except OSError:
+                continue
+            added.append(bindir.parent.name)
     return added
 
 

@@ -9,7 +9,7 @@ original is still there to be checked against.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -122,6 +122,7 @@ def synthesise_track(
     total_seconds: float,
     rate: int = DUB_SAMPLE_RATE,
     cast: Cast | None = None,
+    on_line: Callable[[int, int], None] | None = None,
 ) -> DubResult:
     """Speak every cue into its own slot on one timeline.
 
@@ -134,6 +135,8 @@ def synthesise_track(
     result = DubResult(samples=track, rate=rate, cast=cast)
 
     spoken_until = 0.0
+    pending = sum(1 for cue in cues if cue.flat_text.strip())
+    spoken_lines = 0
     for index, cue in enumerate(cues):
         text = cue.flat_text.strip()
         if not text:
@@ -174,6 +177,11 @@ def synthesise_track(
                     utterance = roomier
                 else:
                     begin = cue.start
+        # Counted once the line has been synthesised, including one the
+        # voice returned empty: the walk is what the ring is following.
+        spoken_lines += 1
+        if on_line is not None:
+            on_line(spoken_lines, pending)
         if utterance.samples.size == 0:
             continue
         if result.spoken and begin < spoken_until + LINE_GAP:
@@ -267,6 +275,7 @@ def mix(
     rate: int = DUB_SAMPLE_RATE,
     match_voices: bool = False,
     speaker_model: Path | str | None = None,
+    on_line: Callable[[int, int], None] | None = None,
 ) -> DubResult:
     """Dub a recording: speak the cues, duck the original, mix the two.
 
@@ -288,7 +297,9 @@ def mix(
         else:
             cast = casting.analyse(cues, original, rate)
 
-    dub = synthesise_track(cues, speaker, total_seconds, rate=rate, cast=cast)
+    dub = synthesise_track(
+        cues, speaker, total_seconds, rate=rate, cast=cast, on_line=on_line
+    )
     if not keep_original or original is None:
         return dub
 

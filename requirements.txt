@@ -24,3 +24,5 @@ PySide6==6.11.2
 # Network half of the embedded browser's ad blocker (Brave's adblock-rust).
 adblock==0.6.0
 sherpa-onnx==1.13.8
+# Installer (not imported by the app)
+pyinstaller==6.22.3
