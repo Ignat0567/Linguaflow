@@ -73,14 +73,24 @@ def test_the_video_goes_on_once_the_voice_has_gone_quiet(qapp):
 
 def test_the_next_queued_line_keeps_it_held(qapp):
     """Between two lines of a backlog the voice is quiet for a moment; going
-    on there would restart the very pile-up the hold is for."""
+    on there would restart the very pile-up the hold is for.
+
+    Written against the timer rather than against the clock. It used to sleep
+    for less than RESUME_AFTER and then speak, which is a race the test loses
+    whenever the machine is busy -- and a full suite is exactly that. It
+    failed once in two runs of the suite and never on its own.
+    """
     catch, target = _catch(qapp, RESUME_AFTER=0.15)
     catch.line_lag(9.0)
+
     catch.speaking(False)
-    _wait(qapp, 0.05)
+    assert catch._resume.isActive(), "nothing was going to release it"
     catch.speaking(True)
-    _wait(qapp, 0.25)
+    assert not catch._resume.isActive(), "the release was not called off"
+
+    _wait(qapp, 0.25)  # well past RESUME_AFTER; waiting longer only helps
     assert target.calls == [True]
+
     catch.speaking(False)
     _wait(qapp, 0.25)
     assert target.calls == [True, False]

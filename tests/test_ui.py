@@ -243,7 +243,7 @@ def test_settings_page_is_taller_than_the_window(qapp, tmp_path):
     window = Window(Store(tmp_path))
     window.resize(1280, 800)
     window.goto("settings")
-    QApplication.processEvents()
+    QApplication.sendPostedEvents()
     scroll = window._stack.currentWidget()
     assert scroll.widget().minimumSizeHint().height() > scroll.viewport().height()
     window.close()
@@ -273,7 +273,9 @@ def test_the_home_subtitle_sits_under_the_middle_of_the_headline(qapp, tmp_path)
     window = Window(Store(tmp_path))
     window.resize(1280, 800)
     window.show()
-    QApplication.processEvents()
+    # Qt's queue is drained rather than the native event loop entered; see
+    # tests.test_polish for what that is worth and what it is not.
+    QApplication.sendPostedEvents()
     title = window._home._title
     sub = window._home._sub
     assert abs(title.geometry().center().x() - sub.geometry().center().x()) <= 2

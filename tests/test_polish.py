@@ -549,16 +549,30 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
     def settle(widgets) -> None:
         """Run any animation the pointer just started to its end.
 
+        Qt's queue is drained rather than the native event loop entered.
+        `processEvents` in a Qt test on Windows can raise 0x8001010d -- an
+        outgoing COM call forbidden while an input-synchronous one is being
+        dispatched -- and pytest's fault handler prints thirty lines of stack
+        for it, which is how a clean run stops looking clean. It is not
+        fatal: the run carries on and every test passes either way.
+
+        Draining the queue instead removes it here. It does not remove it
+        from the suite: fixed at one call site it appears at the next place
+        that enters the native loop, so it belongs to Qt on Windows rather
+        than to anything this application does. Measured, because the obvious
+        suspect was ours -- with the window's own backdrop call disabled
+        entirely the exception lands in exactly the same place.
+
         A control that answers by animating has not answered yet on the
         frame the event arrives, and a test that looks then would call it
         silent.
         """
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         for widget in widgets:
             for animation in widget.findChildren(QPropertyAnimation):
                 if animation.state() == QPropertyAnimation.Running:
                     animation.setCurrentTime(animation.duration())
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
 
     def answers(widget) -> bool:
         """Something visible changes when the pointer arrives.
@@ -589,7 +603,7 @@ def test_no_clickable_surface_on_any_screen_ignores_the_pointer(window):
     try:
         for screen in ("home", "upload", "realtime", "settings", "history"):
             window.goto(screen)
-            QApplication.processEvents()
+            QApplication.sendPostedEvents()
             for widget in window.findChildren(QWidget):
                 if isinstance(widget, (QComboBox, QLineEdit)):
                     # Drawn by Qt's style sheets rather than the shared
@@ -664,7 +678,7 @@ def test_no_glass_surface_wears_a_lit_band_along_its_top(window, mode):
     window.show()
     try:
         window.goto("realtime")
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         bar = window.findChild(NavBar)
         rows = _top_rows(bar)
         # Row nought is the hairline edge, which runs all the way round the
@@ -711,7 +725,7 @@ def test_nothing_runs_in_the_bar_until_the_pointer_is_in_it(window):
     window.show()
     try:
         window.goto("realtime")
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         bar, _items = _nav(window)
         _finish(bar._fade)
         assert bar.shown == 0.0
@@ -727,7 +741,7 @@ def test_the_open_page_is_told_apart_by_its_word_alone(window):
     window.show()
     try:
         window.goto("realtime")
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         _bar, items = _nav(window)
         open_item, other = items["realtime"], items["history"]
         assert open_item.isChecked() and not other.isChecked()
@@ -747,7 +761,7 @@ def test_the_runner_appears_where_the_pointer_is_and_then_travels(window):
     window.show()
     try:
         window.goto("realtime")
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         bar, items = _nav(window)
         _finish(bar._fade)
 
@@ -760,7 +774,7 @@ def test_the_runner_appears_where_the_pointer_is_and_then_travels(window):
 
         QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
         QApplication.sendEvent(items["settings"], QEvent(QEvent.Enter))
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         assert bar._glide.endValue() == QRectF(items["settings"].geometry()), (
             "it jumped between destinations instead of travelling"
         )
@@ -769,7 +783,7 @@ def test_the_runner_appears_where_the_pointer_is_and_then_travels(window):
         assert bar.shown == 1.0, "it should not blink on the way across"
 
         QApplication.sendEvent(items["settings"], QEvent(QEvent.Leave))
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         _finish(bar._fade)
         assert bar.shown == 0.0, "it stayed behind after the pointer left"
     finally:
@@ -786,13 +800,13 @@ def test_leaving_one_destination_for_the_next_does_not_put_it_out(window):
     window.show()
     try:
         window.goto("home")
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         bar, items = _nav(window)
 
         QApplication.sendEvent(items["upload"], QEvent(QEvent.Enter))
         QApplication.sendEvent(items["history"], QEvent(QEvent.Enter))
         QApplication.sendEvent(items["upload"], QEvent(QEvent.Leave))
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         _finish(bar._glide)
         _finish(bar._fade)
         assert bar.shown == 1.0
@@ -912,7 +926,7 @@ def test_the_settings_screen_shows_every_saved_switch_the_right_way(window):
     window.store.settings.notify = True
     window.goto("settings")
     window._settings.refresh()
-    QApplication.processEvents()
+    QApplication.sendPostedEvents()
 
     wrong = [
         toggle for toggle in window._settings.findChildren(glass.Toggle)
@@ -946,7 +960,7 @@ def test_the_window_is_never_narrower_than_its_navigation(window):
     window.resize(window.minimumWidth(), window.minimumHeight())
     window.show()
     try:
-        QApplication.processEvents()
+        QApplication.sendPostedEvents()
         bar = window.findChild(NavBar)
         assert bar.width() >= bar.minimumSizeHint().width()
     finally:
