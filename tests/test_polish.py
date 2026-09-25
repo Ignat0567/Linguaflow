@@ -538,6 +538,31 @@ def test_a_recording_in_another_language_says_so_on_the_result(window):
     assert "русский" in shown, "the language actually heard"
 
 
+@pytest.mark.parametrize("ui, heard, used", [
+    ("ru", "как русский", "как английский"),
+    ("en", "like Russian", "as English"),
+])
+def test_the_language_warning_writes_names_the_way_its_language_does(
+    window, ui, heard, used
+):
+    """Inside a Russian sentence a language is lowercase; the warning read
+    «звучит как Русский, а распознавали как Английский»."""
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QLabel
+
+    i18n.set_language(ui)
+    try:
+        window.goto("upload")
+        done = window._upload._done
+        done.show_result(_finished("ru", 1.0),
+                         SimpleNamespace(file_from_lang="en", file_to_lang="ru"))
+        shown = " ".join(label.text() for label in done.findChildren(QLabel))
+    finally:
+        i18n.set_language("ru")
+    assert heard in shown and used in shown, shown
+
+
 def test_a_recording_that_agrees_says_nothing(window):
     from types import SimpleNamespace
 

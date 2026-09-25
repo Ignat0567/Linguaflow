@@ -22,7 +22,7 @@ from lt_core.subtitles.bilingual import fold_original
 from lt_core.subtitles.export import format_srt_time
 
 from .. import glass, theme
-from ..i18n import _
+from ..i18n import _, language_in_sentence
 from ..paths import videos_dir
 from ..store import (
     ROOT,
@@ -572,7 +572,7 @@ class _Done(QWidget):
             # speech is English, it writes fluent English that reads exactly
             # like a good transcript. The only place this can be caught is
             # here, before the reader believes it.
-            heard = display_name(transcript.detected_language)
+            heard = language_in_sentence(transcript.detected_language)
             panel = glass.GlassPanel(self, radius=14, accent_fill=True)
             inside = QVBoxLayout(panel)
             inside.setContentsMargins(16, 14, 16, 14)
@@ -582,7 +582,7 @@ class _Done(QWidget):
                 _("Запись звучит как {heard}, а распознавали как {used}. "
                   "По неверному языку текст выходит связным и выдуманным — "
                   "проверьте выбор языка и звуковую дорожку файла.",
-                  heard=heard, used=display_name(transcript.language)),
+                  heard=heard, used=language_in_sentence(transcript.language)),
                 13, 500, theme.SECONDARY, wrap=True,
             ))
             self._body.addWidget(panel)

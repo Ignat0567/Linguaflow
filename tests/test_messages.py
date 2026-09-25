@@ -58,6 +58,22 @@ def test_a_language_name_in_a_stage_message_is_translated():
     messages.install(None)
 
 
+@pytest.mark.parametrize("installed", [True, False])
+def test_a_russian_stage_message_names_the_language_in_lowercase(installed):
+    """Russian writes a language's name in lowercase inside a sentence; the
+    Russian window was showing «Перевожу на Русский»."""
+    from lt_core.pipeline.batch import _named
+
+    i18n.set_language("ru")
+    messages.install(i18n.t if installed else None)
+    assert messages.say("Перевожу на {language}", language=_named("ru")) == (
+        "Перевожу на русский"
+    )
+    i18n.set_language("en")
+    messages.install(i18n.t)
+    assert _named("de") == "German", "other languages keep their capital"
+
+
 def test_values_are_filled_after_translating():
     """So a translation carries the placeholder, not a frozen number."""
     i18n.set_language("en")

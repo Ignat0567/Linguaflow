@@ -50,6 +50,16 @@ def language_name(code: str) -> str:
     return entry.get(LANGUAGE, entry["ru"])
 
 
+def language_in_sentence(code: str) -> str:
+    """The name as it is written inside a sentence rather than on a label.
+
+    English and German capitalise a language's name everywhere; Russian only
+    at the start: «звучит как русский», not «как Русский».
+    """
+    name = language_name(code)
+    return name[:1].lower() + name[1:] if LANGUAGE == "ru" else name
+
+
 #: Russian source -> (English, German).
 CATALOGUE: dict[str, tuple[str, str]] = {
     # -- navigation ----------------------------------------------------

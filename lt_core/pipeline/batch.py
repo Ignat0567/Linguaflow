@@ -215,7 +215,11 @@ def _named(code: str) -> str:
     """
     name = languages.describe(code)
     pretty = name[:1].upper() + name[1:] if name else code
-    return tell(pretty)
+    shown = tell(pretty)
+    # Left untranslated, the name is going into a Russian sentence, and
+    # Russian writes it in lowercase there: «Перевожу на русский», not
+    # «на Русский» -- which is what the Russian window was showing.
+    return name if shown == pretty and name else shown
 
 
 @dataclass
