@@ -201,6 +201,24 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     # -- realtime (continued) --------------------------------------------
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
+    "Озвучка и «Звук системы» идут через одно устройство — «{device}», и "
+    "перевод попадал бы обратно в запись. С голосом здесь можно переводить "
+    "микрофон, а видео из интернета — на экране «Браузер»: он берёт звук "
+    "прямо со страницы.": (
+        "The voice and “System audio” go through the same device, “{device}”, "
+        "so the translation would be recorded back into the session. With the "
+        "voice on, translate the microphone here; for a video from the internet "
+        "use the Browser screen — it takes the sound straight from the page.",
+        "Die Stimme und „Systemton“ laufen über dasselbe Gerät, „{device}“, und "
+        "die Übersetzung würde wieder mit aufgenommen. Mit Stimme lässt sich "
+        "hier das Mikrofon übersetzen; Videos aus dem Internet übersetzt der "
+        "Bildschirm „Browser“ – er nimmt den Ton direkt von der Seite.",
+    ),
+    "Не найдено устройство захвата «{kind}». Доступны: {available}.": (
+        "No capture device found for “{kind}”. Available: {available}.",
+        "Kein Aufnahmegerät für „{kind}“ gefunden. Verfügbar: {available}.",
+    ),
+    "нет": ("none", "keine"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),
     "Остановлено": ("Stopped", "Beendet"),

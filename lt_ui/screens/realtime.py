@@ -8,7 +8,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+)
 
 from lt_core.subtitles.export import to_srt, write
 from lt_core.realtime.session import append_committed
@@ -100,9 +102,16 @@ class RealtimeScreen(QWidget):
         self._record = glass.RecordButton(self)
         self._record.toggled.connect(self._toggled)
         self._status = glass.label(
-            _("Нажмите, чтобы начать запись"), 13, 400, 0.70
+            _("Нажмите, чтобы начать запись"), 13, 400, 0.70, wrap=True
         )
         self._status.setAlignment(Qt.AlignCenter)
+        # A refusal is a paragraph, not a word. On one line it pushed the whole
+        # screen wider than the window -- the row of switches slid off the
+        # right edge and the message itself was cut off at both ends. Wrapped,
+        # it was then squeezed to a line and a half by the panel under it; it
+        # keeps the height its text needs.
+        self._status.setFixedWidth(720)
+        self._status.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
 
         self._panel = glass.GlassPanel(self, radius=theme.RADIUS_PANEL)
         self._panel.setMinimumHeight(200)
@@ -144,7 +153,14 @@ class RealtimeScreen(QWidget):
         rec.addStretch()
         root.addSpacing(8)
         root.addLayout(rec)
-        root.addWidget(self._status, 0, Qt.AlignHCenter)
+        # Centred by stretches, not by an alignment flag: a layout item with
+        # an alignment is not asked for its height at a given width, and the
+        # wrapped text was cut to the height of a line and a half.
+        status_row = QHBoxLayout()
+        status_row.addStretch()
+        status_row.addWidget(self._status)
+        status_row.addStretch()
+        root.addLayout(status_row)
         panel_row = QHBoxLayout()
         panel_row.addStretch()
         panel_row.addWidget(self._panel, 1)

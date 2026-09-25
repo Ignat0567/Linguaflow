@@ -1042,6 +1042,75 @@ def test_the_live_screen_chooses_where_its_sound_comes_from(window):
     assert not hasattr(window.findChild(SettingsScreen), "_capture")
 
 
+@pytest.mark.parametrize("ui, alternative, not_said", [
+    ("ru", "«Браузер»", "наушники"),
+    ("en", "Browser screen", "headphones"),
+])
+def test_voice_over_system_audio_says_what_can_be_done_here(
+    monkeypatch, ui, alternative, not_said
+):
+    """The voice plays on the Windows default, the very device "System audio"
+    records, and the window offers no other. Measured live: the refusal told
+    someone already wearing headphones to use headphones -- in Russian, even
+    in an English window."""
+    from lt_core.audio.devices import DeviceInfo
+    from lt_ui import engine
+    from lt_ui.store import Settings
+
+    phones = DeviceInfo("wasapi-loopback", 1, "Kopfhörer (SoundCore 2)", "system",
+                        48_000, 2, mirrors_output="Kopfhörer (SoundCore 2)")
+    monkeypatch.setattr(engine, "default_device", lambda kind: phones)
+    monkeypatch.setattr(engine, "default_playback_name",
+                        lambda: "Kopfhörer (SoundCore 2)")
+    monkeypatch.setattr(engine, "Speaker", lambda *args, **kwargs: object())
+    settings = Settings(capture_kind="system", realtime_voice=True,
+                        from_lang="en", to_lang="ru")
+    worker = engine.LiveWorker(settings, transcriber=None, translator=None)
+    said = []
+    worker.failed.connect(said.append)
+    i18n.set_language(ui)
+    try:
+        worker.run()  # on this thread: the refusal happens before capture
+    finally:
+        i18n.set_language("ru")
+    assert said and alternative in said[0], said
+    assert not_said not in said[0].lower()
+    assert "Kopfhörer (SoundCore 2)" in said[0]
+
+
+def test_a_long_refusal_on_the_live_screen_wraps_instead_of_widening_it(window):
+    """On one line it made the screen wider than the window: the switches slid
+    off the right edge and the message was cut off at both ends."""
+    from PySide6.QtWidgets import QApplication
+
+    window.goto("realtime")
+    screen = window._realtime
+    screen._refuse(i18n._(
+        "Озвучка и «Звук системы» идут через одно устройство — «{device}», и "
+        "перевод попадал бы обратно в запись. С голосом здесь можно переводить "
+        "микрофон, а видео из интернета — на экране «Браузер»: он берёт звук "
+        "прямо со страницы.", device="Kopfhörer (2- SoundCore 2)"))
+    QApplication.sendPostedEvents()
+    margins = window.layout().contentsMargins()
+    room = window.minimumWidth() - margins.left() - margins.right()
+    assert screen.minimumSizeHint().width() <= room
+    status = screen._status
+    lines = status.heightForWidth(status.maximumWidth()) / status.fontMetrics().height()
+    assert lines >= 2, (
+        "the message has to be read in full, on as many lines as it takes"
+    )
+    window.resize(window.minimumWidth(), 800)
+    window.show()
+    try:
+        QApplication.sendPostedEvents()
+        QApplication.processEvents()
+        assert status.height() >= status.heightForWidth(status.width()), (
+            "wrapped, it was squeezed to a line and a half by the panel under it"
+        )
+    finally:
+        window.hide()
+
+
 def test_a_saved_live_session_does_not_overwrite_the_one_before(
     window, tmp_path, monkeypatch
 ):

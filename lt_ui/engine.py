@@ -33,6 +33,7 @@ from lt_core.runtime import bootstrap
 from lt_core.tts.speaker import Speaker, VoiceError
 from lt_core.video.mux import MuxError
 
+from .i18n import _
 from .store import MODEL_ROOT, ROOT, Settings, display_name, split_terms
 
 
@@ -216,11 +217,13 @@ class LiveWorker(QThread):
         given = self._given
         device = None if given is not None else default_device(settings.capture_kind)
         if given is None and device is None:
-            available = ", ".join(d.label for d in list_capture_devices()[:4]) or "нет"
-            self.failed.emit(
-                f"Не найдено устройство захвата «{settings.capture_kind}». "
-                f"Доступны: {available}."
-            )
+            available = ", ".join(d.label for d in list_capture_devices()[:4]) or _("нет")
+            self.failed.emit(_(
+                "Не найдено устройство захвата «{kind}». Доступны: {available}.",
+                kind=_("Микрофон") if settings.capture_kind == "microphone"
+                else _("Звук системы"),
+                available=available,
+            ))
             return
 
         speak = settings.realtime_voice
@@ -244,14 +247,23 @@ class LiveWorker(QThread):
             except VoiceError as error:
                 self.failed.emit(str(error))
                 return
-            advice = (
-                check_routing(device, default_playback_name())
-                if device is not None else None
-            )
+            playback = default_playback_name()
+            advice = check_routing(device, playback) if device is not None else None
             if advice is not None and not advice.safe:
-                self.failed.emit(
-                    advice.reason + ((" " + advice.remedy) if advice.remedy else "")
-                )
+                # The core's advice is for the command line, where the voice can
+                # be sent to a device of one's choosing. The window has no such
+                # choice: its voice plays on the Windows default, the very device
+                # «system sound» records, so "use headphones" was advice that
+                # could not be followed -- measured, it was given to someone who
+                # was already wearing them. What can be done here is said
+                # instead, and in the interface's language.
+                self.failed.emit(_(
+                    "Озвучка и «Звук системы» идут через одно устройство — "
+                    "«{device}», и перевод попадал бы обратно в запись. С голосом "
+                    "здесь можно переводить микрофон, а видео из интернета — на "
+                    "экране «Браузер»: он берёт звук прямо со страницы.",
+                    device=playback or device.label,
+                ))
                 return
 
         if settings.realtime_mode == "conversation":
