@@ -35,7 +35,10 @@ from ..browser import (
     address_to_url,
     browser_profile,
     cookie_jar,
+    hide_page_captions,
     plays_here,
+    restore_page_captions,
+    use_original_audio,
 )
 from ..i18n import _
 from ..widgets import LanguagePair, clear_fill
@@ -348,6 +351,11 @@ class BrowserScreen(QWidget):
         self._track = None
         self._caption.setText("…")
         self._subcaption.setText("")
+        # The translation is made from the original; the viewer should hear
+        # it too, not the machine dub YouTube chose for their country. And
+        # read ours, not YouTube's captions over the picture.
+        use_original_audio(self._page)
+        hide_page_captions(self._page)
         self._clock.start()
         self._clock.hold(True)
         self._status.setText(_("Загружаю модели…"))
@@ -390,11 +398,19 @@ class BrowserScreen(QWidget):
         if self.app.store.settings.overlay:
             self.app.overlay.reveal()
         if {line.voice for line in track.lines} >= {"male", "female"}:
-            ready = _("Перевод готов · {language} · {count} фраз · мужской и женский голос")
+            ready = _("Перевод готов · {source} → {language} · {count} фраз · "
+                      "мужской и женский голос")
         else:
-            ready = _("Перевод готов · {language} · {count} фраз")
+            ready = _("Перевод готов · {source} → {language} · {count} фраз")
+        # The track knows the language it heard, not the one it was put into:
+        # alone, it read «Перевод готов · Английский» for a Russian translation.
         self._status.setText(ready.format(
-            language=language_name(track.language), count=len(track)))
+            source=language_name(track.language),
+            language=language_name(self.app.store.settings.browser_to_lang),
+            count=len(track)))
+        # Again: the player turns its captions on by itself once the original
+        # track has loaded, which is after the first time they were hidden.
+        hide_page_captions(self._page)
         self._clock.hold(False)
 
     def _make_voice(self, track):
@@ -467,6 +483,8 @@ class BrowserScreen(QWidget):
                 pass
             voice.join(timeout=3.0)
         self._track = None
+        if self._page is not None:
+            restore_page_captions(self._page)
         if self._clock is not None:
             self._clock.hold(False)
             self._clock.stop()
@@ -517,6 +535,12 @@ class BrowserScreen(QWidget):
         pending, self._pending_video = self._pending_video, None
         if pending is None:
             self._audio = self._tap
+            # What is heard is what is translated: not a machine dub of it.
+            use_original_audio(self._page)
+            hide_page_captions(self._page)
+            # Once more when the original has loaded and the player has put
+            # its own captions up again.
+            QTimer.singleShot(3000, lambda: self._mine and hide_page_captions(self._page))
             self._tap.start(self._source)
             self._status.setText(_("Жду, когда заиграет видео"))
         else:
@@ -632,6 +656,8 @@ class BrowserScreen(QWidget):
         # A video held for the reading goes on when translation ends.
         self._catch.release()
         self._mine = False
+        if self._page is not None:
+            restore_page_captions(self._page)
         if self._tap is not None:
             self._tap.stop()
         if self._video is not None and self._audio is self._video:

@@ -480,6 +480,91 @@ RELEASE_JS = r"""
 """
 
 
+#: Put YouTube's player back on the recording's own soundtrack.
+#:
+#: YouTube picks a machine-dubbed track for the viewer's country by itself:
+#: measured here, an English interview opened in this browser playing its
+#: German dub (`de-DE`, `isAutoDubbed`), with nothing on the page saying so.
+#: Under a translation that is the wrong sound twice over -- the viewer hears
+#: a machine voice under the reading instead of the speaker, and what is
+#: translated live is that machine voice's German, a translation of a
+#: translation. The player's own API names the original ("original" in every
+#: interface language it was seen in); failing that, the first track that is
+#: not a machine dub. Run in the page's world: the API is the page's.
+ORIGINAL_AUDIO_JS = r"""
+(() => {
+  const p = document.getElementById('movie_player');
+  if (!p || !p.getAvailableAudioTracks || !p.setAudioTrack) return 'no player';
+  const info = t => t.getLanguageInfo() || {};
+  const tracks = p.getAvailableAudioTracks() || [];
+  if (tracks.length < 2) return 'one track';
+  const original = tracks.find(t => /original|оригинал/i.test(info(t).name || ''))
+                || tracks.find(t => !info(t).isAutoDubbed);
+  if (!original) return 'no original';
+  const now = p.getAudioTrack && p.getAudioTrack();
+  if (now && info(now).id === info(original).id) return 'kept ' + info(original).id;
+  p.setAudioTrack(original);
+  return 'switched to ' + info(original).id;
+})()
+"""
+
+
+#: Hide YouTube's own captions while ours are shown, and remember they were on.
+#:
+#: Put back on its original soundtrack, the player turned on captions of its
+#: own, machine-translated for the viewer's country: measured, German lines
+#: on the picture above the Russian translation under it.
+CAPTIONS_OFF_JS = r"""
+(() => {
+  const p = document.getElementById('movie_player');
+  if (!p || !p.getOption || !p.unloadModule) return 'no player';
+  let track = {};
+  try { track = p.getOption('captions', 'track') || {}; } catch (e) {}
+  if (!track.languageCode) return 'none shown';
+  window.__lfCaptions = true;
+  p.unloadModule('captions');
+  return 'hidden ' + track.languageCode;
+})()
+"""
+
+#: Give the viewer back the captions that were hidden, and only those.
+CAPTIONS_BACK_JS = r"""
+(() => {
+  const p = document.getElementById('movie_player');
+  if (!window.__lfCaptions || !p || !p.loadModule) return 'nothing to restore';
+  window.__lfCaptions = false;
+  p.loadModule('captions');
+  return 'restored';
+})()
+"""
+
+
+def _run_in_page(page: QWebEnginePage, script: str, done=None) -> None:
+    world = QWebEngineScript.ScriptWorldId.MainWorld
+    try:
+        if done is None:
+            page.runJavaScript(script, world)
+        else:
+            page.runJavaScript(script, world, done)
+    except RuntimeError:  # the page is already gone
+        pass
+
+
+def use_original_audio(page: QWebEnginePage, done=None) -> None:
+    """Switch the page's YouTube player to the original soundtrack, if dubbed."""
+    _run_in_page(page, ORIGINAL_AUDIO_JS, done)
+
+
+def hide_page_captions(page: QWebEnginePage, done=None) -> None:
+    """Take YouTube's own captions off the picture while ours are shown."""
+    _run_in_page(page, CAPTIONS_OFF_JS, done)
+
+
+def restore_page_captions(page: QWebEnginePage, done=None) -> None:
+    """Put back YouTube's captions if it was this that took them away."""
+    _run_in_page(page, CAPTIONS_BACK_JS, done)
+
+
 def switch_js(on: bool) -> str:
     return (
         "(() => { const lf = window.__lf || (window.__lf = "

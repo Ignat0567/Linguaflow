@@ -155,13 +155,13 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "Готовлю перевод: {stage}": (
         "Preparing the translation: {stage}", "Übersetzung wird vorbereitet: {stage}",
     ),
-    "Перевод готов · {language} · {count} фраз": (
-        "Translation ready · {language} · {count} lines",
-        "Übersetzung fertig · {language} · {count} Zeilen",
+    "Перевод готов · {source} → {language} · {count} фраз": (
+        "Translation ready · {source} → {language} · {count} lines",
+        "Übersetzung fertig · {source} → {language} · {count} Zeilen",
     ),
-    "Перевод готов · {language} · {count} фраз · мужской и женский голос": (
-        "Translation ready · {language} · {count} lines · a male and a female voice",
-        "Übersetzung fertig · {language} · {count} Zeilen · männliche und weibliche Stimme",
+    "Перевод готов · {source} → {language} · {count} фраз · мужской и женский голос": (
+        "Translation ready · {source} → {language} · {count} lines · a male and a female voice",
+        "Übersetzung fertig · {source} → {language} · {count} Zeilen · männliche und weibliche Stimme",
     ),
     "Видео сменилось — включите перевод снова": (
         "The video changed — turn translation on again",

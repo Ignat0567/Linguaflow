@@ -208,6 +208,129 @@ def test_the_tap_is_switched_on_in_the_page_and_off_again(qapp):
     assert "lf.on = false" in page.ran[-1]
 
 
+# -- the soundtrack YouTube chose -----------------------------------------
+
+_PLAYER = r"""
+var switched = null;
+function track(id, name, dubbed) {
+  return {getLanguageInfo: function () { return {id: id, name: name, isAutoDubbed: dubbed}; }};
+}
+var tracks = [%s];
+var current = tracks[%d];
+var document = {getElementById: function (id) {
+  if (id !== 'movie_player') return null;
+  return {
+    getAvailableAudioTracks: function () { return tracks; },
+    getAudioTrack: function () { return current; },
+    setAudioTrack: function (t) { switched = t.getLanguageInfo().id; current = t; },
+  };
+}};
+"""
+
+
+def _run_player(tracks: str, current: int) -> tuple[str, object]:
+    # QJSEngine needs a Qt application to exist, or the process dies.
+    from PySide6.QtQml import QJSEngine
+
+    from lt_ui.browser import ORIGINAL_AUDIO_JS
+
+    engine = QJSEngine()
+    engine.evaluate(_PLAYER % (tracks, current))
+    answer = engine.evaluate(ORIGINAL_AUDIO_JS)
+    assert not answer.isError(), answer.toString()
+    return answer.toString(), engine.globalObject().property("switched").toVariant()
+
+
+@pytest.mark.parametrize("name", [
+    "English (United States) (original)",
+    "Englisch (USA) (Original)",
+    "Английский (US) (оригинальная)",
+])
+def test_a_machine_dub_is_switched_back_to_the_original(qapp, name):
+    """Measured: an English interview opened in this browser played its German
+    machine dub, and nothing on the page said so."""
+    answer, switched = _run_player(
+        f"track('de-DE.10', 'Deutsch (DE)', true), track('en-US.4', '{name}', false),"
+        " track('fr-FR.10', 'Französisch', true)",
+        current=0,
+    )
+    assert switched == "en-US.4", answer
+
+
+def test_the_original_already_playing_is_left_alone(qapp):
+    answer, switched = _run_player(
+        "track('en-US.4', 'English (original)', false), track('de-DE.10', 'Deutsch', true)",
+        current=0,
+    )
+    assert switched is None and answer.startswith("kept"), answer
+
+
+def test_without_the_word_original_the_first_undubbed_track_is_taken(qapp):
+    answer, switched = _run_player(
+        "track('de-DE.10', 'Deutsch', true), track('en-US.4', 'English', false)",
+        current=0,
+    )
+    assert switched == "en-US.4", answer
+
+
+_CAPTIONED = r"""
+var window = {};
+var modules = {captions: %s};
+var calls = [];
+var document = {getElementById: function (id) {
+  return {
+    getOption: function (module, key) {
+      return modules.captions ? {languageCode: 'de', kind: 'asr'} : {};
+    },
+    unloadModule: function (m) { calls.push('unload ' + m); modules[m] = false; },
+    loadModule: function (m) { calls.push('load ' + m); modules[m] = true; },
+  };
+}};
+"""
+
+
+def _captions(on: bool, *scripts: str) -> tuple[list[str], list]:
+    from PySide6.QtQml import QJSEngine
+
+    engine = QJSEngine()
+    engine.evaluate(_CAPTIONED % ("true" if on else "false"))
+    answers = [engine.evaluate(script).toString() for script in scripts]
+    return answers, engine.globalObject().property("calls").toVariant()
+
+
+def test_youtubes_own_captions_are_hidden_under_ours_and_given_back(qapp):
+    """Put back on the original track, the player turned on German captions
+    of its own: measured, German lines on the picture over the Russian ones."""
+    from lt_ui.browser import CAPTIONS_BACK_JS, CAPTIONS_OFF_JS
+
+    answers, calls = _captions(True, CAPTIONS_OFF_JS, CAPTIONS_BACK_JS)
+    assert calls == ["unload captions", "load captions"], answers
+
+
+def test_captions_the_viewer_had_off_stay_off(qapp):
+    from lt_ui.browser import CAPTIONS_BACK_JS, CAPTIONS_OFF_JS
+
+    answers, calls = _captions(False, CAPTIONS_OFF_JS, CAPTIONS_BACK_JS)
+    assert calls == [], answers
+
+
+def test_the_original_is_asked_for_in_the_pages_own_world(qapp):
+    """The player's API belongs to the page's scripts; the isolated world the
+    tap runs in cannot see it."""
+    from PySide6.QtWebEngineCore import QWebEngineScript
+
+    from lt_ui.browser import ORIGINAL_AUDIO_JS, use_original_audio
+
+    asked = []
+
+    class Page:
+        def runJavaScript(self, script, world=None, callback=None):  # noqa: N802
+            asked.append((script, world))
+
+    use_original_audio(Page())
+    assert asked == [(ORIGINAL_AUDIO_JS, QWebEngineScript.ScriptWorldId.MainWorld)]
+
+
 # -- ad blocking ----------------------------------------------------------
 
 def test_the_youtube_ad_script_leaves_other_sites_alone():
