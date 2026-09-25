@@ -88,6 +88,58 @@ def test_corrupt_settings_file_does_not_crash(tmp_path):
     assert store.settings.from_lang == "ru"
 
 
+def test_a_settings_file_with_a_byte_order_mark_is_still_read(tmp_path):
+    """Windows PowerShell and older Notepad save one. It used to reset every
+    setting to its default without a word."""
+    (tmp_path / "settings.json").write_text(
+        '{"ui_language": "de", "to_lang": "de"}', encoding="utf-8-sig"
+    )
+    store = Store(tmp_path)
+    assert store.settings.ui_language == "de"
+    assert store.settings.to_lang == "de"
+
+
+def test_an_unreadable_file_is_kept_aside_not_saved_over(tmp_path):
+    (tmp_path / "history.json").write_text('[{"id": "a", "tit', encoding="utf-8")
+    store = Store(tmp_path)
+    assert store.entries == []
+    store.add(HistoryEntry(
+        id="b", kind="live", title="new", source_language="ru",
+        target_language="en", duration=1, created="2026-09-25T12:00:00",
+    ))
+    kept = tmp_path / "history.json.unreadable"
+    assert kept.read_text(encoding="utf-8") == '[{"id": "a", "tit'
+
+
+def test_settings_of_the_wrong_shape_do_not_stop_the_app(tmp_path):
+    (tmp_path / "settings.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "history.json").write_text("{}", encoding="utf-8")
+    store = Store(tmp_path)
+    assert store.settings.from_lang == "ru"
+    assert store.entries == []
+
+
+def test_a_save_replaces_the_file_whole(tmp_path, monkeypatch):
+    """A save that fails halfway must leave the previous file as it was."""
+    import json
+
+    from lt_ui import store as store_module
+
+    store = Store(tmp_path)
+    store.settings.to_lang = "de"
+    store.save_settings()
+
+    def full_disk(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    store.settings.to_lang = "en"
+    monkeypatch.setattr(store_module.os, "replace", full_disk)
+    with pytest.raises(OSError):
+        store.save_settings()
+    saved = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert saved["to_lang"] == "de"
+
+
 def test_recent_is_newest_first_and_capped(tmp_path):
     store = Store(tmp_path)
     for n in range(5):

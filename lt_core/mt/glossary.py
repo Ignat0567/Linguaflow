@@ -78,8 +78,11 @@ class Glossary:
         if not target.exists():
             raise FileNotFoundError(f"Глоссарий не найден: {target}")
 
+        # `utf-8-sig` for both: a glossary is written by hand, and a file saved
+        # from Windows PowerShell or an older Notepad starts with a byte-order
+        # mark that plain `utf-8` hands to the JSON parser as a character.
         if target.suffix.lower() == ".json":
-            payload = json.loads(target.read_text(encoding="utf-8"))
+            payload = json.loads(target.read_text(encoding="utf-8-sig"))
             return cls(entries={
                 term: dict(values) if isinstance(values, dict) else {}
                 for term, values in payload.items()

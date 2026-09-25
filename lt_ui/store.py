@@ -12,6 +12,7 @@ per-user folder; the models stay with the installation.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
@@ -267,6 +268,46 @@ def new_id() -> str:
     return uuid.uuid4().hex[:10]
 
 
+def _read_json(path: Path) -> object:
+    """The file's contents, or None if there is nothing usable in it.
+
+    Read as `utf-8-sig`: a file saved by Windows PowerShell or an older
+    Notepad starts with a byte-order mark, which plain `utf-8` hands to the
+    JSON parser as a character -- and every setting was then silently back
+    at its default, the interface language included. Measured, not guessed.
+
+    A file that still cannot be read is moved aside rather than left where
+    the next save would overwrite it: the settings or the history in it are
+    the user's, and a broken file can be mended by hand.
+    """
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return None
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError both
+        try:
+            os.replace(path, path.with_name(path.name + ".unreadable"))
+        except OSError:
+            pass
+        return None
+
+
+def _write_json(path: Path, payload: object) -> None:
+    """Write the whole file or nothing.
+
+    Straight over the old file, a crash or a full disk halfway through would
+    leave half a file, which the next start reads as no settings and no
+    history at all -- and then saves over for good.
+    """
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(partial, path)
+
+
 class Store:
     """One JSON file for settings, one for the history list."""
 
@@ -297,41 +338,26 @@ class Store:
         return path
 
     def load(self) -> None:
-        if self.settings_path.exists():
-            try:
-                payload = json.loads(self.settings_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                payload = {}
+        payload = _read_json(self.settings_path)
+        if isinstance(payload, dict):
             known = {item.name for item in fields(Settings)}
             self.settings = Settings(
                 **{key: value for key, value in payload.items() if key in known}
             )
         self.settings.clamp()
 
-        if self.history_path.exists():
-            try:
-                rows = json.loads(self.history_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                rows = []
+        rows = _read_json(self.history_path)
+        if isinstance(rows, list):
             self.entries = [
                 HistoryEntry.from_dict(row) for row in rows if isinstance(row, dict)
             ]
 
     def save_settings(self) -> None:
         self.settings.clamp()
-        self.settings_path.write_text(
-            json.dumps(asdict(self.settings), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _write_json(self.settings_path, asdict(self.settings))
 
     def save_history(self) -> None:
-        self.history_path.write_text(
-            json.dumps(
-                [entry.to_dict() for entry in self.entries],
-                ensure_ascii=False, indent=2,
-            ) + "\n",
-            encoding="utf-8",
-        )
+        _write_json(self.history_path, [entry.to_dict() for entry in self.entries])
 
     def add(self, entry: HistoryEntry) -> HistoryEntry:
         self.entries.insert(0, entry)

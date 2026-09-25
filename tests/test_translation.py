@@ -203,6 +203,15 @@ def test_glossary_loads_from_json(tmp_path):
     assert Glossary.load(path).wanted("Sentinel", "de") == "Sentinel"
 
 
+@pytest.mark.parametrize("name", ["terms.json", "terms.csv"])
+def test_a_glossary_saved_with_a_byte_order_mark_loads(tmp_path, name):
+    path = tmp_path / name
+    text = ('{"Acme": {"ru": "Акме"}}' if name.endswith(".json")
+            else "term,ru\nAcme,Акме\n")
+    path.write_text(text, encoding="utf-8-sig")
+    assert Glossary.load(path).wanted("Acme", "ru") == "Акме"
+
+
 def test_missing_glossary_is_reported(tmp_path):
     with pytest.raises(FileNotFoundError):
         Glossary.load(tmp_path / "absent.csv")
