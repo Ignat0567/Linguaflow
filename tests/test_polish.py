@@ -90,8 +90,8 @@ def test_the_language_pair_is_read_from_the_page_in_front(window):
     window._upload.open_path(_EXAMPLE)
     window._upload._ready.pair.set_pair("de", "ru")
     window._upload._sync_pair()
-    assert window.store.settings.to_lang == "ru"
-    assert window.store.settings.from_lang == "de"
+    assert window.store.settings.file_to_lang == "ru"
+    assert window.store.settings.file_from_lang == "de"
 
 
 # -- the history can be reached and cleared -----------------------------
@@ -528,7 +528,7 @@ def test_a_recording_in_another_language_says_so_on_the_result(window):
 
     window.goto("upload")
     done = window._upload._done
-    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    settings = SimpleNamespace(file_from_lang="en", file_to_lang="ru")
     done.show_result(_finished("ru", 1.0), settings)
     shown = _texts(done)
     assert i18n._("Проверьте язык").casefold() in shown
@@ -543,7 +543,7 @@ def test_a_recording_that_agrees_says_nothing(window):
 
     window.goto("upload")
     done = window._upload._done
-    settings = SimpleNamespace(detect_language=False, to_lang="ru")
+    settings = SimpleNamespace(file_from_lang="en", file_to_lang="ru")
     done.show_result(_finished("en", 1.0), settings)
     assert i18n._("Проверьте язык").casefold() not in _texts(done)
 

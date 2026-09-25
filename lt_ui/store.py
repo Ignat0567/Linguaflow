@@ -106,7 +106,18 @@ class Settings:
     to_lang: str = "en"
     #: File mode only. When true, Whisper identifies the source language
     #: instead of using `from_lang`. Live mode still needs an explicit pair.
+    #: Superseded by `file_from_lang`; read once, to carry an old profile's
+    #: choice across.
     detect_language: bool = True
+    #: The file screen's own pair; "auto" detects each file's language.
+    #: Separate from the Live screen's for the reason the browser's is: on a
+    #: fresh profile, Live's «ru -> en» made «auto -> ru» here impossible.
+    #: Choosing Russian was clamped back to English on every save while the
+    #: picker went on showing Russian, and an English video came out
+    #: untranslated. Empty means not chosen yet, and is filled once from the
+    #: old shared pair so an existing profile opens the way it was left.
+    file_from_lang: str = ""
+    file_to_lang: str = ""
     #: Words this recording uses that the recogniser will not guess: names,
     #: jargon, a product nobody has heard of. Comma-separated, as typed.
     terms: str = ""
@@ -196,6 +207,13 @@ class Settings:
         if (self.browser_from_lang not in (*offered, "auto")
                 or self.browser_from_lang == self.browser_to_lang):
             self.browser_from_lang = "auto"
+        if not self.file_from_lang:
+            self.file_from_lang = "auto" if self.detect_language else self.from_lang
+        if self.file_to_lang not in offered:
+            self.file_to_lang = self.to_lang
+        if (self.file_from_lang not in (*offered, "auto")
+                or self.file_from_lang == self.file_to_lang):
+            self.file_from_lang = "auto"
         if self.realtime_mode == "voice":
             # It was a mode before it was an option; carry the choice across.
             self.realtime_mode, self.realtime_voice = "subtitles", True

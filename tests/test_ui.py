@@ -339,6 +339,70 @@ def test_file_mode_defaults_to_detecting_the_source_language():
     assert settings.detect_language is True
 
 
+def test_a_fresh_file_pair_detects_and_keeps_the_old_target():
+    settings = Settings()
+    settings.clamp()
+    assert settings.file_from_lang == "auto"
+    assert settings.file_to_lang == settings.to_lang
+
+
+def test_an_old_profile_opens_the_file_screen_the_way_it_was_left(tmp_path):
+    (tmp_path / "settings.json").write_text(
+        '{"from_lang": "de", "to_lang": "ru", "detect_language": false}',
+        encoding="utf-8",
+    )
+    settings = Store(tmp_path).settings
+    assert (settings.file_from_lang, settings.file_to_lang) == ("de", "ru")
+
+
+def test_the_file_screen_can_translate_into_the_live_screens_language(
+    qapp, tmp_path
+):
+    """The default live pair is Russian into English. Choosing «auto -> Russian»
+    on the file screen used to be clamped back to English on save while the
+    picker still showed Russian -- and an English video came out untranslated.
+    """
+    from lt_ui.window import Window
+
+    store = Store(tmp_path)
+    window = Window(store)
+    window.goto("upload")
+    pair = window._upload._idle.pair
+    pair._to.setCurrentIndex(pair._to.findData("ru"))
+
+    assert store.settings.file_to_lang == "ru"
+    assert Store(tmp_path).settings.file_to_lang == "ru", "and it is saved"
+    window.goto("home")
+    window.goto("upload")
+    assert pair.pair() == ("auto", "ru"), "and still shown on coming back"
+    assert (store.settings.from_lang, store.settings.to_lang) == ("ru", "en"), (
+        "the Live screen's pair is not touched"
+    )
+    window.close()
+
+
+@pytest.mark.parametrize("source, language", [("auto", None), ("de", "de")])
+def test_the_batch_job_is_given_the_file_screens_pair(
+    qapp, tmp_path, monkeypatch, source, language
+):
+    """What the picker shows is what the job runs with."""
+    from lt_ui import engine
+
+    seen = {}
+
+    def fake_transcribe(path, transcriber, **kwargs):
+        seen["language"] = kwargs["options"].language
+        seen["target"] = kwargs["target_language"]
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(engine, "transcribe_file", fake_transcribe)
+    settings = Settings(from_lang="ru", to_lang="en",
+                        file_from_lang=source, file_to_lang="ru")
+    worker = engine.BatchWorker(tmp_path / "clip.mp4", settings, None, None, tmp_path)
+    worker.run()  # on this thread: the job itself, not the scheduling
+    assert seen == {"language": language, "target": "ru"}
+
+
 def test_overlay_defaults_to_hidden_from_a_screen_share():
     settings = Settings()
     assert settings.overlay is True

@@ -568,7 +568,8 @@ class SettingsScreen(QWidget):
         self.app.store.save_settings()
 
     def _update_voice_note(self) -> None:
-        code = self.app.store.settings.to_lang
+        # These switches dub files; the file screen has its own pair.
+        code = self.app.store.settings.file_to_lang
         language = languages.get(code)
         if language is None or not language.piper_voice:
             self._voice_note.setText(_("Для этого языка голос ещё не задан."))

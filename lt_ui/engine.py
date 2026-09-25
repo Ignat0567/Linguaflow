@@ -138,7 +138,8 @@ class BatchWorker(QThread):
                 output_dir=self.output_dir,
                 formats=tuple(formats),
                 options=TranscribeOptions(
-                    language=None if settings.detect_language else settings.from_lang,
+                    language=(None if settings.file_from_lang == "auto"
+                              else settings.file_from_lang),
                     terms=split_terms(settings.terms),
                 ),
                 on_stage=self.stage.emit,
@@ -147,7 +148,7 @@ class BatchWorker(QThread):
                 # installed copy cannot write beside its own executable.
                 download_dir=self.data_root / "downloads",
                 translator=self.translator,
-                target_language=settings.to_lang,
+                target_language=settings.file_to_lang,
                 bilingual=True,
                 voice=settings.voiceover,
                 match_voices=settings.match_voices,

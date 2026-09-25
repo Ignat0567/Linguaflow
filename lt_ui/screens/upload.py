@@ -89,10 +89,8 @@ class UploadScreen(QWidget):
         pair = getattr(page, "pair", None) or self._idle.pair
         source, target = pair.pair()
         settings = self.app.store.settings
-        settings.detect_language = source == "auto"
-        if source != "auto":
-            settings.from_lang = source
-        settings.to_lang = target
+        settings.file_from_lang = source
+        settings.file_to_lang = target
         self.app.store.save_settings()
 
     def open_path(self, path: str | Path) -> None:
@@ -160,7 +158,7 @@ class UploadScreen(QWidget):
             kind="file",
             title=result.media.title or self._display_name(),
             source_language=result.transcript.language,
-            target_language=result.target_language or settings.to_lang,
+            target_language=result.target_language or settings.file_to_lang,
             duration=result.media.duration,
             created=datetime.now().isoformat(timespec="seconds"),
             folder=str(folder),
@@ -242,8 +240,7 @@ class _Idle(QWidget):
 
     def sync(self) -> None:
         settings = self.screen.app.store.settings
-        source = "auto" if settings.detect_language else settings.from_lang
-        self.pair.set_pair(source, settings.to_lang)
+        self.pair.set_pair(settings.file_from_lang, settings.file_to_lang)
 
 
 class _Dropzone(glass.GlassPanel):
@@ -394,8 +391,7 @@ class _Ready(QWidget):
 
     def sync(self) -> None:
         settings = self.screen.app.store.settings
-        source = "auto" if settings.detect_language else settings.from_lang
-        self.pair.set_pair(source, settings.to_lang)
+        self.pair.set_pair(settings.file_from_lang, settings.file_to_lang)
 
 
 class _Busy(QWidget):
@@ -554,11 +550,11 @@ class _Done(QWidget):
         titles.setSpacing(6)
         name = glass.label(result.media.title, 26, 700, tracking=-2, wrap=True)
         source = display_name(result.transcript.language)
-        if settings.detect_language:
+        if settings.file_from_lang == "auto":
             source = f'{source} · {_("авто")}'
         meta = glass.label(
             f"{format_clock(result.media.duration)}  ·  "
-            f"{source} → {display_name(settings.to_lang)}",
+            f"{source} → {display_name(settings.file_to_lang)}",
             12, 400, theme.TERTIARY,
         )
         titles.addWidget(name)
@@ -615,7 +611,7 @@ class _Done(QWidget):
         chips.setSpacing(10)
         labels = {
             "srt": _("Субтитры (.srt)"),
-            "srt." + settings.to_lang: _("Перевод (.srt)"),
+            "srt." + settings.file_to_lang: _("Перевод (.srt)"),
             "srt.bilingual": _("Оба языка (.srt)"),
             "vtt": _("Субтитры (.vtt)"),
             "txt": _("Текст (.txt)"),
