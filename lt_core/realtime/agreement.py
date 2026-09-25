@@ -205,6 +205,18 @@ class LocalAgreement:
         self._until = max(self._until, forced[-1].end)
         return forced
 
+    def pass_over_silence(self, until: float) -> None:
+        """Move the commit point across audio that has nothing in it.
+
+        Nothing there is waiting for a second opinion, and a commit point left
+        behind the silence makes it look like a stall: the first pass after a
+        pause is then force-committed without agreement, and what it commits
+        is whatever the model made of the quiet -- measured live, "Thank you."
+        at the start of a video, and a second "people." after a pause.
+        """
+        self._previous = []
+        self._until = max(self._until, until)
+
     def forget_before(self, moment: float) -> None:
         """Drop committed words older than `moment`.
 

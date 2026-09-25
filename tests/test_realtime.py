@@ -257,11 +257,28 @@ class FakeTranscriber:
 
 
 def chunks(seconds: float, size: float = 0.1):
-    """A stream of silent chunks with correct session timing."""
+    """A stream of chunks with correct session timing.
+
+    Faint noise rather than zeros: the session no longer asks the transcriber
+    about true silence (see SILENCE_PEAK), and these tests are about what it
+    does with the words the fake transcriber scripts. Noise has no pitch, so
+    anything that listens for a voice's register hears none, as with zeros.
+    """
+    noise = np.random.default_rng(0)
+    produced = 0.0
+    while produced < seconds - 1e-9:
+        samples = (0.01 * noise.standard_normal(int(size * TARGET_SAMPLE_RATE))
+                   ).astype(np.float32)
+        yield AudioChunk(samples=samples, start_time=produced)
+        produced += size
+
+
+def silence(seconds: float, start: float = 0.0, size: float = 0.1):
+    """True digital silence -- what a system-sound source sends while idle."""
     produced = 0.0
     while produced < seconds - 1e-9:
         samples = np.zeros(int(size * TARGET_SAMPLE_RATE), dtype=np.float32)
-        yield AudioChunk(samples=samples, start_time=produced)
+        yield AudioChunk(samples=samples, start_time=start + produced)
         produced += size
 
 
@@ -451,6 +468,130 @@ def test_a_sentence_that_never_ends_is_committed_at_a_clause():
     ]
     assert settled, "nothing was committed for a speaker who never stops"
     assert settled[0].rstrip().endswith("nine,"), settled[0]
+
+
+def test_silence_is_not_asked_what_was_said():
+    """Given silence, Whisper answers "Thank you." -- measured, three runs of
+    three, committed and translated as «Спасибо.» at the start of every
+    system-sound session and again at every pause of the video."""
+    transcriber = FakeTranscriber([words((" Thank", 0.0, 0.5), (" you.", 0.5, 1.0))])
+    session = LiveSession(
+        transcriber, translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    shown = [update for update in map(session.feed, silence(8.0))
+             if update and update.has_content]
+    shown.append(session.finish())
+    assert transcriber.calls == 0
+    assert not any(update.has_content for update in shown)
+
+
+def test_a_long_pause_does_not_become_a_long_buffer():
+    """A video paused for minutes must not hand the next pass minutes of audio."""
+    session = LiveSession(FakeTranscriber([[]]), source_language="en",
+                          pace=Pace(window=1.0))
+    for chunk in silence(120.0):
+        session.feed(chunk)
+    assert session._buffer_duration <= session.pace.context + session.pace.window
+
+
+def test_speech_after_a_pause_is_heard_again():
+    script = [words((" back", 30.0, 30.5), (" again.", 30.5, 31.0))] * 3
+    transcriber = FakeTranscriber(script)
+    session = LiveSession(transcriber, source_language="en", pace=Pace(window=1.0))
+    for chunk in silence(30.0):
+        session.feed(chunk)
+    noise = np.random.default_rng(1)
+    for step in range(30):
+        samples = (0.2 * noise.standard_normal(1600)).astype(np.float32)
+        session.feed(AudioChunk(samples=samples, start_time=30.0 + step * 0.1))
+    assert transcriber.calls > 0
+    assert "back again." in session.agreement.committed_text
+
+
+class _Listening(FakeTranscriber):
+    """Also keeps how much audio each pass was given."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.heard: list[float] = []
+
+    def transcribe(self, audio, options=None, on_progress=None, total_duration=None):
+        self.heard.append(len(audio) / TARGET_SAMPLE_RATE)
+        return super().transcribe(audio, options, on_progress, total_duration)
+
+
+def test_the_model_is_not_handed_the_silence_around_the_speech():
+    """With a long silence beside it, the model repeats the speech into the
+    quiet -- a video paused mid-sentence came back as the sentence twice."""
+    transcriber = _Listening([words((" hello", 8.2, 8.8))])
+    session = LiveSession(transcriber, source_language="en", pace=Pace(window=1.0))
+    for chunk in silence(8.0):
+        session.feed(chunk)
+    for chunk in chunks(1.0):
+        session.feed(AudioChunk(samples=chunk.samples,
+                                start_time=8.0 + chunk.start_time))
+    assert transcriber.heard, "speech after silence must still be heard"
+    assert max(transcriber.heard) <= 1.0 + 2 * 0.5 + 0.2, transcriber.heard
+
+
+def test_a_pause_after_settled_words_is_passed_over_and_let_go():
+    """A player that has stopped sends true silence. Once what was said before
+    it is settled, the commit point moves across it, so the first pass after
+    the pause is not taken for a stall and committed without agreement."""
+    said = words((" one", 0.2, 0.6), (" two.", 0.6, 1.0))
+    transcriber = _Listening([said] * 20)
+    session = LiveSession(transcriber, source_language="en", pace=Pace(window=1.0))
+    for chunk in chunks(2.0):
+        session.feed(chunk)
+    for chunk in silence(20.0, start=2.0):
+        session.feed(chunk)
+    assert "one two." in session.agreement.committed_text
+    assert session.agreement.committed_until >= 20.0
+    assert session._buffer_duration <= session.pace.context + session.pace.window
+    assert session.stats.forced_commits == 0
+
+
+def test_a_sentence_left_waiting_is_still_translated_in_the_pause_after_it():
+    """The overdue valve runs on every tick; a quiet tick is still a tick."""
+    held = words(*[(f" w{n}", n * 0.5, n * 0.5 + 0.5) for n in range(6)])
+    held[4] = w(" four,", 2.0, 2.5)
+    session = LiveSession(
+        FakeTranscriber([held] * 8), translator=_EchoTranslator(),
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    for chunk in chunks(4.0):
+        session.feed(chunk)
+    settled = [u.translation for u in map(session.feed, silence(40.0, start=4.0))
+               if u and u.translation]
+    assert settled and settled[0].rstrip().endswith("four,"), settled
+
+
+class _RecordingTranslator(_EchoTranslator):
+    def __init__(self):
+        self.asked = []
+
+    def translate(self, texts, source, target):
+        self.asked.extend(texts)
+        return super().translate(texts, source, target)
+
+
+def test_a_full_stop_on_its_own_is_not_translated():
+    """Committed alone, "." is a sentence by the full-stop rule, and the model
+    handed only that invents a line: live, it came back as «Нет , нет .»."""
+    translator = _RecordingTranslator()
+    session = LiveSession(
+        FakeTranscriber([[]]), translator=translator,
+        source_language="en", target_language="ru", pace=Pace(window=1.0),
+    )
+    # What was committed live, in one tick: ". It just logged in, and it's".
+    session._untranslated = words((".", 4.0, 4.1), (" It", 8.0, 8.3),
+                                  (" just", 8.3, 8.6), (" logged", 8.6, 9.0))
+    assert session._translate() == ""
+    assert translator.asked == []
+    session._untranslated += words((" in.", 9.0, 9.3))
+    assert session._translate() == "[ru] It just logged in."
+    assert translator.asked == ["It just logged in."]
 
 
 # -- conversation --------------------------------------------------------
