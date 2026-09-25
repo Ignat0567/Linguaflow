@@ -350,6 +350,15 @@ class RealtimeScreen(QWidget):
             return
         entry_id = new_id()
         folder = self.app.store.job_dir(entry_id)
+        saved_at = datetime.now()
+        # Named for the moment, not «live»: every session is saved into the
+        # same folder, so the second one used to overwrite the first, and both
+        # history entries then opened the second session's words.
+        stem = base = f"live_{saved_at:%Y-%m-%d_%H-%M-%S}"
+        number = 1
+        while (folder / f"{stem}.srt").exists() or (folder / f"{stem}.txt").exists():
+            number += 1
+            stem = f"{base}_{number}"
         cues = []
         cursor = 0.0
         for index, line in enumerate(lines, start=1):
@@ -357,14 +366,14 @@ class RealtimeScreen(QWidget):
             duration = max(1.2, min(6.0, 0.06 * max(1, len(text))))
             cues.append(Cue(index, cursor, cursor + duration, (text,)))
             cursor += duration
-        srt_path = write(folder / "live.srt", to_srt(tuple(cues)))
+        srt_path = write(folder / f"{stem}.srt", to_srt(tuple(cues)))
         body = "\n\n".join(
             (f"[{line.speaker}]\n" if line.speaker else "")
             + line.original
             + (f"\n{line.translated}" if line.translated else "")
             for line in lines
         )
-        txt_path = write(folder / "live.txt", body + "\n")
+        txt_path = write(folder / f"{stem}.txt", body + "\n")
         settings = self.app.store.settings
         worker = self.app.engine.last_live
         duration = worker.audio_seconds if worker else cursor
@@ -374,7 +383,7 @@ class RealtimeScreen(QWidget):
             source_language=settings.from_lang,
             target_language=settings.to_lang,
             duration=duration,
-            created=datetime.now().isoformat(timespec="seconds"),
+            created=saved_at.isoformat(timespec="seconds"),
             folder=str(folder),
             outputs={"srt": str(srt_path), "txt": str(txt_path)},
         ))

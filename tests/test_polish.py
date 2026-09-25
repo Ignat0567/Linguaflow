@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -1039,6 +1040,31 @@ def test_the_live_screen_chooses_where_its_sound_comes_from(window):
     assert window.store.settings.capture_kind == "system"
     # Settings no longer carries a second copy of the same switch.
     assert not hasattr(window.findChild(SettingsScreen), "_capture")
+
+
+def test_a_saved_live_session_does_not_overwrite_the_one_before(
+    window, tmp_path, monkeypatch
+):
+    """Every session is saved into the same folder, and every one was called
+    live.srt: the second overwrote the first, and both history entries then
+    opened the second session's words."""
+    from PySide6.QtGui import QDesktopServices
+
+    from lt_ui.screens.realtime import Line
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: True)
+    window.store.settings.output_dir = str(tmp_path)
+    screen = window._realtime
+    for words in ("first session", "second session"):
+        screen._lines = [Line(original=words, translated=f"[ru] {words}")]
+        screen._save_transcript()
+
+    texts = [
+        Path(entry.outputs["txt"]).read_text(encoding="utf-8")
+        for entry in window.store.entries
+    ]
+    assert len({entry.outputs["txt"] for entry in window.store.entries}) == 2
+    assert "second session" in texts[0] and "first session" in texts[1]
 
 
 def test_the_window_is_never_narrower_than_its_navigation(window):
