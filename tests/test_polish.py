@@ -874,6 +874,48 @@ def test_the_window_asks_for_the_desktop_behind_it_to_be_blurred(window):
     assert "SetWindowCompositionAttribute" in source
 
 
+def test_a_window_the_desktop_cannot_show_through_is_painted_solid(
+    window, monkeypatch
+):
+    """Once the browser screen has been opened the window is on a Direct3D
+    surface, where whatever is left transparent is composed against white,
+    not the desktop -- measured, it turned every screen grey for the rest of
+    the session. There the window has to be painted solid; before that it
+    stays translucent, or the frosted desktop is lost for nothing."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QImage
+
+    window.resize(1280, 800)
+
+    def corner_alpha() -> int:
+        # `grab` fills its pixmap opaque first and would hide the difference.
+        image = QImage(window.size(), QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        window.render(image)
+        return QColor.fromRgba(image.pixel(5, image.height() - 5)).alpha()
+
+    monkeypatch.setattr(type(window), "lets_desktop_through", lambda self: True)
+    assert corner_alpha() < 255
+    monkeypatch.setattr(type(window), "lets_desktop_through", lambda self: False)
+    assert corner_alpha() == 255
+
+
+def test_only_a_software_surface_is_taken_to_let_the_desktop_through(window):
+    from PySide6.QtGui import QSurface
+
+    class Handle:
+        def __init__(self, kind):
+            self.kind = kind
+
+        def surfaceType(self):  # noqa: N802
+            return self.kind
+
+    window.windowHandle = lambda: Handle(QSurface.RasterSurface)
+    assert window.lets_desktop_through()
+    window.windowHandle = lambda: Handle(QSurface.Direct3DSurface)
+    assert not window.lets_desktop_through()
+
+
 @pytest.mark.parametrize("mode, fill", [("dark", "TINT_DARK"), ("light", "TINT_LIGHT")])
 def test_the_styled_controls_keep_step_with_the_painted_ones(mode, fill):
     """The picker and the text field are the only two surfaces drawn by Qt's

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QPainter, QSurface
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -243,11 +243,31 @@ class Window(QWidget):
         painter.setCompositionMode(QPainter.CompositionMode_Source)
         painter.fillRect(self.rect(), Qt.transparent)
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        if not self.lets_desktop_through():
+            painter.fillRect(self.rect(), theme.base())
         painter.setOpacity(theme.WINDOW_OPACITY)
         if not self._backdrop.plain.isNull():
             painter.drawPixmap(0, 0, self._backdrop.plain)
         else:
             painter.fillRect(self.rect(), theme.base())
+
+    def lets_desktop_through(self) -> bool:
+        """Whether what is left transparent here shows the frosted desktop.
+
+        Only while the window is drawn in software. The first time the browser
+        screen is shown, Qt moves the whole window to a Direct3D surface -- a
+        web view cannot be drawn any other way -- and from then on, on every
+        screen, the transparent quarter is composed against plain white rather
+        than the desktop. Measured with a sheet of pure red behind the window:
+        before the browser the red came through, frosted; after it, none of
+        it did, and every pixel had risen by the same 64 on each channel, the
+        whole interface grey. Asking for the blur again on the new handle,
+        or QT_WIDGETS_RHI_BACKEND=opengl or d3d12, changes nothing. So on
+        that surface the window stops pretending and lays its own base
+        colour underneath.
+        """
+        handle = self.windowHandle()
+        return handle is None or handle.surfaceType() == QSurface.RasterSurface
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         self._backdrop.resize(self.width(), self.height())
