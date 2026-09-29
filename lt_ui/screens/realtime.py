@@ -175,6 +175,7 @@ class RealtimeScreen(QWidget):
         engine.live_update.connect(self._on_update)
         engine.live_failed.connect(self._on_fail)
         engine.live_stopped.connect(self._on_stopped)
+        engine.live_hearing.connect(self._on_hearing)
 
     def refresh(self) -> None:
         settings = self.app.store.settings
@@ -251,6 +252,33 @@ class RealtimeScreen(QWidget):
         self._record.blockSignals(True)
         self._record.setChecked(False)
         self._record.blockSignals(False)
+
+    def _on_hearing(self, hearing: bool, device: str) -> None:
+        """Say when the session is hearing nothing, and from where.
+
+        A device can be open, on time and empty, and on the screen that is
+        indistinguishable from a room where nobody is speaking. Reported from
+        use: a whole conference call translated as nothing, with «Слушаю…» on
+        the screen throughout -- the capture was the microphone, and the call
+        was coming out of the speakers.
+        """
+        if not self._mine:
+            return
+        if hearing:
+            self._status.setText(_("Слушаю…"))
+            return
+        if self.app.store.settings.capture_kind == "microphone":
+            self._status.setText(_(
+                "Тишина на «{device}». Если это созвон, переключите на "
+                "«Звук системы» — из микрофона слышно вас, а не собеседника.",
+                device=device,
+            ))
+        else:
+            self._status.setText(_(
+                "Тишина на «{device}». Проверьте, что звук идёт именно "
+                "на это устройство.",
+                device=device,
+            ))
 
     def _on_stopped(self) -> None:
         if not self._mine:

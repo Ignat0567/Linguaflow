@@ -244,6 +244,20 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Тишина на «{device}». Если это созвон, переключите на "
+    "«Звук системы» — из микрофона слышно вас, а не собеседника.": (
+        "Silence on «{device}». On a call, switch to "
+        "«System sound» — a microphone hears you, not the other side.",
+        "Stille auf «{device}». Bei einem Anruf auf "
+        "«Systemton» umschalten — ein Mikrofon hört Sie, nicht die Gegenseite.",
+    ),
+    "Тишина на «{device}». Проверьте, что звук идёт именно "
+    "на это устройство.": (
+        "Silence on «{device}». Check that the sound really goes "
+        "to that device.",
+        "Stille auf «{device}». Prüfen Sie, ob der Ton wirklich "
+        "an dieses Gerät geht.",
+    ),
     "Проверьте язык": ("Check the language", "Sprache prüfen"),
     "Запись звучит как {heard}, а распознавали как {used}. "
     "По неверному языку текст выходит связным и выдуманным — "

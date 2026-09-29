@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from pathlib import Path
+
+import numpy as np
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
@@ -166,6 +169,21 @@ class BatchWorker(QThread):
             self.failed.emit(str(error))
 
 
+#: A block quieter than this counts as nothing heard.
+#:
+#: Room tone on an open microphone sits an order of magnitude under it and a
+#: muted line is zero; speech across a desk is well over. Measured on this
+#: machine: a loopback with a call playing peaked at 0.29, a device that was
+#: open and delivering nothing peaked at 0.0.
+HEARING_FLOOR = 0.01
+
+#: How long a session may hear nothing before it says so.
+#:
+#: Longer than any pause between sentences and shorter than the patience of
+#: somebody watching a screen that claims to be listening.
+DEAF_AFTER = 6.0
+
+
 class LiveWorker(QThread):
     """Capture loop. Emits LiveUpdate as the session produces them."""
 
@@ -180,6 +198,13 @@ class LiveWorker(QThread):
     #: seconds, sent as it starts. The browser screen holds the video when
     #: this grows.
     lagging = Signal(float)
+    #: False with the device's name once a session has heard nothing for
+    #: DEAF_AFTER, True again the moment it does. A live session that hears
+    #: nothing looks exactly like one where nobody is speaking, and reported
+    #: from use it is the difference between «it is working» and «this is
+    #: useless»: the screen said «Слушаю…» for a whole conference call while
+    #: listening to a microphone the call was never going to reach.
+    hearing = Signal(bool, str)
 
     def __init__(
         self,
@@ -205,6 +230,20 @@ class LiveWorker(QThread):
         #: Lines read aloud, and lines skipped to catch up, this session.
         self.read_lines = 0
         self.skipped_lines = 0
+        #: When a block above HEARING_FLOOR last arrived, and whether the
+        #: silence has already been reported. Read by the watchdog thread.
+        self._heard_sound_at: float | None = None
+        self._deaf = False
+
+    def _watch_for_silence(self, label: str) -> None:
+        """Say so once nothing has been heard for DEAF_AFTER."""
+        while not self._stop.is_set():
+            self._stop.wait(0.2)
+            if self._deaf or self._heard_sound_at is None:
+                continue
+            if time.monotonic() - self._heard_sound_at >= DEAF_AFTER:
+                self._deaf = True
+                self.hearing.emit(False, label)
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -293,6 +332,19 @@ class LiveWorker(QThread):
                 self.failed.emit(str(error))
                 return
         self._source = source
+        self._heard_sound_at = time.monotonic()
+        self._deaf = False
+        # On its own thread, because the worst case is a device that sends
+        # nothing whatsoever: a check that runs when a block arrives never
+        # runs at all for exactly the session it is meant to catch. The
+        # loopback and page sources manufacture their silence and would have
+        # been caught; a stalled microphone would not.
+        watchdog = threading.Thread(
+            target=self._watch_for_silence,
+            args=(str(getattr(device, "label", "") or ""),),
+            daemon=True,
+        )
+        watchdog.start()
         reader = _Reader(
             voices, gate, session, clock=lambda: self.heard,
             announce=self.speaking.emit, report=self.lagging.emit,
@@ -305,6 +357,20 @@ class LiveWorker(QThread):
                 if gate is not None:
                     chunk = gate.filter(chunk)
                 self.heard = chunk.end_time
+
+                # Is anything actually arriving? A device can be open, on
+                # time and empty: the wrong endpoint, a muted line, a
+                # microphone in a room where the sound is coming out of the
+                # speakers. Every one of those looks like a pause.
+                loudest = (
+                    float(np.abs(chunk.samples).max()) if chunk.samples.size else 0.0
+                )
+                if loudest >= HEARING_FLOOR:
+                    self._heard_sound_at = time.monotonic()
+                    if self._deaf:
+                        self._deaf = False
+                        self.hearing.emit(
+                            True, str(getattr(device, "label", "") or ""))
                 produced = session.feed(chunk)
                 updates = produced if isinstance(produced, list) else [produced]
                 for item in updates:
@@ -536,6 +602,7 @@ class Engine(QObject):
     live_stopped = Signal()
     live_speaking = Signal(bool)
     live_lagging = Signal(float)
+    live_hearing = Signal(bool, str)
 
     def __init__(self, parent: QObject | None = None, keys=None,
                  data_root: Path | None = None) -> None:
@@ -624,6 +691,7 @@ class Engine(QObject):
         worker.stopped.connect(self.live_stopped)
         worker.speaking.connect(self.live_speaking)
         worker.lagging.connect(self.live_lagging)
+        worker.hearing.connect(self.live_hearing)
         self._live = worker
         worker.start()
 
