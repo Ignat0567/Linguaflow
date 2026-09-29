@@ -244,6 +244,10 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Не удалось получить список звуковых устройств: {reason}": (
+        "Could not read the list of sound devices: {reason}",
+        "Die Liste der Audiogeräte konnte nicht gelesen werden: {reason}",
+    ),
     "Тишина на «{device}». Если это созвон, переключите на "
     "«Звук системы» — из микрофона слышно вас, а не собеседника.": (
         "Silence on «{device}». On a call, switch to "

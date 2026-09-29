@@ -553,3 +553,64 @@ def test_the_gate_forgets_old_lines():
     with gate.playing():
         pass
     assert len(gate._spans) <= 2
+
+
+# -- asking the machine what sound hardware it has -----------------------
+
+def test_no_default_output_does_not_take_the_microphones_with_it():
+    """Found live: with no usable output endpoint, the default-output lookup
+    raised and `list_capture_devices` raised with it -- and that list is
+    where the live session looks a *microphone* up. One endpoint going away
+    left the session with no device and no reason given.
+    """
+    from lt_core.audio import devices as devices_module
+
+    def broken() -> list:
+        raise OSError("[Errno -9996] Invalid device info")
+
+    original = devices_module.list_system_outputs
+    devices_module.list_system_outputs = broken
+    try:
+        found = devices_module.list_capture_devices()
+    finally:
+        devices_module.list_system_outputs = original
+    assert all(d.kind == "microphone" for d in found)
+
+
+def test_the_default_output_is_matched_on_the_name_as_cleaned():
+    """Both sides of the comparison are put through the same tidying.
+
+    Raw against cleaned matches only for devices whose name needed no
+    cleaning. A Bluetooth headset reports an unexpanded resource reference,
+    so it would never be recognised as the default -- and the default would
+    quietly become whichever device happened to sort first, which is the
+    wrong thing to record.
+    """
+    import inspect
+
+    from lt_core.audio import devices as devices_module
+
+    source = inspect.getsource(devices_module.list_system_outputs)
+    assert "_clean_name(str(pa.get_device_info_by_index(" in source, (
+        "the default output's name is compared raw"
+    )
+
+
+def test_a_device_list_that_raises_is_a_message_and_not_a_dead_thread(monkeypatch):
+    """Uncaught it kills the worker on the way in, and the screen waits for a
+    session that will never say anything."""
+    from lt_ui import engine as engine_module
+    from lt_ui.store import Settings
+
+    def boom(kind):
+        raise OSError("[Errno -9996] Invalid device info")
+
+    monkeypatch.setattr(engine_module, "default_device", boom)
+    monkeypatch.setattr(engine_module, "list_capture_devices", boom)
+    worker = engine_module.LiveWorker(
+        Settings(capture_kind="microphone"), object(), object())
+    refusals: list[str] = []
+    worker.failed.connect(refusals.append)
+    worker.run()
+    assert refusals, "it died without saying anything"
+    assert "-9996" in refusals[0] or "Invalid device info" in refusals[0]

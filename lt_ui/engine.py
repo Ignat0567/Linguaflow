@@ -254,9 +254,26 @@ class LiveWorker(QThread):
     def run(self) -> None:
         settings = self.settings
         given = self._given
-        device = None if given is not None else default_device(settings.capture_kind)
+        try:
+            device = (None if given is not None
+                      else default_device(settings.capture_kind))
+        except Exception as error:  # noqa: BLE001 -- asking the machine what
+            # sound hardware it has can fail outright: a device removed while
+            # the list is being read, an audio service restarting, a session
+            # with no endpoint at all. Uncaught it kills this thread on the
+            # way in, and the screen waits for a session that will never say
+            # anything -- the same silence a user has already reported once.
+            self.failed.emit(_(
+                "Не удалось получить список звуковых устройств: {reason}",
+                reason=str(error) or type(error).__name__,
+            ))
+            return
         if given is None and device is None:
-            available = ", ".join(d.label for d in list_capture_devices()[:4]) or _("нет")
+            try:
+                names = [d.label for d in list_capture_devices()[:4]]
+            except Exception:  # noqa: BLE001 -- naming them is a courtesy
+                names = []
+            available = ", ".join(names) or _("нет")
             self.failed.emit(_(
                 "Не найдено устройство захвата «{kind}». Доступны: {available}.",
                 kind=_("Микрофон") if settings.capture_kind == "microphone"
