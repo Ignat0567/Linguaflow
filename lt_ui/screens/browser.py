@@ -69,6 +69,15 @@ class BrowserScreen(QWidget):
         #: True while the engine's live session is this screen's. The
         #: realtime screen listens to the same engine signals.
         self._mine = False
+        #: A player puts its own captions back up a moment after the page
+        #: settles, so they are hidden a second time. Owned by this screen
+        #: rather than left as a loose singleShot: a language change builds
+        #: the screens again, and a timer with no owner would still fire --
+        #: into a page that no longer exists.
+        self._recaption = QTimer(self)
+        self._recaption.setSingleShot(True)
+        self._recaption.setInterval(3000)
+        self._recaption.timeout.connect(self._hide_captions_again)
         self._original = ""
         self._partial = ""
         self._translated = ""
@@ -216,8 +225,14 @@ class BrowserScreen(QWidget):
         last = self.app.store.settings.browser_url
         self._view.load(QUrl(last if last.startswith("http") else HOME_URL))
 
+    def _hide_captions_again(self) -> None:
+        """The player's own captions, back a moment after the page settled."""
+        if self._mine and self._page is not None:
+            hide_page_captions(self._page)
+
     def shutdown(self) -> None:
         """Stop translating before the widgets go (language change, quit)."""
+        self._recaption.stop()
         self._stop_ahead("")
         if self._mine or self._pending_start:
             self._pending_start = False
@@ -540,7 +555,7 @@ class BrowserScreen(QWidget):
             hide_page_captions(self._page)
             # Once more when the original has loaded and the player has put
             # its own captions up again.
-            QTimer.singleShot(3000, lambda: self._mine and hide_page_captions(self._page))
+            self._recaption.start()
             self._tap.start(self._source)
             self._status.setText(_("Жду, когда заиграет видео"))
         else:

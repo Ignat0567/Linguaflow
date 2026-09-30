@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -464,7 +464,14 @@ class SettingsScreen(QWidget):
     def _sync_ui_language(self, code: str) -> None:
         self.app.store.settings.ui_language = code
         self.app.store.save_settings()
-        self.app.apply_language()
+        # A language change builds every screen again -- this one included,
+        # so the chip that reports the change is inside the tree the change
+        # destroys. Doing that here would delete the widget while Qt is
+        # still dispatching the mouse click that reached it, and while the
+        # window procedure that delivered the click is still on the stack.
+        # One turn of the event loop lets the click finish first. The window
+        # outlives the rebuild, so it is safe to hold the call.
+        QTimer.singleShot(0, self.app.apply_language)
 
     def _sync_match(self, on: bool) -> None:
         self.app.store.settings.match_voices = on

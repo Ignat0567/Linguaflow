@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
+from . import crashlog
 from . import system_backdrop
 from lt_core import messages
 
@@ -287,6 +288,9 @@ def run(
         import tempfile
         data_dir = tempfile.mkdtemp(prefix="linguaflow-")
     store = Store(data_dir) if data_dir else Store()
+    # Before any window exists: an exception raised inside a Qt slot ends the
+    # process outright, and without this there is nothing left to read.
+    crashlog.install(store.root)
     if screenshot:
         _seed_preview(store)
     window = Window(store)
