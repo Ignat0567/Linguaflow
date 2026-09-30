@@ -160,3 +160,21 @@ def test_when_sound_comes_back_it_goes_back_to_listening(app, tmp_path):
         assert screen._status.text() == "Слушаю…"
     finally:
         window.close()
+
+
+def test_the_silence_names_the_device_the_way_a_sentence_can_carry_it():
+    """`label` is built for the picker: it carries a bracketed kind and a
+    star for the default. Dropped into «Тишина на «...»» that reads as
+    «Тишина на «[Система] Kopfhörer (3- SoundCore 2) ★»».
+
+    Seen on a real device, which is the only place it could be seen.
+    """
+    import inspect
+
+    from lt_ui import engine as engine_module
+
+    source = inspect.getsource(engine_module.LiveWorker.run)
+    assert 'getattr(device, "label"' not in source, (
+        "the picker's decorations are being read out in a sentence"
+    )
+    assert 'getattr(device, "name"' in source

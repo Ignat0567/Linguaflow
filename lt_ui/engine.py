@@ -358,7 +358,10 @@ class LiveWorker(QThread):
         # been caught; a stalled microphone would not.
         watchdog = threading.Thread(
             target=self._watch_for_silence,
-            args=(str(getattr(device, "label", "") or ""),),
+            # The plain name, not `label`: that one carries "[Система]" and
+            # a star for the picker to show, and inside a sentence it reads
+            # as «Тишина на «[Система] Kopfhörer ★»».
+            args=(str(getattr(device, "name", "") or ""),),
             daemon=True,
         )
         watchdog.start()
@@ -387,7 +390,7 @@ class LiveWorker(QThread):
                     if self._deaf:
                         self._deaf = False
                         self.hearing.emit(
-                            True, str(getattr(device, "label", "") or ""))
+                            True, str(getattr(device, "name", "") or ""))
                 produced = session.feed(chunk)
                 updates = produced if isinstance(produced, list) else [produced]
                 for item in updates:
