@@ -69,6 +69,7 @@ def shorten_cues(
     overhead: float = 0.0,
     measure=None,
     records: list[Condensed] | None = None,
+    on_batch=None,
 ) -> tuple[list, list[Condensed], ShortenReport]:
     """Shorten the lines that still do not fit, using the model.
 
@@ -110,7 +111,8 @@ def shorten_cues(
     size = max(1, int(getattr(provider, "shorten_lines_per_request",
                               SHORTEN_LINES_PER_REQUEST)))
     answers: list[str] = []
-    for start in range(0, len(pending), size):
+    batches = (len(pending) + size - 1) // size
+    for done, start in enumerate(range(0, len(pending), size), start=1):
         chunk = pending[start:start + size]
         try:
             answers.extend(
@@ -121,6 +123,8 @@ def shorten_cues(
             report.failed = str(error)
             report.lost += len(chunk)
             answers.extend(text for _index, text, _budget in chunk)
+        if on_batch is not None:
+            on_batch(done, batches)
 
     for (index, original, budget), answer in zip(pending, answers):
         candidate = (answer or "").strip()

@@ -114,9 +114,21 @@ def list_system_outputs() -> list[DeviceInfo]:
             wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
         except OSError:
             return []
-        default_output = pa.get_device_info_by_index(
-            wasapi["defaultOutputDevice"]
-        )["name"]
+        # Cleaned, because the names it is about to be compared against are.
+        # Raw against cleaned matches only for devices whose name needed no
+        # cleaning, and silently fails for the ones that did -- a Bluetooth
+        # headset reports `Kopfhoerer (@System32\drivers\...%1 Hands-Free%0...)`
+        # and would never be recognised as the default, so the default would
+        # be whichever device happened to sort first.
+        try:
+            default_output = _clean_name(str(pa.get_device_info_by_index(
+                wasapi["defaultOutputDevice"])["name"]))
+        except (OSError, KeyError, TypeError, ValueError):
+            # No default output at all: every endpoint gone, or a session
+            # without one. Nothing is the default then, which is a fact
+            # about the list rather than a reason not to have one -- and
+            # this list is where the microphones come from too.
+            default_output = ""
 
         found: list[DeviceInfo] = []
         seen: set[str] = set()
@@ -195,7 +207,16 @@ def list_capture_devices(prefer_dshow: bool = True) -> list[DeviceInfo]:
     else:
         microphones = list_microphones()
 
-    devices = microphones + list_system_outputs()
+    try:
+        outputs = list_system_outputs()
+    except Exception:  # noqa: BLE001 -- see `list_system_outputs`
+        # Whatever went wrong with the outputs, the microphones are still
+        # there, and this list is what the live session looks a microphone up
+        # in. Losing them because an output misbehaved leaves the session
+        # with no device and no reason given.
+        outputs = []
+
+    devices = microphones + outputs
     return sorted(
         devices,
         key=lambda d: (not d.is_default, d.is_low_quality, d.kind, d.name.lower()),

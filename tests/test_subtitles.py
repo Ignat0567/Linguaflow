@@ -91,6 +91,41 @@ def test_cues_do_not_overlap():
         assert later.start >= earlier.end
 
 
+def test_a_word_stretched_across_a_pause_is_not_a_thirteen_second_cue():
+    """Real German lecture: Whisper timed 'eine' at 13.3 s and 'schlechte'
+    at another 13.3 s, so four one-word cues for one short sentence."""
+    segment = Segment(
+        text="Das ist eine schlechte Bewegung.",
+        start=29.22, end=59.33,
+        words=words([
+            (" Das", 29.22, 31.72),
+            (" ist", 31.72, 31.80),
+            (" eine", 31.80, 45.10),
+            (" schlechte", 45.18, 58.48),
+            (" Bewegung.", 58.56, 59.33),
+        ]),
+    )
+    result = build_cues(transcript([segment], language="de"))
+    assert not any(
+        cue.duration > 8.0 and len(cue.flat_text.split()) == 1
+        for cue in result
+    ), [ (cue.flat_text, round(cue.duration, 1)) for cue in result ]
+    assert "Bewegung" in " ".join(cue.flat_text for cue in result)
+
+
+def test_the_same_line_said_three_times_in_a_row_is_one_cue():
+    """Same lecture: 'Und dann aber auch in der Ukraine.' three times
+    over 3.8 seconds."""
+    line = "Und dann aber auch in der Ukraine."
+    copies = [
+        sentence(line, start, pace=0.15, language="de")
+        for start in (222.10, 223.96, 225.80)
+    ]
+    result = build_cues(transcript(copies, language="de"))
+    texts = [cue.flat_text.strip() for cue in result]
+    assert texts.count(line) == 1
+
+
 def test_original_token_spacing_is_preserved():
     """Regression: re-joining with a uniform space corrupted text.
 
@@ -322,3 +357,71 @@ def test_unknown_format_is_rejected_before_any_work():
 @pytest.mark.parametrize("language", ["en", "de", "ru", "es", "it", "fr"])
 def test_latin_languages_share_the_default_style(language):
     assert CueStyle.for_language(language) == CueStyle()
+
+
+# -- a cue that will not fit, beside one that will -----------------------
+
+def _fits_ten(text: str) -> bool:
+    """Stand-in for the real wrapper: anything over ten characters spills."""
+    return len(text.strip()) > 10
+
+
+def test_a_cue_that_overflows_hands_a_word_to_the_one_beside_it():
+    """Splitting by proportion divides the translation the way the source
+    divided, and Russian runs 15-20% longer than English, so the cue that
+    was already fullest is the one that overflows -- next to neighbours that
+    are half empty. Measured on a ten-minute lecture: 19 of 114 translated
+    cues needed a third line, and for 13 the whole sentence fitted inside
+    its cues' combined room.
+    """
+    from lt_core.subtitles.bilingual import distribute
+
+    shares = distribute("aaa bbb ccc ddd", [3, 1], overflows=_fits_ten)
+    assert all(not _fits_ten(share) for share in shares), shares
+    assert " ".join(shares).split() == ["aaa", "bbb", "ccc", "ddd"]
+
+
+def test_nothing_is_dropped_or_reordered():
+    from lt_core.subtitles.bilingual import distribute
+
+    words = [f"w{n}" for n in range(24)]
+    shares = distribute(" ".join(words), [9, 1, 1, 1], overflows=_fits_ten)
+    assert " ".join(s for s in shares if s).split() == words
+
+
+def test_with_nowhere_to_put_it_the_words_stay_where_they_are():
+    """Never dropped to make it fit -- that would change what was said."""
+    from lt_core.subtitles.bilingual import distribute
+
+    shares = distribute("aaaa bbbb cccc dddd", [1, 1], overflows=_fits_ten)
+    assert " ".join(shares).split() == ["aaaa", "bbbb", "cccc", "dddd"]
+
+
+def test_a_sentence_in_one_cue_is_left_alone():
+    from lt_core.subtitles.bilingual import distribute
+
+    assert distribute("much too long for ten", [1], overflows=_fits_ten) == [
+        "much too long for ten"]
+
+
+def test_without_being_told_what_fits_the_split_is_what_it_always_was():
+    """Callers that do not ask for this must get exactly the old answer."""
+    from lt_core.subtitles.bilingual import distribute
+
+    text = " ".join(f"w{n}" for n in range(24))
+    assert distribute(text, [9, 1, 1, 1]) == distribute(
+        text, [9, 1, 1, 1], overflows=None)
+
+
+def test_the_real_wrapper_is_what_the_pipeline_measures_against():
+    """A character budget is the wrong proxy: 78 characters can still need
+    three lines when a long word lands across the break."""
+    import inspect
+
+    from lt_core.pipeline import batch
+
+    source = inspect.getsource(batch._spread)
+    assert "_wrap(" in source and "max_lines" in source
+    assert "overflows=overflows" in source, (
+        "the spread measures what fits and then does not pass it on"
+    )

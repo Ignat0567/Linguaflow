@@ -27,7 +27,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .. import languages
-from ..asr.transcriber import TranscribeOptions, Transcriber
+from ..abbreviations import is_abbreviation
+from ..asr.transcriber import TranscribeOptions, Transcriber, _with_terms
 from ..asr.types import Word
 from ..audio.types import TARGET_SAMPLE_RATE, AudioChunk
 from ..mt.translator import Translator
@@ -35,6 +36,11 @@ from .agreement import LocalAgreement
 
 _SENTENCE_END = re.compile(r"[.!?…。！？]['\"»”’)\]］】」』]*\s*$")
 _CLAUSE_END = re.compile(r"[,;:—–、，；：]['\"»”’)\]]*\s*$")
+
+#: Confidence at which a detected source language is pinned for the session.
+#: Speech is detected at 0.99-1.00 within a second (Day 4); a pause, music or
+#: silence comes out far lower, and those are the windows not to pin on.
+PIN_LANGUAGE_AT = 0.7
 
 #: How long a sentence may go unfinished before part of it is committed anyway.
 #:
@@ -55,6 +61,38 @@ HOLD_LIMIT = 24.0
 #: is what makes the model invent -- measured on Day 3, "Yes." came back as
 #: "Нет, нет."
 MIN_CLAUSE_WORDS = 4
+
+#: Peak level below which audio not yet committed is taken to be silence, and
+#: the transcriber is not asked about it. About -54 dBFS.
+#:
+#: Given silence, Whisper does not return nothing: it returns "Thank you." --
+#: measured, three runs out of three on six seconds of it, committed and
+#: translated as «Спасибо.». A system-sound session begins with exactly that,
+#: because an idle output device sends no audio and the source makes up the
+#: time with zeros, and it gets it again at every pause of the video. The
+#: level is far under any speech, which peaks tens of decibels higher, so this
+#: silences only what has nothing in it to hear.
+SILENCE_PEAK = 0.002
+
+#: How much of the silence either side of the speech in the buffer the model
+#: still gets to hear. Enough that no word loses its first or last sound.
+#:
+#: The rest is not handed over. With a long silence beside it, the model
+#: repeats the speech into the quiet: a video paused mid-sentence came back
+#: as "I will leave time for questions at the end, so I will leave time for
+#: questions at the end", two passes agreed on it, and it was translated
+#: twice over. Measured on the lecture with a 15-second pause.
+SILENCE_MARGIN = 0.5
+
+#: Silence at the end of the buffer long enough to call the speech stopped.
+#: Speech itself never contains this: between words and sentences there is
+#: still the room, and only a player that has stopped sends true silence.
+#:
+#: Once the words before it are settled, the silence is passed over and let
+#: go of. Kept, the next pass after a video paused mid-word read speech, the
+#: fifteen quiet seconds and speech again, and invented a sentence out of the
+#: gap that was committed without agreement.
+PAUSE_AFTER = 1.5
 
 
 @dataclass(frozen=True)
@@ -116,10 +154,22 @@ class LiveUpdate:
 
     #: Text confirmed on this tick. Never revised afterwards.
     committed: str = ""
+    #: Whether `committed` begins a new word. Whisper's tokens carry their own
+    #: leading space and `committed` is stripped, so without this a screen
+    #: appending tick after tick has to guess -- and both guesses are wrong
+    #: somewhere: glued, "with you today" + "for your" reads "todayfor";
+    #: spaced, "$12" + ",000" reads "$12 ,000". Use `append_committed`.
+    committed_space: bool = True
     #: The provisional tail. Replaced wholesale on the next tick.
     partial: str = ""
     #: Translation of whatever sentences completed on this tick.
     translation: str = ""
+    #: The source text `translation` translates -- the finished sentences,
+    #: not whatever was committed by the time they were. A screen that closed
+    #: its line when a translation arrived put the next sentence's first
+    #: words over the previous sentence's translation and began the next
+    #: line mid-sentence. Empty where not known (conversation mode).
+    translation_source: str = ""
     #: The sentence still being spoken, translated provisionally. Replaced
     #: wholesale on the next tick, exactly as `partial` is, and superseded by
     #: `translation` once the sentence finishes.
@@ -199,9 +249,13 @@ class LiveSession:
         pace: Pace = BALANCED,
         speaker: str | None = None,
         carry_context: bool = True,
+        terms: tuple[str, ...] = (),
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
+        #: Names and words to spell as given -- the user's «Слова из записи»,
+        #: which reached file mode and never the live one.
+        self.terms = tuple(terms)
         self.source_language = source_language
         self.target_language = target_language
         self.pace = pace
@@ -228,6 +282,8 @@ class LiveSession:
         self._consumed = 0.0
         self._last_run_at = 0.0
         self._untranslated: list[Word] = []
+        #: What the last translation was made from; see LiveUpdate.
+        self._translated_source = ""
         #: The last provisional translation, and the text it was made from, so
         #: a sentence that has not grown is not translated again.
         self._preview: tuple[str, str] = ("", "")
@@ -269,8 +325,10 @@ class LiveSession:
             translation = self._translate(force=True)
             return LiveUpdate(
                 committed="".join(word.text for word in tail).strip(),
+                committed_space=_starts_word(tail),
                 partial="",
                 translation=translation,
+                translation_source=self._translated_source if translation else "",
                 translation_language=self.target_language or "",
                 speaker_language=self.source_language or "",
                 speaker=self.speaker,
@@ -286,8 +344,20 @@ class LiveSession:
         with self._lock:
             audio = self._buffer.copy()
             buffer_start = self._buffer_start
+            unsettled_from = max(0.0, self.agreement.committed_until - buffer_start)
         if audio.size < TARGET_SAMPLE_RATE // 4:
             return None
+
+        unsettled = audio[int(unsettled_from * TARGET_SAMPLE_RATE):]
+        if not unsettled.size or float(np.max(np.abs(unsettled))) < SILENCE_PEAK:
+            return self._quiet_tick()
+
+        loud = np.flatnonzero(np.abs(audio) >= SILENCE_PEAK)
+        quiet_tail = (audio.size - 1 - int(loud[-1])) / TARGET_SAMPLE_RATE
+        margin = int(SILENCE_MARGIN * TARGET_SAMPLE_RATE)
+        first = max(0, int(loud[0]) - margin)
+        audio = audio[first: min(audio.size, int(loud[-1]) + 1 + margin)]
+        buffer_start += first / TARGET_SAMPLE_RATE
 
         started = time.perf_counter()
         transcript = self.transcriber.transcribe(
@@ -308,6 +378,10 @@ class LiveSession:
                 # detection would run on every two-second window, and this
                 # path already carries its own context above.
                 punctuation_prompt=False,
+                # For the same reason: a language named once cannot be worth
+                # re-checking a hundred times a minute. Conversation mode does
+                # its own detection, over a window sized for the question.
+                verify_language=False,
                 # File mode carries the previous window's text forward, which
                 # is what makes it punctuate. Here a window is two seconds and
                 # the text before it is already supplied above, deliberately,
@@ -319,11 +393,20 @@ class LiveSession:
         self.stats.asr_seconds += time.perf_counter() - started
         self.stats.ticks += 1
 
-        if self.source_language is None and transcript.language:
+        if (
+            self.source_language is None
+            and transcript.language
+            and any(word.text.strip() for word in transcript.words)
+            and transcript.language_probability >= PIN_LANGUAGE_AT
+        ):
             # Detect once, then pin. Re-detecting every tick lets the model
             # change its mind mid-session on a short or accented window, and a
             # translation whose source language flips halfway through is worse
             # than one that is confidently wrong about a single word.
+            #
+            # But not off a window with nothing in it: a video's opening
+            # music or silence gets a language too, at low confidence, and
+            # pinning that decodes the rest of the session in the wrong one.
             self.source_language = transcript.language
             self.detected_language = transcript.language
 
@@ -356,6 +439,8 @@ class LiveSession:
             self._untranslated.extend(committed)
             partial = self.agreement.pending_text()
             self._trim()
+            if quiet_tail >= PAUSE_AFTER and not self.agreement.pending():
+                self._let_go_of_silence()
             translation = self._translate()
             preview = self._provisional()
 
@@ -364,8 +449,10 @@ class LiveSession:
 
         return LiveUpdate(
             committed="".join(word.text for word in committed).strip(),
+            committed_space=_starts_word(committed),
             partial=partial,
             translation=translation,
+            translation_source=self._translated_source if translation else "",
             partial_translation=preview,
             translation_language=self.target_language or "",
             speaker_language=self.source_language or "",
@@ -373,6 +460,41 @@ class LiveSession:
             audio_time=self._consumed,
             latency=latency,
         )
+
+    def _quiet_tick(self) -> LiveUpdate:
+        """A tick with nothing new to hear: no transcription, and no growth.
+
+        The commit point passes over the silence (see
+        `LocalAgreement.pass_over_silence`), and the silence itself is let go
+        of, all but a context's worth, so a video paused for ten minutes is not
+        ten minutes of buffer for the next pass to read.
+        A sentence already committed and waiting still gets its chance to be
+        translated, exactly as on a tick with speech in it.
+        """
+        with self._lock:
+            self._let_go_of_silence()
+            translation = self._translate()
+            return LiveUpdate(
+                translation=translation,
+                translation_source=self._translated_source if translation else "",
+                translation_language=self.target_language or "",
+                speaker_language=self.source_language or "",
+                speaker=self.speaker,
+                audio_time=self._consumed,
+            )
+
+    def _let_go_of_silence(self) -> None:
+        """Pass the commit point over the silence and keep only its last part.
+
+        Called with the lock held, and only when nothing heard is pending.
+        """
+        self.agreement.pass_over_silence(self._consumed)
+        surplus = self._buffer_duration - self.pace.context
+        if surplus > 0:
+            samples = int(surplus * TARGET_SAMPLE_RATE)
+            self._buffer = self._buffer[samples:]
+            self._buffer_start += samples / TARGET_SAMPLE_RATE
+            self.agreement.forget_before(self._buffer_start - 60.0)
 
     def _provisional(self) -> str:
         """The sentence still being spoken, translated as it stands.
@@ -449,6 +571,7 @@ class LiveSession:
         back unpunctuated once, a prompt made only of it keeps it that way.
         """
         opening = languages.punctuation_sample(self.source_language or "")
+        opening = _with_terms(opening or None, self.terms) or ""
         if not self.carry_context:
             return opening or None
         tail = self.agreement.committed[-30:]
@@ -499,6 +622,7 @@ class LiveSession:
         appeared at 40 s, they arrived a median of 10 s apart, and one of them
         was 496 characters of text delivered at once.
         """
+        self._translated_source = ""
         if self.translator is None or not self.target_language:
             self._untranslated.clear()
             return ""
@@ -510,7 +634,7 @@ class LiveSession:
         else:
             last = -1
             for index, word in enumerate(self._untranslated):
-                if _SENTENCE_END.search(word.text):
+                if _SENTENCE_END.search(word.text) and not is_abbreviation(word.text):
                     last = index
             if last < 0:
                 last = self._overdue_cut()
@@ -520,8 +644,13 @@ class LiveSession:
             self._untranslated = self._untranslated[last + 1:]
 
         text = "".join(word.text for word in ready).strip()
-        if not text:
+        if not any(character.isalnum() for character in text):
+            # A full stop committed on its own is a "sentence" by the rule
+            # above, and the model handed nothing but "." invents a line:
+            # measured live, it came back as «Нет , нет .». It stays on screen
+            # with the original; there is nothing in it to translate.
             return ""
+        self._translated_source = text
         self._preview = ("", "")
         started = time.perf_counter()
         try:
@@ -535,3 +664,18 @@ class LiveSession:
         finally:
             self.stats.mt_seconds += time.perf_counter() - started
         return results[0] if results else ""
+
+
+def _starts_word(words) -> bool:
+    """Whether the first of these words came with Whisper's leading space."""
+    return not words or words[0].text[:1].isspace()
+
+
+def append_committed(text: str, update: LiveUpdate) -> str:
+    """`text` with this tick's committed words added, spaced as spoken."""
+    if not update.committed:
+        return text
+    if not text:
+        return update.committed
+    joiner = " " if update.committed_space else ""
+    return text.rstrip() + joiner + update.committed

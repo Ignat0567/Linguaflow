@@ -408,3 +408,209 @@ def test_the_routing_check_is_told_where_the_voice_will_play():
               / "lt_ui" / "engine.py").read_text(encoding="utf-8")
     assert "check_routing(device, None)" not in worker
     assert "default_playback_name()" in worker
+
+
+# -- page audio (embedded browser) ---------------------------------------
+
+def _collect(source, seconds: float) -> list:
+    """Chunks the source emits within `seconds`, then stop it."""
+    chunks = []
+    deadline = time.monotonic() + seconds
+    source.start()
+    try:
+        while time.monotonic() < deadline:
+            try:
+                item = source._queue.get(timeout=0.05)
+            except Exception:  # noqa: BLE001 -- queue.Empty
+                continue
+            if item is None:
+                break
+            chunks.append(item)
+    finally:
+        source.stop()
+    # What stop() flushed: the last part-block and the resampler's tail.
+    while True:
+        item = source._queue.get(timeout=1.0)
+        if item is None:
+            break
+        chunks.append(item)
+    return chunks
+
+
+def test_page_audio_is_resampled_to_the_pipeline_rate():
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.push(tone(440, 1.0, 44_100), 44_100)
+    chunks = _collect(source, 0.6)
+    total = sum(c.samples.size for c in chunks)
+    # One second in, one second out (the resampler holds back a filter length).
+    assert abs(total - TARGET_SAMPLE_RATE) < 0.02 * TARGET_SAMPLE_RATE
+    assert all(c.samples.size == BLOCK_SAMPLES for c in chunks[:-1])
+
+
+def test_page_audio_accepts_pcm16_as_the_page_sends_it():
+    from lt_core.audio.capture import PageAudioSource
+
+    pcm = (tone(440, 0.5, 48_000) * 32767).astype(np.int16)
+    source = PageAudioSource()
+    source.push(pcm, 48_000)
+    chunks = _collect(source, 0.5)
+    peak = max(float(np.abs(c.samples).max()) for c in chunks)
+    assert 0.4 < peak < 0.6, "int16 must be scaled, not read as floats in the thousands"
+
+
+def test_an_ad_is_heard_as_silence_but_keeps_its_time():
+    """Ads play in the same <video>. Heard, they would be translated and
+    read out; dropped, every later subtitle would come early by their length."""
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.set_gated(True)
+    source.push(tone(440, 1.0, 16_000), 16_000)
+    chunks = _collect(source, 0.5)
+    total = sum(c.samples.size for c in chunks)
+    assert total == TARGET_SAMPLE_RATE
+    assert max(float(np.abs(c.samples).max()) for c in chunks) == 0.0
+    assert source.gated_seconds == pytest.approx(1.0)
+
+
+def test_the_clock_runs_on_while_the_page_sends_nothing():
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    chunks = _collect(source, source.SILENCE_AFTER + 0.8)
+    made_up = sum(c.samples.size for c in chunks) / TARGET_SAMPLE_RATE
+    assert made_up > 0.5
+    assert source.silence_blocks > 0
+
+
+def test_the_gap_between_two_drains_is_not_filled_with_silence():
+    """The page is drained in bursts. Silence made up between two of them
+    would push every later word late by the gap."""
+    from lt_core.audio.capture import PageAudioSource
+
+    source = PageAudioSource()
+    source.start()
+    try:
+        # What a drain returns is audio that has already played: the burst
+        # arrives after its own quarter second, never before it.
+        for _ in range(4):
+            time.sleep(0.25)
+            source.push(tone(440, 0.25, 16_000), 16_000)
+        time.sleep(0.1)
+    finally:
+        source.stop()
+    assert source.silence_blocks == 0
+
+# -- the gate judges by when a chunk was captured --------------------------
+
+def _chunk_at(moment: float) -> AudioChunk:
+    return AudioChunk(samples=np.ones(512, dtype=np.float32), start_time=0.0,
+                      captured_at=moment)
+
+
+def test_audio_captured_while_we_spoke_is_muted_when_looked_at_later():
+    """The consumer reading a line aloud looks at nothing until it is done.
+    What it then finds in the queue was captured during our voice -- the
+    echo -- and must be muted though the gate has long reopened. Measured
+    before this fix: 13.8 s of it in a minute went through."""
+    gate = EchoGate(tail=0.05)
+    with gate.playing():
+        during = time.monotonic()
+        time.sleep(0.02)
+    time.sleep(0.1)  # gate open again
+    assert not gate.is_shut
+    assert gate.filter(_chunk_at(during)).muted
+
+
+def test_audio_captured_before_we_spoke_is_kept_when_looked_at_during():
+    """The other way round: speech from before the line was read is the
+    other person talking, and was being muted -- 4.9 s in the same minute."""
+    gate = EchoGate(tail=0.05)
+    before = time.monotonic()
+    time.sleep(0.05)  # well past the ~15.6 ms tick of Windows' monotonic clock
+    with gate.playing():
+        assert not gate.filter(_chunk_at(before)).muted
+
+
+def test_the_tail_after_our_voice_is_still_muted_by_capture_time():
+    gate = EchoGate(tail=0.3)
+    with gate.playing():
+        pass
+    just_after = time.monotonic() + 0.1
+    time.sleep(0.4)
+    assert gate.filter(_chunk_at(just_after)).muted
+
+
+def test_the_gate_forgets_old_lines():
+    gate = EchoGate(tail=0.01)
+    gate.MEMORY = 0.05
+    for _ in range(3):
+        with gate.playing():
+            pass
+        time.sleep(0.08)  # each span older than MEMORY by the next one
+    with gate.playing():
+        pass
+    assert len(gate._spans) <= 2
+
+
+# -- asking the machine what sound hardware it has -----------------------
+
+def test_no_default_output_does_not_take_the_microphones_with_it():
+    """Found live: with no usable output endpoint, the default-output lookup
+    raised and `list_capture_devices` raised with it -- and that list is
+    where the live session looks a *microphone* up. One endpoint going away
+    left the session with no device and no reason given.
+    """
+    from lt_core.audio import devices as devices_module
+
+    def broken() -> list:
+        raise OSError("[Errno -9996] Invalid device info")
+
+    original = devices_module.list_system_outputs
+    devices_module.list_system_outputs = broken
+    try:
+        found = devices_module.list_capture_devices()
+    finally:
+        devices_module.list_system_outputs = original
+    assert all(d.kind == "microphone" for d in found)
+
+
+def test_the_default_output_is_matched_on_the_name_as_cleaned():
+    """Both sides of the comparison are put through the same tidying.
+
+    Raw against cleaned matches only for devices whose name needed no
+    cleaning. A Bluetooth headset reports an unexpanded resource reference,
+    so it would never be recognised as the default -- and the default would
+    quietly become whichever device happened to sort first, which is the
+    wrong thing to record.
+    """
+    import inspect
+
+    from lt_core.audio import devices as devices_module
+
+    source = inspect.getsource(devices_module.list_system_outputs)
+    assert "_clean_name(str(pa.get_device_info_by_index(" in source, (
+        "the default output's name is compared raw"
+    )
+
+
+def test_a_device_list_that_raises_is_a_message_and_not_a_dead_thread(monkeypatch):
+    """Uncaught it kills the worker on the way in, and the screen waits for a
+    session that will never say anything."""
+    from lt_ui import engine as engine_module
+    from lt_ui.store import Settings
+
+    def boom(kind):
+        raise OSError("[Errno -9996] Invalid device info")
+
+    monkeypatch.setattr(engine_module, "default_device", boom)
+    monkeypatch.setattr(engine_module, "list_capture_devices", boom)
+    worker = engine_module.LiveWorker(
+        Settings(capture_kind="microphone"), object(), object())
+    refusals: list[str] = []
+    worker.failed.connect(refusals.append)
+    worker.run()
+    assert refusals, "it died without saying anything"
+    assert "-9996" in refusals[0] or "Invalid device info" in refusals[0]

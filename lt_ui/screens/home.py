@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QDesktopServices, QFontMetrics
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from .. import glass, theme
 from ..i18n import _
@@ -19,18 +22,21 @@ class HomeScreen(QWidget):
 
         hero = QVBoxLayout()
         hero.setAlignment(Qt.AlignCenter)
-        title = glass.label(_("Что переводим сегодня?"), 52, 700, tracking=-3)
-        title.setAlignment(Qt.AlignCenter)
-        title.setMinimumWidth(720)
-        sub = glass.label(
+        self._title = glass.label(_("Что переводим сегодня?"), 52, 700, tracking=-3)
+        self._title.setAlignment(Qt.AlignHCenter)
+        self._title.setMinimumWidth(720)
+        self._sub = glass.label(
             _("Живой разговор или готовая запись — текст, субтитры или голос."),
             15, 400, theme.SECONDARY, wrap=True,
         )
-        sub.setAlignment(Qt.AlignCenter)
-        sub.setMaximumWidth(560)
-        hero.addWidget(title)
+        # Same box as the title: a narrower widget in a VBox sits on the left
+        # even when its text is centred, which is how the line ended up
+        # under the first word of the headline instead of under its middle.
+        self._sub.setAlignment(Qt.AlignHCenter)
+        self._sub.setMinimumWidth(720)
+        hero.addWidget(self._title, 0, Qt.AlignHCenter)
         hero.addSpacing(14)
-        hero.addWidget(sub)
+        hero.addWidget(self._sub, 0, Qt.AlignHCenter)
 
         live = GlassCard(self, accent=True)
         live.body.addWidget(glass.eyebrow("01  ·  Live", 0.70))
@@ -105,14 +111,15 @@ class HomeScreen(QWidget):
             self._recent.addWidget(self._empty)
             return
         for entry in entries:
-            self._recent.addWidget(_RecentCard(entry, self.app))
-        self._recent.addStretch()
+            self._recent.addWidget(_RecentCard(entry, self.app), 1)
 
 
 class _RecentCard(glass.GlassPanel):
     def __init__(self, entry, app) -> None:
         super().__init__(radius=theme.RADIUS_ROW)
-        self.setFixedWidth(220)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumWidth(180)
+        self._title_full = entry.title
         kind = _("Реальное время") if entry.is_live else _("Файл")
         tint = theme.accent(1.0) if entry.is_live else theme.ink(theme.TERTIARY)
         layout = QVBoxLayout(self)
@@ -123,8 +130,7 @@ class _RecentCard(glass.GlassPanel):
             f"color: rgba({tint.red()},{tint.green()},{tint.blue()},{tint.alphaF():.2f});"
             " background: transparent;"
         )
-        title = glass.label(entry.title, 14, 600)
-        title.setMaximumWidth(188)
+        self._title = glass.label(entry.title, 14, 600)
         meta = glass.label(
             f"{entry.source_language.upper()} → {entry.target_language.upper()}"
             f"    {format_clock(entry.duration)}",
@@ -139,10 +145,24 @@ class _RecentCard(glass.GlassPanel):
         )
         layout.addWidget(badge)
         layout.addSpacing(8)
-        layout.addWidget(title)
+        layout.addWidget(self._title)
         layout.addSpacing(12)
         layout.addWidget(line)
         layout.addSpacing(10)
         layout.addWidget(meta)
-        self.setCursor(self.cursor())
-        glass.clickable(self, lambda: app.goto("history"))
+        def open_entry() -> None:
+            if entry.folder and Path(entry.folder).exists():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(entry.folder))
+            else:
+                app.goto("history")
+
+        glass.clickable(self, open_entry)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        inner = max(40, self.width() - 32)
+        self._title.setText(
+            QFontMetrics(self._title.font()).elidedText(
+                self._title_full, Qt.ElideMiddle, inner
+            )
+        )
+        super().resizeEvent(event)

@@ -9,8 +9,8 @@ original is still there to be checked against.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +65,21 @@ DUCK_BRIDGE = 0.7
 #: accumulate across a recording.
 EARLY_START = 1.0
 
+#: Silence kept between two lines when one has to wait for the other.
+LINE_GAP = 0.12
+
+#: A line already this far behind the moment it was said may speak a little
+#: faster than the usual limit, to win the time back ...
+CATCH_UP_AFTER = 1.0
+#: ... but no faster than this: about 12 %, against about 9 % normally and
+#: the 18 % that was heard as hurried.
+CATCH_UP_SCALE = 0.78
+#: Far behind, the old ceiling comes back until the dub has caught up. A fast
+#: interviewer outran the 12 % one: on six minutes of Karpathy the dub fell
+#: 19.8 s behind the picture. A hurried line is the lesser fault than a
+#: translation of what was said twenty seconds ago.
+FAR_BEHIND, FAR_BEHIND_SCALE = 3.0, 0.72
+
 
 @dataclass
 class DubResult:
@@ -77,6 +92,10 @@ class DubResult:
     #: Which voice read which line, when the recording had more than one
     #: speaker in it. Empty when a single voice read the whole thing.
     cast: Cast | None = None
+    #: Lines that waited for the one before rather than speak over it, and
+    #: the longest wait, in seconds after the moment the line was said.
+    delayed: int = 0
+    worst_delay: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -103,6 +122,7 @@ def synthesise_track(
     total_seconds: float,
     rate: int = DUB_SAMPLE_RATE,
     cast: Cast | None = None,
+    on_line: Callable[[int, int], None] | None = None,
 ) -> DubResult:
     """Speak every cue into its own slot on one timeline.
 
@@ -115,6 +135,8 @@ def synthesise_track(
     result = DubResult(samples=track, rate=rate, cast=cast)
 
     spoken_until = 0.0
+    pending = sum(1 for cue in cues if cue.flat_text.strip())
+    spoken_lines = 0
     for index, cue in enumerate(cues):
         text = cue.flat_text.strip()
         if not text:
@@ -155,16 +177,38 @@ def synthesise_track(
                     utterance = roomier
                 else:
                     begin = cue.start
+        # Counted once the line has been synthesised, including one the
+        # voice returned empty: the walk is what the ring is following.
+        spoken_lines += 1
+        if on_line is not None:
+            on_line(spoken_lines, pending)
         if utterance.samples.size == 0:
             continue
+        if result.spoken and begin < spoken_until + LINE_GAP:
+            # Never two voices at once. Lines used to be added over each
+            # other when one ran into the next slot: 22 overlaps, 9.7 s in
+            # all, on a 27-minute video -- «неприемлемо». A line that would
+            # start over the one before waits for it instead; the delay is
+            # made up in the next pause.
+            begin = spoken_until + LINE_GAP
+            late = begin - cue.start
+            if late > CATCH_UP_AFTER:
+                hurried = voice.fit(
+                    text, begin, max(0.05, cue.start + slot - begin),
+                    fastest=FAR_BEHIND_SCALE if late > FAR_BEHIND else CATCH_UP_SCALE,
+                )
+                if hurried.duration < utterance.duration:
+                    utterance = hurried
+            result.delayed += 1
+            result.worst_delay = max(result.worst_delay, late)
+            utterance = replace(utterance, start=begin)
 
         samples = resample(utterance.samples, utterance.rate, rate)
         at = int(begin * rate)
         end = min(at + len(samples), length)
         if end > at:
-            # Added rather than assigned: a line that runs into the next slot
-            # overlaps it instead of cutting it off, which is how a person
-            # talking over the end of a sentence sounds.
+            # Added rather than assigned, so a line never cuts off the tail
+            # of the original's own sound; lines themselves no longer meet.
             track[at:end] += samples[: end - at]
 
         spoken_until = begin + utterance.duration
@@ -230,11 +274,16 @@ def mix(
     keep_original: bool = True,
     rate: int = DUB_SAMPLE_RATE,
     match_voices: bool = False,
+    speaker_model: Path | str | None = None,
+    on_line: Callable[[int, int], None] | None = None,
 ) -> DubResult:
     """Dub a recording: speak the cues, duck the original, mix the two.
 
     With `match_voices`, the original is measured first and each line is read
-    by a voice of the same register. That needs the original audio whether or
+    by a voice of the same register. With a `speaker_model` too, the people
+    are told apart by their voices first and each person gets one register
+    (`lt_core.tts.speakers`); pitch alone could not split a man and a woman
+    who share one. That needs the original audio whether or
     not it is kept in the mix, which is why it is loaded before anything is
     spoken.
     """
@@ -242,9 +291,15 @@ def mix(
 
     cast = None
     if match_voices and original is not None and isinstance(speaker, VoiceBank):
-        cast = casting.analyse(cues, original, rate)
+        people = _people(cues, original, rate, speaker_model)
+        if people is not None:
+            cast = casting.cast_people(cues, original, rate, people)
+        else:
+            cast = casting.analyse(cues, original, rate)
 
-    dub = synthesise_track(cues, speaker, total_seconds, rate=rate, cast=cast)
+    dub = synthesise_track(
+        cues, speaker, total_seconds, rate=rate, cast=cast, on_line=on_line
+    )
     if not keep_original or original is None:
         return dub
 
@@ -259,6 +314,20 @@ def mix(
         mixed *= 0.98 / peak
     dub.samples = mixed
     return dub
+
+
+def _people(cues, original: np.ndarray, rate: int, model) -> list[int] | None:
+    """Who speaks each cue, or None when the speaker model is not to hand."""
+    if model is None:
+        return None
+    try:
+        from . import speakers
+
+        voice_rate = 16_000
+        audio = resample(original, rate, voice_rate)
+        return speakers.speaker_of(speakers.identify(cues, audio, voice_rate, model), cues)
+    except Exception:  # noqa: BLE001 -- no model, no sherpa: pitch alone
+        return None
 
 
 def _load(media_path: Path | str, rate: int) -> np.ndarray:

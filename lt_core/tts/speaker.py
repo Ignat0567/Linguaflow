@@ -27,12 +27,15 @@ NATIVE_RATE = 22_050
 
 #: How far Piper's length_scale may be pushed to make a line fit.
 #:
-#: Below about 0.72 the voice stops sounding like a person. A line that still
-#: does not fit is allowed to run over rather than be squeezed further -- an
-#: overlap of a few hundred milliseconds is far less noticeable than a
-#: chipmunk. It is never stretched to fill silence either: a dub that drawls
+#: At 0.72 -- the old floor, about 18 % faster -- the voice still sounds like
+#: a person, but a hurried one, and listened to on a 27-minute video the
+#: hurried lines were the ones that sounded wrong: «Руслан неплохо, там где
+#: скорость речи приемлемая». 0.84 is about 9 % faster (LENGTH_RESPONSE),
+#: the text is shortened to match (SPEED_HEADROOM in the pipeline), and a
+#: line that still does not fit waits for its turn rather than being
+#: squeezed. It is never stretched to fill silence either: a dub that drawls
 #: sounds worse than one that finishes early.
-MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.72, 1.0
+MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.84, 1.0
 
 #: How much of a change in length_scale actually reaches the duration.
 #:
@@ -46,6 +49,43 @@ MIN_LENGTH_SCALE, MAX_LENGTH_SCALE = 0.72, 1.0
 #: line before it stops sounding human, so a translation much longer than its
 #: original will overrun however it is asked.
 LENGTH_RESPONSE = 0.55
+
+
+#: Voices from outside Piper's own catalogue: name -> Hugging Face repo.
+#:
+#: Russian has one female Piper voice, irina, and listened to against the
+#: alternatives she was turned down flat («как тупая»). terra is a community
+#: voice (rraaww/ru_piper, Apache-2.0), trained on about two hours -- the
+#: author calls most of his models experiments, terra one of the two that
+#: had enough data. Chosen by ear over mari and kat; igm turned out male.
+EXTRA_VOICES: dict[str, str] = {
+    "ru_RU-terra5871-medium": "rraaww/ru_piper",
+}
+
+#: Phoneme sequences a voice was trained to hear differently.
+#:
+#: terra was trained with its author's own espeak rules, and standard espeak
+#: writes «ч» as t ʃ ʲ, which terra reads close to «ш»: «честно» came out
+#: «шестно». Written t ɕ instead it was heard right, of three variants
+#: listened to side by side.
+PHONEME_FIXES: dict[str, tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]] = {
+    "ru_RU-terra5871-medium": ((("t", "ʃ", "ʲ"), ("t", "ɕ")),),
+}
+
+
+def _refit_phonemes(phonemes: list[str], fixes) -> list[str]:
+    result: list[str] = []
+    index = 0
+    while index < len(phonemes):
+        for old, new in fixes:
+            if tuple(phonemes[index:index + len(old)]) == old:
+                result.extend(new)
+                index += len(old)
+                break
+        else:
+            result.append(phonemes[index])
+            index += 1
+    return result
 
 
 class VoiceError(RuntimeError):
@@ -134,6 +174,8 @@ class Speaker:
         from piper import PiperVoice
 
         path = self.voices_dir / f"{self.voice_name}.onnx"
+        if not path.exists() and self.voice_name in EXTRA_VOICES:
+            self._fetch_extra(path)
         if not path.exists():
             raise VoiceError(
                 f"Голос «{self.voice_name}» не скачан. Загрузите его командой:\n"
@@ -141,10 +183,34 @@ class Speaker:
                 f"{self.voice_name}"
             )
         try:
-            return PiperVoice.load(str(path.resolve()))
+            voice = PiperVoice.load(str(path.resolve()))
         except Exception as exc:
             raise VoiceError(
                 f"Не удалось загрузить голос «{self.voice_name}».", str(exc)
+            ) from exc
+        fixes = PHONEME_FIXES.get(self.voice_name)
+        if fixes:
+            # Piper's synthesis asks the voice for its phonemes, so the fix
+            # goes there and everything after -- pace, levels -- is Piper's.
+            phonemize = voice.phonemize
+            voice.phonemize = lambda text: [
+                _refit_phonemes(list(sentence), fixes) for sentence in phonemize(text)
+            ]
+        return voice
+
+    def _fetch_extra(self, path: Path) -> None:
+        """A community voice, fetched on first use (about 64 MB)."""
+        try:
+            from huggingface_hub import hf_hub_download
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            for suffix in (".onnx", ".onnx.json"):
+                hf_hub_download(EXTRA_VOICES[self.voice_name],
+                                f"{self.voice_name}{suffix}", local_dir=path.parent)
+        except Exception as exc:  # noqa: BLE001 -- reported as not downloaded below
+            raise VoiceError(
+                f"Голос «{self.voice_name}» не удалось скачать. Для первой "
+                f"загрузки нужен интернет.", str(exc),
             ) from exc
 
     # -- synthesis -------------------------------------------------------
@@ -222,7 +288,8 @@ class Speaker:
     def chars_per_second(self) -> float:
         return self.pace()[0]
 
-    def fit(self, text: str, start: float, seconds: float) -> Utterance:
+    def fit(self, text: str, start: float, seconds: float,
+            fastest: float = MIN_LENGTH_SCALE) -> Utterance:
         """Speak `text` so that it fits `seconds`, as far as that is sensible.
 
         Synthesised once at normal speed to find out how long the line actually
@@ -243,7 +310,7 @@ class Speaker:
         # rather than the ratio itself -- which under-corrects by roughly half.
         wanted_ratio = seconds / natural
         scale = 1.0 + (wanted_ratio - 1.0) / LENGTH_RESPONSE
-        scale = max(MIN_LENGTH_SCALE, min(MAX_LENGTH_SCALE, scale))
+        scale = max(fastest, min(MAX_LENGTH_SCALE, scale))
 
         samples, rate = self.say(text, length_scale=scale)
         return Utterance(samples, rate, start, seconds, scale, self.voice_name)

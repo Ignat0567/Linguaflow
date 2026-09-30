@@ -62,29 +62,42 @@ _CJK_CHAIN = re.compile(
 _CJK_PART = re.compile(rf"(\d+(?:[.,]\d+)?)\s*([{_SCALE_CHARS}])?")
 
 # Western scale words, so "4.7 million" compares against 4700000.
+#
+# Grouped by the value they multiply and written out as whole forms, because
+# the languages in scope inflect them. Russian declines a noun through six
+# cases in two numbers, and a table of nominative forms is a table that works
+# on some sentences and not others: measured on a twelve-minute recording,
+# "1.5 million views" came back as "1,5 миллионами просмотров" and was
+# reported as a number that had changed -- 1500000 in one text against 1.5 in
+# the other -- because the instrumental plural was missing. Six of twelve
+# ordinary sentences were flagged the same way.
+#
+# A warning that cries wolf costs more than no warning at all: the cues it
+# flags are precisely the ones a person is asked to stop and check by hand.
+#
+# Stems with `\w*` after them would be shorter and wrong -- "5 миллионный
+# подписчик", the five-millionth subscriber, would read as five million.
+_SCALES: dict[str, tuple[str, ...]] = {
+    "1000": (
+        "thousand", "tausend", "mil", "mille", "mila",
+        "тысяча", "тысячи", "тысяче", "тысячу", "тысячей", "тысячью",
+        "тысяч", "тысячам", "тысячами", "тысячах",
+    ),
+    "1000000": (
+        "million", "millions", "millionen", "millón", "millones",
+        "milione", "milioni",
+        "миллион", "миллиона", "миллиону", "миллионом", "миллионе",
+        "миллионы", "миллионов", "миллионам", "миллионами", "миллионах",
+    ),
+    "1000000000": (
+        "billion", "billions", "milliarde", "milliarden", "milliard",
+        "milliards", "miliardo", "miliardi", "millardo",
+        "миллиард", "миллиарда", "миллиарду", "миллиардом", "миллиарде",
+        "миллиарды", "миллиардов", "миллиардам", "миллиардами", "миллиардах",
+    ),
+}
 _SCALE_WORDS: dict[str, Decimal] = {
-    "thousand": Decimal(10) ** 3,
-    "million": Decimal(10) ** 6,
-    "billion": Decimal(10) ** 9,
-    "tausend": Decimal(10) ** 3,
-    "million en": Decimal(10) ** 6,
-    "millionen": Decimal(10) ** 6,
-    "milliarden": Decimal(10) ** 9,
-    "тысяч": Decimal(10) ** 3,
-    "тысячи": Decimal(10) ** 3,
-    "миллион": Decimal(10) ** 6,
-    "миллиона": Decimal(10) ** 6,
-    "миллионов": Decimal(10) ** 6,
-    "миллиард": Decimal(10) ** 9,
-    "миллиарда": Decimal(10) ** 9,
-    "mil": Decimal(10) ** 3,
-    "millón": Decimal(10) ** 6,
-    "millones": Decimal(10) ** 6,
-    "milione": Decimal(10) ** 6,
-    "milioni": Decimal(10) ** 6,
-    "mille": Decimal(10) ** 3,
-    "million de": Decimal(10) ** 6,
-    "millions": Decimal(10) ** 6,
+    word: Decimal(value) for value, words in _SCALES.items() for word in words
 }
 _SCALE_WORD = re.compile(
     r"\b(" + "|".join(sorted(_SCALE_WORDS, key=len, reverse=True)) + r")\b",

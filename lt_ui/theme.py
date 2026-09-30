@@ -152,11 +152,19 @@ def text_alpha(alpha: float) -> float:
 
 
 # -- surfaces ------------------------------------------------------------
+#: How opaque the window itself is.
+#:
+#: Everything the window draws goes through it, text included, so this is the
+#: one setting here that can cost legibility rather than only looks. A half
+#: was tried and read as the interface dissolving into the desktop.
+WINDOW_OPACITY = 0.75
+
 #: Glass tint in dark mode: the rgba(255,255,255,0.07-0.10) of the recipe.
-TINT_DARK, TINT_DARK_RAISED = 0.085, 0.13
+TINT_DARK, TINT_DARK_RAISED = 0.05, 0.08
 #: In light mode the same panels need far more white to separate from a bright
-#: photograph -- at 8% they read as a smudge rather than a surface.
-TINT_LIGHT, TINT_LIGHT_RAISED = 0.55, 0.68
+#: photograph -- at 8% they read as a smudge rather than a surface. Taken down
+#: by the same proportion as the dark pair rather than to the same number.
+TINT_LIGHT, TINT_LIGHT_RAISED = 0.32, 0.40
 
 #: What a hover adds, per the handoff's suggested +4% white.
 HOVER_LIFT = 0.04
@@ -168,6 +176,16 @@ def tint(raised: bool = False) -> float:
     return TINT_DARK_RAISED if raised else TINT_DARK
 
 
+def nav_runner() -> float:
+    """The navigation runner's fill.
+
+    Well above the bar's own tint. The bar is already glass at the raised
+    value, so a runner painted at that value vanishes into it -- tried, and
+    it read as a hairline outline rather than as a pane.
+    """
+    return 0.90 if is_light() else 0.34
+
+
 def border() -> float:
     """Hairline edge opacity. Dark mode edges in white, light mode in ink."""
     return 0.10 if is_light() else 0.19
@@ -175,11 +193,6 @@ def border() -> float:
 
 def border_colour() -> QColor:
     return ink(border()) if is_light() else white(border())
-
-
-def highlight() -> float:
-    """The inset top edge that makes a panel read as glass rather than fog."""
-    return 0.75 if is_light() else 0.30
 
 
 #: Kept for anything still reading the dark values directly.

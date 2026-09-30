@@ -8,8 +8,12 @@ through Qt signals -- which are thread-safe, unlike touching a widget.
 
 from __future__ import annotations
 
+import queue
 import threading
+import time
 from pathlib import Path
+
+import numpy as np
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
@@ -29,9 +33,10 @@ from lt_core.pipeline.batch import BatchResult, transcribe_file
 from lt_core.realtime.conversation import ConversationSession, Side
 from lt_core.realtime.session import BALANCED, LiveSession, LiveUpdate
 from lt_core.runtime import bootstrap
-from lt_core.tts.speaker import Playback, Speaker, VoiceError
+from lt_core.tts.speaker import Speaker, VoiceError
 from lt_core.video.mux import MuxError
 
+from .i18n import _
 from .store import MODEL_ROOT, ROOT, Settings, display_name, split_terms
 
 
@@ -123,12 +128,12 @@ class BatchWorker(QThread):
         if settings.sub_format == "vtt":
             formats.append("vtt")
 
-        def on_progress(done: float, total: float) -> None:
-            fraction = done / total if total else 0.0
-            # Recognition is most of the wall time. Leave the last fifth of
-            # the ring for translation and (optionally) the voice track, so
-            # the percentage does not sit at 100% while those still run.
-            self.progress.emit(min(0.80, fraction * 0.80))
+        def on_fraction(fraction: float) -> None:
+            # The pipeline reports the whole job: recognition on its clock,
+            # and each later stage as the lines of that stage are finished.
+            # The busy screen still stops the drawing short of a full ring
+            # until this worker emits 1.0 with the result.
+            self.progress.emit(fraction)
 
         try:
             result = transcribe_file(
@@ -137,16 +142,17 @@ class BatchWorker(QThread):
                 output_dir=self.output_dir,
                 formats=tuple(formats),
                 options=TranscribeOptions(
-                    language=None if settings.detect_language else settings.from_lang,
+                    language=(None if settings.file_from_lang == "auto"
+                              else settings.file_from_lang),
                     terms=split_terms(settings.terms),
                 ),
                 on_stage=self.stage.emit,
-                on_progress=on_progress,
+                on_fraction=on_fraction,
                 # Scratch for anything fetched from a link. User data: an
                 # installed copy cannot write beside its own executable.
                 download_dir=self.data_root / "downloads",
                 translator=self.translator,
-                target_language=settings.to_lang,
+                target_language=settings.file_to_lang,
                 bilingual=True,
                 voice=settings.voiceover,
                 match_voices=settings.match_voices,
@@ -163,12 +169,42 @@ class BatchWorker(QThread):
             self.failed.emit(str(error))
 
 
+#: A block quieter than this counts as nothing heard.
+#:
+#: Room tone on an open microphone sits an order of magnitude under it and a
+#: muted line is zero; speech across a desk is well over. Measured on this
+#: machine: a loopback with a call playing peaked at 0.29, a device that was
+#: open and delivering nothing peaked at 0.0.
+HEARING_FLOOR = 0.01
+
+#: How long a session may hear nothing before it says so.
+#:
+#: Longer than any pause between sentences and shorter than the patience of
+#: somebody watching a screen that claims to be listening.
+DEAF_AFTER = 6.0
+
+
 class LiveWorker(QThread):
     """Capture loop. Emits LiveUpdate as the session produces them."""
 
     update = Signal(object)
     failed = Signal(str)
     stopped = Signal()
+    #: True while a translated line is being read out, False when it ends.
+    #: The browser screen lowers the video under the voice with it.
+    speaking = Signal(bool)
+    #: How far the reading will trail the video by the end of the line about
+    #: to be read: the time it waited for the voice plus its own length, in
+    #: seconds, sent as it starts. The browser screen holds the video when
+    #: this grows.
+    lagging = Signal(float)
+    #: False with the device's name once a session has heard nothing for
+    #: DEAF_AFTER, True again the moment it does. A live session that hears
+    #: nothing looks exactly like one where nobody is speaking, and reported
+    #: from use it is the difference between «it is working» and «this is
+    #: useless»: the screen said «Слушаю…» for a whole conference call while
+    #: listening to a microphone the call was never going to reach.
+    hearing = Signal(bool, str)
 
     def __init__(
         self,
@@ -176,15 +212,38 @@ class LiveWorker(QThread):
         transcriber: Transcriber,
         translator,
         parent: QObject | None = None,
+        source=None,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
         self.transcriber = transcriber
         self.translator = translator
         self._stop = threading.Event()
+        #: A source someone else opened -- the embedded browser's page audio.
+        #: None means the device the settings name.
+        self._given = source
         self._source = None
         self.captions: list[LiveUpdate] = []
         self.audio_seconds = 0.0
+        #: Session seconds of audio taken in so far. The reader's clock.
+        self.heard = 0.0
+        #: Lines read aloud, and lines skipped to catch up, this session.
+        self.read_lines = 0
+        self.skipped_lines = 0
+        #: When a block above HEARING_FLOOR last arrived, and whether the
+        #: silence has already been reported. Read by the watchdog thread.
+        self._heard_sound_at: float | None = None
+        self._deaf = False
+
+    def _watch_for_silence(self, label: str) -> None:
+        """Say so once nothing has been heard for DEAF_AFTER."""
+        while not self._stop.is_set():
+            self._stop.wait(0.2)
+            if self._deaf or self._heard_sound_at is None:
+                continue
+            if time.monotonic() - self._heard_sound_at >= DEAF_AFTER:
+                self._deaf = True
+                self.hearing.emit(False, label)
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -194,23 +253,44 @@ class LiveWorker(QThread):
 
     def run(self) -> None:
         settings = self.settings
-        device = default_device(settings.capture_kind)
-        if device is None:
-            available = ", ".join(d.label for d in list_capture_devices()[:4]) or "нет"
-            self.failed.emit(
-                f"Не найдено устройство захвата «{settings.capture_kind}». "
-                f"Доступны: {available}."
-            )
+        given = self._given
+        try:
+            device = (None if given is not None
+                      else default_device(settings.capture_kind))
+        except Exception as error:  # noqa: BLE001 -- asking the machine what
+            # sound hardware it has can fail outright: a device removed while
+            # the list is being read, an audio service restarting, a session
+            # with no endpoint at all. Uncaught it kills this thread on the
+            # way in, and the screen waits for a session that will never say
+            # anything -- the same silence a user has already reported once.
+            self.failed.emit(_(
+                "Не удалось получить список звуковых устройств: {reason}",
+                reason=str(error) or type(error).__name__,
+            ))
+            return
+        if given is None and device is None:
+            try:
+                names = [d.label for d in list_capture_devices()[:4]]
+            except Exception:  # noqa: BLE001 -- naming them is a courtesy
+                names = []
+            available = ", ".join(names) or _("нет")
+            self.failed.emit(_(
+                "Не найдено устройство захвата «{kind}». Доступны: {available}.",
+                kind=_("Микрофон") if settings.capture_kind == "microphone"
+                else _("Звук системы"),
+                available=available,
+            ))
             return
 
         speak = settings.realtime_voice
-        gate = EchoGate() if speak else None
+        # A page's own audio never contains what the speakers play, so there
+        # is no loop to break: no gate, and no refusal over a shared device.
+        gate = EchoGate() if speak and given is None else None
         # One voice per language that will be read out. A conversation needs
         # both: what A says is read to B in B's language and the other way
         # round, so a single voice would read half the session in the wrong
         # one.
         voices: dict[str, Speaker] = {}
-        playback = Playback()
         if speak:
             wanted = [settings.to_lang]
             if settings.realtime_mode == "conversation":
@@ -223,11 +303,23 @@ class LiveWorker(QThread):
             except VoiceError as error:
                 self.failed.emit(str(error))
                 return
-            advice = check_routing(device, default_playback_name())
-            if not advice.safe:
-                self.failed.emit(
-                    advice.reason + ((" " + advice.remedy) if advice.remedy else "")
-                )
+            playback = default_playback_name()
+            advice = check_routing(device, playback) if device is not None else None
+            if advice is not None and not advice.safe:
+                # The core's advice is for the command line, where the voice can
+                # be sent to a device of one's choosing. The window has no such
+                # choice: its voice plays on the Windows default, the very device
+                # «system sound» records, so "use headphones" was advice that
+                # could not be followed -- measured, it was given to someone who
+                # was already wearing them. What can be done here is said
+                # instead, and in the interface's language.
+                self.failed.emit(_(
+                    "Озвучка и «Звук системы» идут через одно устройство — "
+                    "«{device}», и перевод попадал бы обратно в запись. С голосом "
+                    "здесь можно переводить микрофон, а видео из интернета — на "
+                    "экране «Браузер»: он берёт звук прямо со страницы.",
+                    device=playback or device.label,
+                ))
                 return
 
         if settings.realtime_mode == "conversation":
@@ -241,17 +333,42 @@ class LiveWorker(QThread):
             session = LiveSession(
                 self.transcriber,
                 translator=self.translator,
-                source_language=settings.from_lang,
+                # Empty means detect: the session pins the language it hears.
+                source_language=settings.from_lang or None,
                 target_language=settings.to_lang,
                 pace=BALANCED,
+                terms=split_terms(settings.terms),
             )
 
-        try:
-            source = open_source(device)
-        except CaptureError as error:
-            self.failed.emit(str(error))
-            return
+        if given is not None:
+            source = given
+        else:
+            try:
+                source = open_source(device)
+            except CaptureError as error:
+                self.failed.emit(str(error))
+                return
         self._source = source
+        self._heard_sound_at = time.monotonic()
+        self._deaf = False
+        # On its own thread, because the worst case is a device that sends
+        # nothing whatsoever: a check that runs when a block arrives never
+        # runs at all for exactly the session it is meant to catch. The
+        # loopback and page sources manufacture their silence and would have
+        # been caught; a stalled microphone would not.
+        watchdog = threading.Thread(
+            target=self._watch_for_silence,
+            # The plain name, not `label`: that one carries "[Система]" and
+            # a star for the picker to show, and inside a sentence it reads
+            # as «Тишина на «[Система] Kopfhörer ★»».
+            args=(str(getattr(device, "name", "") or ""),),
+            daemon=True,
+        )
+        watchdog.start()
+        reader = _Reader(
+            voices, gate, session, clock=lambda: self.heard,
+            announce=self.speaking.emit, report=self.lagging.emit,
+        ) if speak else None
 
         try:
             for chunk in source.stream():
@@ -259,6 +376,21 @@ class LiveWorker(QThread):
                     break
                 if gate is not None:
                     chunk = gate.filter(chunk)
+                self.heard = chunk.end_time
+
+                # Is anything actually arriving? A device can be open, on
+                # time and empty: the wrong endpoint, a muted line, a
+                # microphone in a room where the sound is coming out of the
+                # speakers. Every one of those looks like a pause.
+                loudest = (
+                    float(np.abs(chunk.samples).max()) if chunk.samples.size else 0.0
+                )
+                if loudest >= HEARING_FLOOR:
+                    self._heard_sound_at = time.monotonic()
+                    if self._deaf:
+                        self._deaf = False
+                        self.hearing.emit(
+                            True, str(getattr(device, "name", "") or ""))
                 produced = session.feed(chunk)
                 updates = produced if isinstance(produced, list) else [produced]
                 for item in updates:
@@ -268,10 +400,12 @@ class LiveWorker(QThread):
                     if item.has_content:
                         self.captions.append(item)
                         self.update.emit(item)
-                        if speak:
-                            _read_out(item, voices, gate, session, playback)
+                        if reader is not None:
+                            reader.put(item)
         except CaptureError as error:
             self.failed.emit(str(error))
+            if reader is not None:
+                reader.close(drain=False)
             return
         finally:
             source.stop()
@@ -287,9 +421,86 @@ class LiveWorker(QThread):
                 continue
             self.captions.append(final)
             self.update.emit(final)
-            if speak:
-                _read_out(final, voices, gate, session, playback)
+            if reader is not None:
+                reader.put(final)
+        if reader is not None:
+            reader.close(drain=True)
+            self.read_lines, self.skipped_lines = reader.read, reader.skipped
         self.stopped.emit()
+
+
+class _Reader:
+    """Reads settled lines aloud on its own thread.
+
+    The live worker used to read each line itself, and while it read it
+    heard nothing. The capture queue holds eight seconds; a fast speaker and
+    a translation longer than its original fill that, and the oldest audio
+    is dropped -- speech never recognised, with nothing on screen to say so.
+    Measured on a fast speaker, 60 s with the voice on: 13.8 s lost.
+
+    Here hearing never waits for speaking. What can still fall behind is the
+    voice itself, and it is not allowed to fall behind for ever: a line older
+    than SKIP_AFTER is not read if a newer one is already waiting. Its text
+    stays on screen; only its reading is skipped, so the voice speaks about
+    what is being said now rather than about a minute ago.
+    """
+
+    #: Seconds a line may have waited before the voice skips it for a newer.
+    SKIP_AFTER = 8.0
+
+    def __init__(self, voices: dict[str, Speaker], gate: EchoGate | None,
+                 session, clock, announce=None, report=None) -> None:
+        self.voices = voices
+        self.gate = gate
+        self.session = session
+        self.clock = clock
+        #: Told True/False as each line starts and ends (the browser ducks).
+        self.announce = announce
+        #: Given how far the reading will trail by the end of each line (the
+        #: browser holds the video when it grows).
+        self.report = report
+        self.read = 0
+        self.skipped = 0
+        self._queue: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, name="Reader", daemon=True)
+        self._thread.start()
+
+    def put(self, update) -> None:
+        if update.translation:
+            self._queue.put(update)
+
+    def close(self, drain: bool = True, timeout: float = 60.0) -> None:
+        """Stop after the lines already queued (drain) or at once."""
+        if not drain:
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+        self._queue.put(None)
+        self._thread.join(timeout=timeout)
+
+    def _newer_waiting(self) -> bool:
+        """A line queued behind this one -- not the stop marker, which is
+        not a line and must not cost the last thing said its reading."""
+        with self._queue.mutex:
+            return any(item is not None for item in self._queue.queue)
+
+    def _run(self) -> None:
+        while True:
+            update = self._queue.get()
+            if update is None:
+                return
+            behind = max(0.0, self.clock() - (update.audio_time or 0.0))
+            if behind > self.SKIP_AFTER and self._newer_waiting():
+                self.skipped += 1
+                continue
+            try:
+                _read_out(update, self.voices, self.gate, self.session, behind,
+                          self.announce, self.report)
+                self.read += 1
+            except Exception:  # noqa: BLE001 -- a line that fails is a line unheard
+                continue
 
 
 #: How far the reading may fall behind before it is read faster.
@@ -307,7 +518,7 @@ CATCH_UP_AFTER = 1.0
 
 
 def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
-              session, playback: Playback) -> None:
+              session, behind: float = 0.0, announce=None, report=None) -> float:
     """Read a settled line out in the language it was translated into.
 
     Only settled lines: a provisional translation is replaced on the next tick,
@@ -317,13 +528,17 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
     listener can hear which of them is talking. Two voices a few Hz apart are
     one voice -- measured on a real dialogue, the two languages' default voices
     came out at 179 and 182 Hz.
+
+    `behind` is how long the line has waited for the voice; past
+    CATCH_UP_AFTER it is read as fast as a voice still sounds human.
+    Returns the seconds it took.
     """
     if not update.translation:
-        return
+        return 0.0
     language = update.translation_language
     voice = voices.get(language) or next(iter(voices.values()), None)
     if voice is None:
-        return
+        return 0.0
 
     register = ""
     if hasattr(session, "register_of") and update.speaker_language:
@@ -342,20 +557,26 @@ def _read_out(update, voices: dict[str, Speaker], gate: EchoGate | None,
             voices[wanted] = chosen
         voice = chosen
 
-    behind = playback.behind(update.audio_time)
-    spoken = _speak(voice, update.translation, gate, hurry=behind > CATCH_UP_AFTER)
-    playback.done(update.audio_time, spoken)
+    # Reported once the line is synthesised and its length known: a long
+    # line on top of a short wait is as much of a backlog as the reverse.
+    before = (lambda length: report(behind + length)) if report is not None else None
+    return _speak(voice, update.translation, gate,
+                  hurry=behind > CATCH_UP_AFTER, announce=announce, before=before)
 
 
 def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
-           hurry: bool = False) -> float:
-    """Play a line; return how long it took. Blocks this worker, which is the
-    point: capture continues on its own thread, and the echo gate keeps our
-    voice out of the transcript.
+           hurry: bool = False, announce=None, before=None) -> float:
+    """Play a line; return how long it took. Blocks the reader thread; the
+    live worker goes on hearing meanwhile, and the echo gate -- judging by
+    when audio was captured -- keeps our voice out of the transcript.
 
     `hurry` asks for the line as fast as it can still be said, which is how a
     backlog is worked off. `fit` clamps that at the point where the voice stops
     sounding human, so asking for the impossible is safe.
+
+    `announce` is told True as the line starts and False as it ends, whatever
+    happens in between. `before` is given the line's length, in seconds,
+    just before it is played.
     """
     if hurry:
         utterance = speaker.fit(text, 0.0, 0.01)
@@ -367,12 +588,20 @@ def _speak(speaker: Speaker, text: str, gate: EchoGate | None,
     import sounddevice as sd
 
     duration = len(samples) / rate
-    if gate is not None:
-        with gate.playing():
-            gate.extend(duration)
+    if before is not None:
+        before(duration)
+    if announce is not None:
+        announce(True)
+    try:
+        if gate is not None:
+            with gate.playing():
+                gate.extend(duration)
+                sd.play(samples, rate, blocking=True)
+        else:
             sd.play(samples, rate, blocking=True)
-    else:
-        sd.play(samples, rate, blocking=True)
+    finally:
+        if announce is not None:
+            announce(False)
     return duration
 
 
@@ -391,6 +620,9 @@ class Engine(QObject):
     live_update = Signal(object)
     live_failed = Signal(str)
     live_stopped = Signal()
+    live_speaking = Signal(bool)
+    live_lagging = Signal(float)
+    live_hearing = Signal(bool, str)
 
     def __init__(self, parent: QObject | None = None, keys=None,
                  data_root: Path | None = None) -> None:
@@ -463,16 +695,23 @@ class Engine(QObject):
         self._batch = worker
         worker.start()
 
-    def start_live(self, settings: Settings) -> None:
+    def start_live(self, settings: Settings, source=None) -> None:
+        """Start a live session on the device the settings name, or on
+        `source` when one is given (the embedded browser's page audio)."""
         if not self.models_ready:
             self.live_failed.emit("Модели ещё не загружены.")
             return
         if self.live_running:
             return
-        worker = LiveWorker(settings, self.transcriber, self.translator, self)
+        worker = LiveWorker(
+            settings, self.transcriber, self.translator, self, source=source
+        )
         worker.update.connect(self.live_update)
         worker.failed.connect(self.live_failed)
         worker.stopped.connect(self.live_stopped)
+        worker.speaking.connect(self.live_speaking)
+        worker.lagging.connect(self.live_lagging)
+        worker.hearing.connect(self.live_hearing)
         self._live = worker
         worker.start()
 

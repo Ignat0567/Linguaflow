@@ -25,10 +25,20 @@ import time
 from pathlib import Path
 
 from .. import languages
+from ..abbreviations import is_abbreviation
 from ..runtime import bootstrap
+from .loanwords import germanise, restore
 from .types import NLLB_CODES, TranslationError
 
-DEFAULT_MODEL = "entai2965/nllb-200-distilled-600M-ctranslate2"
+#: The larger distilled model, int8. Measured on German meeting speech
+#: against the 600M one: «nüchterner» came out «более трезво» where 600M
+#: said «чаще», «Ich gehe von diesem Rahmen aus» «Я буду исходить из этой
+#: рамки» where 600M said «Пойду с этой точки зрения». 0.35 s a sentence on
+#: the GPU against 0.2 s; 1.4 GB to fetch once.
+DEFAULT_MODEL = "OpenNMT/nllb-200-distilled-1.3B-ct2-int8"
+#: Used when the default cannot be had -- offline on a first run, with the
+#: smaller model already on disk.
+FALLBACK_MODEL = "entai2965/nllb-200-distilled-600M-ctranslate2"
 
 # Sentence boundaries, in two flavours, because the two scripts disagree about
 # whitespace.
@@ -111,11 +121,20 @@ def split_sentences(text: str) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
-    pieces: list[str] = []
+    parts: list[str] = []
     for part in _SENTENCE.split(stripped):
         part = part.strip()
-        if part:
-            pieces.extend(_break_up(part))
+        if not part:
+            continue
+        # «...mit Tools wie z.B. Gmail verbinden» is one sentence: a piece
+        # ending on an abbreviation goes on with the next one.
+        if parts and is_abbreviation(parts[-1].split()[-1]):
+            parts[-1] = f"{parts[-1]} {part}"
+        else:
+            parts.append(part)
+    pieces: list[str] = []
+    for part in parts:
+        pieces.extend(_break_up(part))
     return pieces
 
 
@@ -144,7 +163,12 @@ class NllbTranslator:
         self.beam_size = beam_size
         self.device, self.compute_type = _choose_device(device, compute_type)
 
-        path = _resolve_model(model)
+        try:
+            path = _resolve_model(model)
+        except TranslationError:
+            if model != DEFAULT_MODEL:
+                raise
+            path = _resolve_model(FALLBACK_MODEL)
         try:
             self._translator = ctranslate2.Translator(
                 path, device=self.device, compute_type=self.compute_type
@@ -216,9 +240,12 @@ class NllbTranslator:
         # still gets one result per input.
         batch: list[list[str]] = []
         ownership: list[int] = []
+        originals: list[str] = []
         for position, text in enumerate(texts):
             for sentence in split_sentences(text):
-                batch.append(tokenizer.convert_ids_to_tokens(tokenizer.encode(sentence)))
+                originals.append(sentence)
+                prepared = germanise(sentence, source, target)
+                batch.append(tokenizer.convert_ids_to_tokens(tokenizer.encode(prepared)))
                 ownership.append(position)
 
         if not batch:
@@ -240,12 +267,13 @@ class NllbTranslator:
             raise TranslationError("Сбой локального перевода.", str(exc)) from exc
 
         collected: list[list[str]] = [[] for _ in texts]
-        for owner, response in zip(ownership, responses):
+        for owner, original, response in zip(ownership, originals, responses):
             # The first token is the target-language tag the model echoes back.
             tokens = response.hypotheses[0][1:]
-            collected[owner].append(
-                tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip()
-            )
+            collected[owner].append(restore(
+                tokenizer.decode(tokenizer.convert_tokens_to_ids(tokens)).strip(),
+                original, source, target,
+            ))
 
         joiner = " " if languages.joins_with_space(target) else ""
         return [

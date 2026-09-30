@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -29,5 +31,23 @@ def main() -> int:
     return run(data_dir=args.data, screenshot=args.screenshot)
 
 
+def _remember_crash() -> None:
+    """A windowed build has no console. Leave the traceback where it can be found."""
+    if not getattr(sys, "frozen", False):
+        return
+    folder = Path(os.environ.get("APPDATA") or Path.home()) / "Linguaflow"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "startup.log").write_text(traceback.format_exc(), encoding="utf-8")
+    except OSError:
+        pass
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        _remember_crash()
+        raise

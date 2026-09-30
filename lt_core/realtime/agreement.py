@@ -69,18 +69,46 @@ class LocalAgreement:
         fresh = self._beyond_commit(hypothesis)
 
         agreed: list[Word] = []
-        for current, previous in zip(fresh, self._previous):
-            if _key(current) != _key(previous) or not _key(current):
+        for index, (current, previous) in enumerate(zip(fresh, self._previous)):
+            if _key(current) != _key(previous):
+                break
+            if not _key(current) and not (index and self._cuts_a_word(fresh, index)):
+                # Nothing to compare on: two different marks both reduce to
+                # nothing, so "they agree" would mean only that both are
+                # punctuation. The exception is a mark glued to the word in
+                # front of it -- "%" after " 31", ",000" after " $12" -- which
+                # is not a token in its own right but the tail of one that has
+                # just agreed.
                 break
             # Keep the newer reading: its timing is based on more audio, and
             # its punctuation is more likely to be settled.
             agreed.append(current)
+
+        while agreed and self._cuts_a_word(fresh, len(agreed)):
+            agreed.pop()
 
         if agreed:
             self.committed.extend(agreed)
             self._until = max(self._until, agreed[-1].end)
         self._previous = fresh[len(agreed):]
         return agreed
+
+    @staticmethod
+    def _cuts_a_word(words: list[Word], taken: int) -> bool:
+        """Whether committing `taken` of these would cut the next one in half.
+
+        Whisper emits "31%" as " 31" and "%", and "$12,000" as " $12" and
+        ",000" -- the missing leading space is the only thing that says they
+        are one word. Committed text is translated as soon as it settles, so a
+        commit that ends on the first half hands the translator a number with
+        no unit: measured on a live run, "reduced latency by 31%" was committed
+        as "...by 31" and came back as "задержка на 31", and "$12,000 per
+        month" became "$1,000 a month".
+
+        The half word waits for its other half, which costs it one tick and
+        only when the continuation is already in sight.
+        """
+        return taken < len(words) and not words[taken].text[:1].isspace()
 
     def _beyond_commit(self, hypothesis: list[Word]) -> list[Word]:
         """The part of a hypothesis that is not already committed.
@@ -166,11 +194,28 @@ class LocalAgreement:
         if not take:
             return []
 
+        while take and self._cuts_a_word(self._previous, take):
+            take -= 1
+        if not take:
+            return []
+
         forced = self._previous[:take]
         self._previous = self._previous[take:]
         self.committed.extend(forced)
         self._until = max(self._until, forced[-1].end)
         return forced
+
+    def pass_over_silence(self, until: float) -> None:
+        """Move the commit point across audio that has nothing in it.
+
+        Nothing there is waiting for a second opinion, and a commit point left
+        behind the silence makes it look like a stall: the first pass after a
+        pause is then force-committed without agreement, and what it commits
+        is whatever the model made of the quiet -- measured live, "Thank you."
+        at the start of a video, and a second "people." after a pause.
+        """
+        self._previous = []
+        self._until = max(self._until, until)
 
     def forget_before(self, moment: float) -> None:
         """Drop committed words older than `moment`.

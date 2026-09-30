@@ -43,6 +43,11 @@ class Segment:
         return self.end - self.start
 
 
+#: How sure the detector must be before its disagreement is worth raising.
+#: A verdict over the opening minutes, not a lean.
+CERTAIN_ENOUGH = 0.85
+
+
 @dataclass(frozen=True)
 class Transcript:
     segments: tuple[Segment, ...]
@@ -52,6 +57,49 @@ class Transcript:
     # Wall-clock seconds spent transcribing, for reporting a real-time factor.
     elapsed: float = 0.0
     model: str = ""
+
+    # What the audio was taken to be on its own evidence, and how sure of it.
+    #
+    # The same as `language` whenever the language was detected; different when
+    # the caller named one and the recording holds another. Worth knowing,
+    # because Whisper does not object: told that a Russian recording is
+    # English, it writes fluent English prose that no reader could tell from a
+    # transcript. Measured on a twelve-minute file whose container defaults to
+    # a dubbed Russian track -- 2718 words of real English in the original,
+    # 1145 words of invented English from the dub, and nothing anywhere in the
+    # output to say so.
+    detected_language: str = ""
+    detected_probability: float = 0.0
+
+    @property
+    def confidence_in_language(self) -> float | None:
+        """How sure the language used is right, or None when nothing says so.
+
+        Whisper reports a probability of 1.0 for any language it was handed,
+        because it never checked -- a number that says only that it was told.
+        Where the recording was checked, the detector's own answer stands
+        behind it; where the detector disagreed, nothing does.
+        """
+        if not self.detected_language:
+            return self.language_probability
+        if self.detected_language == self.language:
+            return self.detected_probability
+        return None
+
+    @property
+    def language_looks_wrong(self) -> bool:
+        """The recording is confidently in a language other than the one used.
+
+        Detection is fallible too, and a warning raised over a correct choice
+        teaches people to ignore warnings, so this asks for a verdict rather
+        than a lean.
+        """
+        return (
+            bool(self.detected_language)
+            and self.detected_language != self.language
+            and self.detected_probability >= CERTAIN_ENOUGH
+        )
+
 
     @property
     def text(self) -> str:

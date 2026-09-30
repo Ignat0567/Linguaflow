@@ -71,7 +71,8 @@ CATALOGUE: dict[str, Language] = {
         "ru", "русский", "Russian", "rus_Cyrl", "rus", "RU", "RU",
         piper_voice="ru_RU-dmitri-medium",
         piper_male="ru_RU-ruslan-medium",      # 128 Hz
-        piper_female="ru_RU-irina-medium",     # 177 Hz
+        # terra, not Piper's own irina: see EXTRA_VOICES in lt_core.tts.speaker.
+        piper_female="ru_RU-terra5871-medium",  # 208 Hz
         punctuation_sample=(
             "Здравствуйте. Сегодня мы разберём несколько важных вопросов, а затем перейдём к примерам. Начнём?"
         ),

@@ -1,6 +1,6 @@
 """The glass surface, and everything built on it.
 
-One recipe -- tint, blur beneath, hairline border, inset top highlight -- and
+One recipe -- tint, blur beneath, hairline border -- and
 every card, pill, chip and toggle in the app is that recipe at a different
 size. It is written once here so that a new screen cannot quietly invent its
 own shade of white.
@@ -8,6 +8,7 @@ own shade of white.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 from PySide6.QtCore import (
@@ -51,6 +52,7 @@ def paint_glass(
     tint: float | None = None,
     accent_fill: bool = False,
     border: float | None = None,
+    lift: float = 0.0,
 ) -> QPainterPath:
     """Paint the handoff's glass recipe into `rect` of `widget`.
 
@@ -58,6 +60,12 @@ def paint_glass(
     are resolved here rather than in the signature: a default argument is
     bound once at import, which would freeze the app in the mode it started
     in.
+
+    `lift` is the pointer's answer, laid over whichever fill was used. It was
+    once added to `tint` by each caller, which worked on a plain surface and
+    did nothing at all on an accent one, because the accent gradient never
+    reads `tint` -- so the home screen's first card, the one filled with the
+    accent, was the only card on it that ignored the mouse.
     """
     if tint is None:
         tint = theme.tint()
@@ -85,13 +93,9 @@ def paint_glass(
     else:
         painter.fillPath(path, theme.surface(tint))
 
-    # The inset highlight along the top edge. Without it a panel reads as a
-    # flat wash; with it, as something with a lit edge.
-    highlight = QPainterPath()
-    highlight.addRoundedRect(
-        QRectF(rect.x(), rect.y(), rect.width(), 2.0), radius, radius
-    )
-    painter.fillPath(highlight, theme.white(theme.highlight()))
+    if lift:
+        painter.fillPath(path, theme.white(lift))
+
     painter.restore()
 
     edge = theme.border_colour() if border is None else theme.ink(border)
@@ -115,6 +119,8 @@ class GlassPanel(QWidget):
         self.radius = radius
         self.tint = tint
         self.accent_fill = accent_fill
+        #: Raised while the pointer is over it; see `clickable`.
+        self.lift = 0.0
 
     def paintEvent(self, event) -> None:  # noqa: N802 -- Qt spells it this way
         painter = QPainter(self)
@@ -125,6 +131,7 @@ class GlassPanel(QWidget):
             self.radius,
             self.tint,
             self.accent_fill,
+            lift=self.lift,
         )
 
 
@@ -189,7 +196,7 @@ class GlassButton(Hoverable):
         else:
             paint_glass(
                 self, painter, rect, theme.RADIUS_PILL,
-                theme.tint() + (theme.HOVER_LIFT if self._hover else 0.0),
+                lift=theme.HOVER_LIFT if self._hover else 0.0,
             )
             painter.setPen(theme.ink(theme.PRIMARY))
         if self.hasFocus():
@@ -227,26 +234,52 @@ class TextLink(Hoverable):
         painter.drawText(self.rect(), Qt.AlignCenter, self.text())
 
 
-class Toggle(QAbstractButton):
+class Toggle(Hoverable):
     """The 38x21 pill switch, knob sliding from 2px to 19px."""
+
+    #: Where the knob sits when the switch is off and when it is on.
+    OFF, ON = 2.0, 19.0
 
     def __init__(self, parent: QWidget | None = None, on: bool = False) -> None:
         super().__init__(parent)
         self.setCheckable(True)
         self.setChecked(on)
         self.setFixedSize(38, 21)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-        self._position = 19.0 if on else 2.0
+        self._position = self._resting()
         self._animation = QPropertyAnimation(self, b"knob", self)
         self._animation.setDuration(140)
         self._animation.setEasingCurve(QEasingCurve.OutCubic)
         self.toggled.connect(self._slide)
 
+    def _resting(self) -> float:
+        """Where the knob belongs, on the evidence of the switch itself."""
+        return self.ON if self.isChecked() else self.OFF
+
     def _slide(self, on: bool) -> None:
         self._animation.stop()
         self._animation.setStartValue(self._position)
-        self._animation.setEndValue(19.0 if on else 2.0)
+        self._animation.setEndValue(self.ON if on else self.OFF)
         self._animation.start()
+
+    def checkStateSet(self) -> None:  # noqa: N802 -- Qt spells it this way
+        """Qt's own hook for "the checked state was set", however it was set.
+
+        `toggled` is not that hook: it is a signal, and everything that
+        restores a saved setting blocks signals first, so that putting the
+        switch where the setting says does not write the setting straight
+        back. Reported from use -- after a restart every switch that was on
+        was lit and pointing left.
+        """
+        super().checkStateSet()
+        if getattr(self, "_animation", None) is None:
+            return  # still being built; the constructor places the knob
+        if self.signalsBlocked() or not self.isVisible():
+            # Nobody flicked it: it is being put where a saved setting says,
+            # and a switch that was already on has nothing to travel from.
+            self._animation.stop()
+            self.set_knob(self._resting())
+            return
+        self._slide(self.isChecked())
 
     def get_knob(self) -> float:
         return self._position
@@ -258,15 +291,27 @@ class Toggle(QAbstractButton):
     knob = Property(float, get_knob, set_knob)
 
     def paintEvent(self, event) -> None:  # noqa: N802
+        if (self._animation.state() != QPropertyAnimation.Running
+                and self._position != self._resting()):
+            # The knob is put back in step with the switch here, and not only
+            # by the animation, because the animation runs off `toggled` and
+            # anyone restoring a saved setting blocks that signal to keep
+            # from writing it straight back. Reported from use: after a
+            # restart every switch that was on was lit and pointing left.
+            self._position = self._resting()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(0, 0, -1, -1)
+        lift = theme.HOVER_LIFT if self._hover else 0.0
         if self.isChecked():
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
             painter.fillPath(path, theme.accent(0.95))
+            if lift:
+                painter.fillPath(path, theme.white(lift))
         else:
-            paint_glass(self, painter, rect, theme.RADIUS_PILL)
+            paint_glass(self, painter, rect, theme.RADIUS_PILL, lift=lift)
         # On the accent fill a white knob reads; on a pale glass panel in
         # light mode it disappears into the panel.
         lit = self.isChecked() or not theme.is_light()
@@ -302,7 +347,9 @@ class Chip(Hoverable):
             painter.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
             path.addRoundedRect(QRectF(rect), rect.height() / 2, rect.height() / 2)
-            painter.fillPath(path, theme.ink(0.94))
+            # A chosen chip is already solid, so it brightens by going fully
+            # opaque rather than by taking more white.
+            painter.fillPath(path, theme.ink(1.0 if self._hover else 0.94))
             painter.setPen(theme.base())
         else:
             painter.setPen(theme.ink(theme.text_alpha(
@@ -323,13 +370,13 @@ class GlassSelect(QComboBox):
 
     DARK = """
     QComboBox {
-        background: rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.20);
         border-radius: 19px;
         padding: 0 34px 0 18px;
         color: rgba(255,255,255,0.95);
     }
-    QComboBox:hover { background: rgba(255,255,255,0.14); }
+    QComboBox:hover { background: rgba(255,255,255,0.10); }
     QComboBox:focus { border: 1px solid rgba(127,164,255,0.85); }
     QComboBox::drop-down { border: none; width: 26px; }
     QComboBox::down-arrow { image: none; }
@@ -346,13 +393,13 @@ class GlassSelect(QComboBox):
 
     LIGHT = """
     QComboBox {
-        background: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.42);
         border: 1px solid rgba(13,15,26,0.14);
         border-radius: 19px;
         padding: 0 34px 0 18px;
         color: rgba(13,15,26,0.95);
     }
-    QComboBox:hover { background: rgba(255,255,255,0.86); }
+    QComboBox:hover { background: rgba(255,255,255,0.50); }
     QComboBox:focus { border: 1px solid rgba(90,125,215,0.85); }
     QComboBox::drop-down { border: none; width: 26px; }
     QComboBox::down-arrow { image: none; }
@@ -401,25 +448,27 @@ class GlassInput(QLineEdit):
 
     DARK = """
     QLineEdit {
-        background: rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.20);
         border-radius: 17px;
         padding: 0 16px;
         color: rgba(255,255,255,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
+    QLineEdit:hover { background: rgba(255,255,255,0.10); }
     QLineEdit:focus { border: 1px solid rgba(127,164,255,0.85); }
     """
 
     LIGHT = """
     QLineEdit {
-        background: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.42);
         border: 1px solid rgba(13,15,26,0.14);
         border-radius: 17px;
         padding: 0 16px;
         color: rgba(13,15,26,0.95);
         selection-background-color: rgba(127,164,255,0.45);
     }
+    QLineEdit:hover { background: rgba(255,255,255,0.50); }
     QLineEdit:focus { border: 1px solid rgba(90,125,215,0.85); }
     """
 
@@ -435,7 +484,7 @@ class GlassInput(QLineEdit):
         self.setStyleSheet(self.style_for_mode())
 
 
-class RecordButton(QAbstractButton):
+class RecordButton(Hoverable):
     """The 96px circle, with the handoff's two expanding rings while live."""
 
     RING_PERIOD_MS = 1800
@@ -445,7 +494,6 @@ class RecordButton(QAbstractButton):
         super().__init__(parent)
         self.setCheckable(True)
         self.setFixedSize(150, 150)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
         self._phase = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(self.FRAME_MS)
@@ -480,32 +528,72 @@ class RecordButton(QAbstractButton):
                 painter.drawEllipse(centre, radius, radius)
 
         body = QRect(int(centre.x()) - 48, int(centre.y()) - 48, 96, 96)
+        # The widget is 150px and the circle 96, and the whole 150 is what a
+        # click lands on -- so the whole 150 is what answers the pointer.
+        lift = theme.HOVER_LIFT if self._hover else 0.0
         if self.isChecked():
             painter.setBrush(theme.accent(0.95))
             painter.setPen(QPen(theme.ink(0.30), 1))
             painter.drawEllipse(body)
+            if lift:
+                painter.setBrush(theme.white(lift))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(body)
+                painter.setPen(QPen(theme.ink(0.30), 1))
             painter.setBrush(theme.on_accent())
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(
                 QRect(body.center().x() - 10, body.center().y() - 10, 22, 22), 5, 5
             )
         else:
-            paint_glass(self, painter, body, body.height() // 2, theme.tint(raised=True))
+            paint_glass(self, painter, body, body.height() // 2,
+                        theme.tint(raised=True), lift=lift)
             painter.setBrush(theme.ink(0.92))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPointF(body.center()), 17, 17)
 
 
 class ProgressRing(QWidget):
-    """`conic-gradient(accent N%, rgba(255,255,255,0.15) 0)`, with a glass core."""
+    """A filled ring that keeps moving while the job is still running.
+
+    Recognition is a fraction and can sit still for a long time afterwards —
+    translation, speech and muxing do not report seconds. The comet on the
+    rim is what says the process is alive, not the number in the middle.
+    """
+
+    RING_PERIOD_MS = 2200
+    FRAME_MS = 33
 
     def __init__(self, parent: QWidget | None = None, diameter: int = 160) -> None:
         super().__init__(parent)
         self.setFixedSize(diameter, diameter)
         self._value = 0.0
+        self._phase = 0.0
+        self._running = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self._advance)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def set_running(self, running: bool) -> None:
+        if running == self._running:
+            return
+        self._running = running
+        if running:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
 
     def set_value(self, fraction: float) -> None:
         self._value = max(0.0, min(1.0, fraction))
+        self.update()
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + self.FRAME_MS / self.RING_PERIOD_MS) % 1.0
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -513,10 +601,15 @@ class ProgressRing(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1)
 
+        pulse = 0.95
+        if self._running:
+            pulse = 0.78 + 0.17 * (
+                0.5 + 0.5 * math.sin(self._phase * 2 * math.pi)
+            )
         stop = max(1e-4, min(1.0, self._value))
         gradient = QConicalGradient(QPointF(rect.center()), 90.0)
-        gradient.setColorAt(0.0, theme.accent(0.95))
-        gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(0.95))
+        gradient.setColorAt(0.0, theme.accent(pulse))
+        gradient.setColorAt(max(0.0, stop - 0.002), theme.accent(pulse))
         empty = theme.ink(0.15)
         gradient.setColorAt(stop, empty)
         gradient.setColorAt(1.0, empty)
@@ -531,6 +624,26 @@ class ProgressRing(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(rect)
         painter.restore()
+
+        if self._running:
+            band = QRectF(rect).adjusted(9, 9, -9, -9)
+            start = int((90.0 - self._phase * 360.0) * 16)
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(theme.accent(0.40), 10, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(band, start, int(-70 * 16))
+            painter.setPen(QPen(theme.accent(0.95), 10, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(band, start, int(-16 * 16))
+            if self._value > 0.02:
+                radius = band.width() / 2
+                centre = band.center()
+                theta = 2 * math.pi * self._value
+                tip = QPointF(
+                    centre.x() + radius * math.sin(theta),
+                    centre.y() - radius * math.cos(theta),
+                )
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(theme.accent(0.95))
+                painter.drawEllipse(tip, 5.5, 5.5)
 
         inner = rect.adjusted(18, 18, -18, -18)
         paint_glass(self, painter, inner, inner.width() // 2, theme.tint(raised=True))
@@ -568,12 +681,29 @@ def eyebrow(text: str, alpha: float = theme.SECONDARY) -> QLabel:
 
 
 def clickable(widget: QWidget, action: Callable[[], None]) -> QWidget:
-    """Make a panel behave like the card the handoff draws it as."""
+    """Make a panel behave like the card the handoff draws it as.
+
+    Including under the pointer: a cursor that turns into a hand over a
+    surface that then does nothing reads as a card that failed to load, not
+    as one waiting to be clicked.
+    """
     widget.setCursor(QCursor(Qt.PointingHandCursor))
+    widget.setAttribute(Qt.WA_Hover, True)
 
     def press(event) -> None:
         if event.button() == Qt.LeftButton:
             action()
 
+    def enter(event) -> None:
+        widget.lift = theme.HOVER_LIFT
+        widget.update()
+
+    def leave(event) -> None:
+        widget.lift = 0.0
+        widget.update()
+
     widget.mousePressEvent = press  # type: ignore[method-assign]
+    if hasattr(widget, "lift"):
+        widget.enterEvent = enter  # type: ignore[method-assign]
+        widget.leaveEvent = leave  # type: ignore[method-assign]
     return widget

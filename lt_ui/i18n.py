@@ -50,14 +50,36 @@ def language_name(code: str) -> str:
     return entry.get(LANGUAGE, entry["ru"])
 
 
+def language_in_sentence(code: str) -> str:
+    """The name as it is written inside a sentence rather than on a label.
+
+    English and German capitalise a language's name everywhere; Russian only
+    at the start: «звучит как русский», not «как Русский».
+    """
+    name = language_name(code)
+    return name[:1].lower() + name[1:] if LANGUAGE == "ru" else name
+
+
 #: Russian source -> (English, German).
 CATALOGUE: dict[str, tuple[str, str]] = {
     # -- navigation ----------------------------------------------------
     "Главная": ("Home", "Start"),
     "Реальное время": ("Live", "Echtzeit"),
+    "Браузер": ("Browser", "Browser"),
     "Загрузка": ("Upload", "Datei"),
     "История": ("History", "Verlauf"),
     "Настройки": ("Settings", "Einstellungen"),
+
+    # Names the core uses when it says «translating into …». Capitalised
+    # to match `languages.describe` after the first letter is raised.
+    "Русский": ("Russian", "Russisch"),
+    "Английский": ("English", "Englisch"),
+    "Немецкий": ("German", "Deutsch"),
+    "Китайский": ("Chinese", "Chinesisch"),
+    "Японский": ("Japanese", "Japanisch"),
+    "Испанский": ("Spanish", "Spanisch"),
+    "Итальянский": ("Italian", "Italienisch"),
+    "Французский": ("French", "Französisch"),
 
     # -- home ----------------------------------------------------------
     "Что переводим сегодня?": (
@@ -107,12 +129,96 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     "Нажмите, чтобы начать запись": (
         "Press to start recording", "Zum Aufnehmen drücken",
     ),
+    "Субтитры появятся здесь": (
+        "Subtitles will appear here", "Untertitel erscheinen hier",
+    ),
     "Нажмите на кнопку, чтобы начать": (
         "Press the button to begin", "Zum Beginnen die Taste drücken",
     ),
     "Сохранить транскрипт": ("Save transcript", "Transkript speichern"),
     "Окно субтитров": ("Subtitle window", "Untertitelfenster"),
+    # -- browser ---------------------------------------------------------
+    "Адрес или поиск на YouTube": (
+        "Address or YouTube search", "Adresse oder YouTube-Suche",
+    ),
+    "Включите перевод и запустите видео": (
+        "Turn on translation and play a video",
+        "Übersetzung einschalten und ein Video abspielen",
+    ),
+    "Переводить видео": ("Translate video", "Video übersetzen"),
+    "Скачать и перевести": ("Download and translate", "Herunterladen und übersetzen"),
+    "Видео с этого сайта скачивается перед переводом — откройте пост и включите перевод": (
+        "Videos from this site are downloaded first — open the post and turn on translation",
+        "Videos dieser Seite werden erst geladen — Beitrag öffnen und Übersetzung einschalten",
+    ),
+    "Скачиваю видео…": ("Downloading the video…", "Video wird geladen…"),
+    "Готовлю перевод: {stage}": (
+        "Preparing the translation: {stage}", "Übersetzung wird vorbereitet: {stage}",
+    ),
+    "Перевод готов · {source} → {language} · {count} фраз": (
+        "Translation ready · {source} → {language} · {count} lines",
+        "Übersetzung fertig · {source} → {language} · {count} Zeilen",
+    ),
+    "Перевод готов · {source} → {language} · {count} фраз · мужской и женский голос": (
+        "Translation ready · {source} → {language} · {count} lines · a male and a female voice",
+        "Übersetzung fertig · {source} → {language} · {count} Zeilen · männliche und weibliche Stimme",
+    ),
+    "Видео сменилось — включите перевод снова": (
+        "The video changed — turn translation on again",
+        "Das Video hat gewechselt — Übersetzung erneut einschalten",
+    ),
+    "Догонять": ("Catch up", "Aufholen"),
+    "Пауза — перевод догоняет видео": (
+        "Paused — the translation is catching up",
+        "Pause — die Übersetzung holt auf",
+    ),
+    "← К странице": ("← Back to the page", "← Zurück zur Seite"),
+    "Не удалось прочитать звук из {name}": (
+        "Could not read the sound of {name}", "Der Ton von {name} ist nicht lesbar",
+    ),
+    "Ссылка — видео скачается, когда начнётся перевод": (
+        "Link — the video is downloaded when translation starts",
+        "Link — das Video wird beim Start der Übersetzung geladen",
+    ),
+    "Жду, когда заиграет видео": (
+        "Waiting for a video to play", "Warte, bis ein Video läuft",
+    ),
+    "Слушаю видео": ("Listening to the video", "Höre das Video"),
+    "Слушаю видео · {language}": (
+        "Listening to the video · {language}", "Höre das Video · {language}",
+    ),
+    "Идёт реклама — её не перевожу": (
+        "An ad is playing — not translating it",
+        "Werbung läuft — wird nicht übersetzt",
+    ),
+    "Сейчас идёт живой перевод на экране «Реальное время».": (
+        "A live translation is running on the Live screen.",
+        "Auf dem Bildschirm „Echtzeit“ läuft gerade eine Übersetzung.",
+    ),
+    "Сейчас переводится видео на экране «Браузер».": (
+        "A video is being translated on the Browser screen.",
+        "Auf dem Bildschirm „Browser“ wird gerade ein Video übersetzt.",
+    ),
+    # -- realtime (continued) --------------------------------------------
     "Загружаю модели…": ("Loading models…", "Modelle werden geladen…"),
+    "Озвучка и «Звук системы» идут через одно устройство — «{device}», и "
+    "перевод попадал бы обратно в запись. С голосом здесь можно переводить "
+    "микрофон, а видео из интернета — на экране «Браузер»: он берёт звук "
+    "прямо со страницы.": (
+        "The voice and “System audio” go through the same device, “{device}”, "
+        "so the translation would be recorded back into the session. With the "
+        "voice on, translate the microphone here; for a video from the internet "
+        "use the Browser screen — it takes the sound straight from the page.",
+        "Die Stimme und „Systemton“ laufen über dasselbe Gerät, „{device}“, und "
+        "die Übersetzung würde wieder mit aufgenommen. Mit Stimme lässt sich "
+        "hier das Mikrofon übersetzen; Videos aus dem Internet übersetzt der "
+        "Bildschirm „Browser“ – er nimmt den Ton direkt von der Seite.",
+    ),
+    "Не найдено устройство захвата «{kind}». Доступны: {available}.": (
+        "No capture device found for “{kind}”. Available: {available}.",
+        "Kein Aufnahmegerät für „{kind}“ gefunden. Verfügbar: {available}.",
+    ),
+    "нет": ("none", "keine"),
     "Останавливаю…": ("Stopping…", "Wird beendet…"),
     "Слушаю…": ("Listening…", "Ich höre zu…"),
     "Остановлено": ("Stopped", "Beendet"),
@@ -138,8 +244,50 @@ CATALOGUE: dict[str, tuple[str, str]] = {
     ),
     "Выберите медиафайл": ("Choose a media file", "Mediendatei wählen"),
     "Другой файл": ("Another file", "Andere Datei"),
+    "Не удалось получить список звуковых устройств: {reason}": (
+        "Could not read the list of sound devices: {reason}",
+        "Die Liste der Audiogeräte konnte nicht gelesen werden: {reason}",
+    ),
+    "Тишина на «{device}». Если это созвон, переключите на "
+    "«Звук системы» — из микрофона слышно вас, а не собеседника.": (
+        "Silence on «{device}». On a call, switch to "
+        "«System sound» — a microphone hears you, not the other side.",
+        "Stille auf «{device}». Bei einem Anruf auf "
+        "«Systemton» umschalten — ein Mikrofon hört Sie, nicht die Gegenseite.",
+    ),
+    "Тишина на «{device}». Проверьте, что звук идёт именно "
+    "на это устройство.": (
+        "Silence on «{device}». Check that the sound really goes "
+        "to that device.",
+        "Stille auf «{device}». Prüfen Sie, ob der Ton wirklich "
+        "an dieses Gerät geht.",
+    ),
+    "Проверьте язык": ("Check the language", "Sprache prüfen"),
+    "Запись звучит как {heard}, а распознавали как {used}. "
+    "По неверному языку текст выходит связным и выдуманным — "
+    "проверьте выбор языка и звуковую дорожку файла.": (
+        "The recording sounds like {heard}, but it was transcribed as "
+        "{used}. Under the wrong language the text comes out fluent and "
+        "invented — check the language and the file's audio track.",
+        "Die Aufnahme klingt nach {heard}, transkribiert wurde sie als "
+        "{used}. Mit der falschen Sprache entsteht flüssiger, erfundener "
+        "Text — prüfen Sie Sprache und Tonspur der Datei.",
+    ),
     "ОК": ("OK", "OK"),
     "Начать перевод": ("Start translating", "Übersetzung starten"),
+    "уже {clock}": ("{clock} elapsed", "seit {clock}"),
+    "Распознавание готово — дальше перевод, озвучка и сборка видео": (
+        "Recognition is done — translation, voice and assembling the video still to come",
+        "Erkennung fertig — Übersetzung, Stimme und Videoschnitt folgen noch",
+    ),
+    "Распознавание готово — дальше перевод и озвучка": (
+        "Recognition is done — translation and voice still to come",
+        "Erkennung fertig — Übersetzung und Stimme folgen noch",
+    ),
+    "Распознавание готово — дальше перевод и сохранение файлов": (
+        "Recognition is done — translation and saving the files still to come",
+        "Erkennung fertig — Übersetzung und Speichern der Dateien folgen noch",
+    ),
     "… и ещё {count} субтитров в сохранённых файлах": (
         "… and {count} more subtitles in the saved files",
         "… und {count} weitere Untertitel in den gespeicherten Dateien",
@@ -276,19 +424,19 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "No voice has been set for this language yet.",
         "Für diese Sprache ist noch keine Stimme festgelegt.",
     ),
-    "Язык перевода — {language}. Мужские реплики читает голос {male}, "
-    "женские — {female}. Кто говорит, определяется по высоте голоса в "
-    "оригинале, отдельно для каждой реплики.": (
-        "Translating into {language}. Male lines are read by {male}, female "
-        "lines by {female}. Who is speaking is decided from the pitch of the "
-        "original, line by line.",
-        "Übersetzung nach {language}. Männliche Zeilen liest {male}, "
-        "weibliche {female}. Wer spricht, wird aus der Stimmhöhe des Originals "
-        "bestimmt, Zeile für Zeile.",
+    "Язык перевода — {language}. Мужские реплики читает мужской "
+    "голос, женские — женский. Кто говорит, программа узнаёт по "
+    "тембру голоса, а мужской он или женский — по его высоте.": (
+        "Translating into {language}. Male lines are read in a male voice, "
+        "female lines in a female one. Who is speaking is recognised by the "
+        "timbre of their voice, and male or female by its pitch.",
+        "Übersetzung nach {language}. Männliche Zeilen liest eine männliche "
+        "Stimme, weibliche eine weibliche. Wer spricht, wird am Klang der "
+        "Stimme erkannt, männlich oder weiblich an ihrer Höhe.",
     ),
-    "Язык перевода — {language}. Всё читает один голос, {voice}.": (
-        "Translating into {language}. One voice reads everything: {voice}.",
-        "Übersetzung nach {language}. Eine Stimme liest alles: {voice}.",
+    "Язык перевода — {language}. Всё читает один голос.": (
+        "Translating into {language}. One voice reads everything.",
+        "Übersetzung nach {language}. Eine Stimme liest alles.",
     ),
 
     # -- the three settings added on Day 7 -----------------------------
@@ -317,6 +465,7 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Recognising ({minutes} min)", "Erkennung läuft ({minutes} Min.)",
     ),
     "Собираю субтитры": ("Building subtitles", "Untertitel werden gebaut"),
+    "Различаю голоса": ("Telling the voices apart", "Stimmen werden unterschieden"),
     "Язык оригинала совпал с языком перевода": (
         "The source language is the target language",
         "Ausgangs- und Zielsprache sind gleich",

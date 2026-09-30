@@ -13,6 +13,15 @@ from lt_ui.store import Settings, Store, display_name
 UI_ROOT = Path(__file__).resolve().parent.parent / "lt_ui"
 
 
+@pytest.fixture(scope="module")
+def app():
+    import sys
+
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication(sys.argv)
+
+
 @pytest.fixture(autouse=True)
 def restore_globals():
     """Theme and language are process-wide; put them back after each test."""
@@ -377,3 +386,82 @@ def test_a_chosen_folder_is_created_if_it_does_not_exist_yet(tmp_path):
     store.settings.output_dir = str(target)
     assert store.job_dir("aaa") == target
     assert target.is_dir()
+
+
+# -- every surface answers the pointer -----------------------------------
+#
+# Reported from use: on the home screen the second card lights up under the
+# mouse and the first one does not. It was the accent fill -- `paint_glass`
+# took a `tint` that the accent branch never read, so the lift computed by
+# the card was discarded for exactly the card that had an accent. The rest of
+# this is the same question asked of every other control.
+
+def _painted(widget, hover: bool):
+    """The widget's own pixels, with and without the pointer over it."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QImage
+
+    if hasattr(widget, "lift"):
+        widget.lift = theme.HOVER_LIFT if hover else 0.0
+    widget._hover = hover
+    size = widget.sizeHint() if widget.size().isEmpty() else widget.size()
+    if size.isEmpty():
+        size = QSize(120, 60)
+    widget.resize(size)
+    image = QImage(size, QImage.Format_ARGB32)
+    image.fill(0)
+    widget.render(image)
+    return image.constBits().tobytes()
+
+
+def _controls(app):
+    from lt_ui import glass, widgets
+
+    card = widgets.GlassCard(accent=True)
+    card.resize(280, 210)
+    plain = widgets.GlassCard(accent=False)
+    plain.resize(280, 210)
+    chosen = glass.Chip("Готово")
+    chosen.setChecked(True)
+    swatch = widgets.AccentSwatch("#7fa4ff")
+    switched = glass.Toggle(on=True)
+    recording = glass.RecordButton()
+    recording.setChecked(True)
+    panel = glass.clickable(glass.GlassPanel(), lambda: None)
+    panel.resize(200, 120)
+    return {
+        "accent card": card,
+        "plain card": plain,
+        "primary button": glass.GlassButton("Начать", primary=True),
+        "glass button": glass.GlassButton("Отмена"),
+        "text link": glass.TextLink("Все  →"),
+        "chip": glass.Chip("SRT"),
+        "chosen chip": chosen,
+        "switch": glass.Toggle(),
+        "switch, on": switched,
+        "record button": glass.RecordButton(),
+        "record button, live": recording,
+        "accent swatch": swatch,
+        "clickable panel": panel,
+    }
+
+
+def test_every_control_looks_different_under_the_pointer(app):
+    """A cursor that turns into a hand over a surface that then does nothing
+    reads as broken. Reported for the home screen's accent card; asked here
+    of everything that can be clicked."""
+    deaf = [
+        name for name, control in _controls(app).items()
+        if _painted(control, False) == _painted(control, True)
+    ]
+    assert deaf == [], deaf
+
+
+def test_the_two_styled_controls_carry_a_hover_rule(app):
+    """The picker and the field are drawn by Qt's style sheets rather than by
+    the shared painter, so theirs is written in CSS."""
+    from lt_ui import glass
+
+    for widget in (glass.GlassSelect, glass.GlassInput):
+        for sheet in (widget.DARK, widget.LIGHT):
+            assert ":hover" in sheet, widget.__name__

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -56,6 +57,36 @@ def test_models_stay_with_the_installation():
     each profile would be waste, not tidiness."""
     assert MODEL_ROOT.parent == ROOT
     assert str(MODEL_ROOT) not in str(user_data_dir())
+
+
+def test_from_source_the_program_is_the_repository():
+    from lt_core.install import install_root
+
+    assert install_root() == ROOT
+    assert install_root() == Path(__file__).resolve().parent.parent
+
+
+def test_a_frozen_program_keeps_its_models_beside_the_executable(monkeypatch):
+    """Program Files holds the exe and the models. The bundle's `_internal`
+    is libraries, and a profile must not grow a second copy of them."""
+    import lt_core.install as install
+
+    monkeypatch.setattr(install.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        install.sys, "executable",
+        r"C:\Program Files\Linguaflow\Linguaflow.exe",
+    )
+    root = install.install_root()
+    assert root == Path(r"C:\Program Files\Linguaflow")
+    assert install.model_root() == root / "models"
+    assert "AppData" not in str(install.model_root())
+
+
+def test_a_packaged_build_looks_for_cuda_inside_the_bundle(monkeypatch, tmp_path):
+    from lt_core import runtime
+
+    monkeypatch.setattr(runtime.sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert (tmp_path / "nvidia") in runtime._nvidia_roots()
 
 
 # -- carrying the old state across --------------------------------------
