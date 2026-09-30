@@ -24,7 +24,7 @@ from ..subtitles.bilingual import (
     merge_bilingual,
     translate_cues,
 )
-from ..subtitles.cues import Cue, CueStyle, build_cues
+from ..subtitles.cues import Cue, CueStyle, _wrap, build_cues
 from ..subtitles.export import EXPORTERS, write
 
 DEFAULT_FORMATS = ("srt", "txt")
@@ -287,11 +287,17 @@ def _spread(cues, groups, sentences, language: str, with_space: bool):
     timings never move; only the words change.
     """
     translations: list[str] = [""] * len(cues)
+    style = CueStyle.for_language(language)
+
+    def overflows(text: str) -> bool:
+        return len(_wrap(text.strip(), style)) > style.max_lines
+
     for group, translated in zip(groups, sentences):
         shares = distribute(
             translated,
             [len(cues[position].flat_text) for position in group],
             join_with_space=with_space,
+            overflows=overflows,
         )
         for position, share in zip(group, shares):
             translations[position] = share
