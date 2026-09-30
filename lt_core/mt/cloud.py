@@ -40,6 +40,12 @@ _LANGUAGE_NAMES = {
 }
 
 
+def _model_in(payload: dict) -> str:
+    """The model a request asked for, for an error that should name it."""
+    model = payload.get("model")
+    return str(model) if model else "?"
+
+
 def _post(url: str, payload: dict, headers: dict, timeout: float) -> dict:
     request = urllib.request.Request(
         url,
@@ -61,10 +67,40 @@ def _post(url: str, payload: dict, headers: dict, timeout: float) -> dict:
                 say("Превышен лимит запросов к сервису перевода. "
                     "Подождите или переключитесь в офлайн-режим."), body
             ) from exc
+        # A model, not a key. The catalogue a key can list is wider than the
+        # set it may call: NVIDIA answers 404 "Not found for account" for a
+        # model it shows, and 410 for one it has retired. Blaming the key for
+        # either sends someone off to generate new ones, which is exactly
+        # what happened.
+        if exc.code in (404, 410):
+            raise TranslationError(
+                say("Модель «{model}» недоступна для этого ключа — "
+                    "сервис её не отдаёт. Ключ здесь ни при чём: "
+                    "выберите другую модель или другой сервис.",
+                    model=_model_in(payload)),
+                body,
+            ) from exc
         raise TranslationError(
             f"Сервис перевода ответил ошибкой {exc.code}.", body
         ) from exc
+    # A read that never finishes is not a connection that never opened, and
+    # telling someone to check their internet when their internet is fine
+    # costs them the hour they spend looking at it.
+    except TimeoutError as exc:
+        raise TranslationError(
+            say("Сервис не ответил за {seconds} с. Ключ принят, "
+                "но модель отвечает слишком медленно.",
+                seconds=f"{timeout:.0f}"),
+            repr(exc),
+        ) from exc
     except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            raise TranslationError(
+                say("Сервис не ответил за {seconds} с. Ключ принят, "
+                    "но модель отвечает слишком медленно.",
+                    seconds=f"{timeout:.0f}"),
+                str(exc),
+            ) from exc
         raise TranslationError(
             say("Не удалось связаться с сервисом перевода. "
                 "Проверьте интернет или переключитесь в офлайн-режим."), str(exc)

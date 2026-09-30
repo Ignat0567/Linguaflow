@@ -530,6 +530,34 @@ CATALOGUE: dict[str, tuple[str, str]] = {
         "Der Dienst hat den Schlüssel abgelehnt. Prüfen Sie ihn in den "
         "Einstellungen.",
     ),
+    "Модель «{model}» недоступна для этого ключа — сервис её не отдаёт. "
+    "Ключ здесь ни при чём: выберите другую модель или другой сервис.": (
+        "The model “{model}” is not available to this key — the service will "
+        "not serve it. The key is not the problem: choose another model or "
+        "another service.",
+        "Das Modell „{model}“ steht diesem Schlüssel nicht zur Verfügung — "
+        "der Dienst gibt es nicht heraus. Am Schlüssel liegt es nicht: "
+        "wählen Sie ein anderes Modell oder einen anderen Dienst.",
+    ),
+    "Сервис не ответил за {seconds} с. Ключ принят, "
+    "но модель отвечает слишком медленно.": (
+        "The service did not answer within {seconds} s. The key was accepted; "
+        "the model is simply too slow.",
+        "Der Dienst hat innerhalb von {seconds} s nicht geantwortet. Der "
+        "Schlüssel wurde angenommen, das Modell antwortet nur zu langsam.",
+    ),
+    "Проверяю… {seconds} с. Бесплатные тарифы отвечают медленно.": (
+        "Checking… {seconds} s. Free tiers are slow to answer.",
+        "Prüfe… {seconds} s. Kostenlose Tarife antworten langsam.",
+    ),
+    "Ключ работает, модель ответила за {seconds} с.": (
+        "The key works; the model answered in {seconds} s.",
+        "Der Schlüssel funktioniert; das Modell hat in {seconds} s geantwortet.",
+    ),
+    "Это довольно длинная проверочная строка, которую надо сократить.": (
+        "This is a fairly long test line that needs shortening.",
+        "Dies ist eine ziemlich lange Testzeile, die gekürzt werden muss.",
+    ),
     "Превышен лимит запросов к сервису перевода. Подождите или переключитесь "
     "в офлайн-режим.": (
         "The translation service's rate limit was reached. Wait, or switch to "

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -55,6 +55,48 @@ def _service_labels() -> dict[str, str]:
         "nvidia": "NVIDIA",
         "local": _("Свой сервер"),
     }
+
+
+class _KeyCheck(QThread):
+    """One real request to the service, off the interface thread.
+
+    Short on purpose. The question is whether the key opens the door, and a
+    service that needs longer than this to say one word is a service the
+    person needs to hear about rather than wait for.
+    """
+
+    #: Long enough for a slow free tier to answer, short enough that nobody
+    #: wonders whether the program is still alive.
+    TIMEOUT = 45.0
+
+    answered = Signal(bool, str)
+
+    def __init__(self, service: str, key: str, parent=None) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._key = key
+
+    def run(self) -> None:
+        from lt_core.mt.cloud import build_cloud_provider
+
+        try:
+            provider = build_cloud_provider(
+                service=self._service,
+                timeout=self.TIMEOUT,
+                **({"api_key": self._key} if self._key else {}),
+            )
+            answer = provider.shorten(
+                [(_("Это довольно длинная проверочная строка, "
+                    "которую надо сократить."), 25)],
+                "ru",
+            )
+        except Exception as error:  # noqa: BLE001 -- any failure is the answer
+            self.answered.emit(False, str(error))
+            return
+        if answer and answer[0].strip():
+            self.answered.emit(True, "")
+        else:
+            self.answered.emit(False, _("Сервис ответил, но ничего не прислал."))
 
 
 class SettingsScreen(QWidget):
@@ -137,6 +179,13 @@ class SettingsScreen(QWidget):
         self._key_wrap.setLayout(key_row)
         voice.body.addWidget(self._key_wrap)
         self._key_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
+        #: The check runs in `_KeyCheck`; these count the wait for it, so a
+        #: slow service reads as a slow service and not as a frozen window.
+        self._checker: _KeyCheck | None = None
+        self._waited = QElapsedTimer()
+        self._waiting = QTimer(self)
+        self._waiting.setInterval(1000)
+        self._waiting.timeout.connect(self._tick_waiting)
         voice.body.addWidget(self._key_note)
 
         self._voice_note = glass.label("", 12, 400, theme.TERTIARY, wrap=True)
@@ -532,7 +581,14 @@ class SettingsScreen(QWidget):
             self.app.store.keys.set(service, self._key.text())
 
     def _check_key(self) -> None:
-        """Ask the service a real question, so the answer means something."""
+        """Ask the service a real question, so the answer means something.
+
+        Off the interface thread, always. The question travels to somebody
+        else's server, and a free tier can take a minute to answer or never
+        answer at all -- measured on NVIDIA: 35 s, 9 s, no reply in 90 s,
+        70 s, 38 s for five identical one-word requests. Asked from here,
+        that is a window Windows paints grey and labels "not responding".
+        """
         service = self.app.store.settings.shorten_with
         if not service:
             return
@@ -543,28 +599,42 @@ class SettingsScreen(QWidget):
             # line talking inside a window that has a field for this.
             self._key_note.setText(_("Введите ключ в поле выше."))
             return
-        self._key_note.setText(_("Проверяю…"))
-        self._check.setEnabled(False)
-        QApplication.processEvents()
-        try:
-            from lt_core.mt.cloud import build_cloud_provider
+        if self._checker is not None and self._checker.isRunning():
+            return
 
-            key = self.app.store.keys.get(service)
-            provider = build_cloud_provider(
-                service=service, **({"api_key": key} if key else {})
-            )
-            answer = provider.shorten([("Это довольно длинная проверочная "
-                                        "строка, которую надо сократить.", 25)],
-                                      "ru")
-            ok = bool(answer and answer[0].strip())
+        self._check.setEnabled(False)
+        self._waited.start()
+        self._key_note.setText(_("Проверяю…"))
+        self._waiting.start()
+
+        worker = _KeyCheck(service, self.app.store.keys.get(service), self)
+        worker.answered.connect(self._checked)
+        worker.finished.connect(self._checking_over)
+        self._checker = worker
+        worker.start()
+
+    def _tick_waiting(self) -> None:
+        """Say the wait is still a wait, not a hang."""
+        seconds = int(self._waited.elapsed() / 1000)
+        self._key_note.setText(
+            _("Проверяю… {seconds} с. Бесплатные тарифы отвечают медленно.",
+              seconds=seconds)
+        )
+
+    def _checked(self, ok: bool, message: str) -> None:
+        self._waiting.stop()
+        took = self._waited.elapsed() / 1000
+        if ok:
             self._key_note.setText(
-                _("Ключ работает, модель отвечает.") if ok
-                else _("Сервис ответил, но ничего не прислал.")
+                _("Ключ работает, модель ответила за {seconds} с.",
+                  seconds=f"{took:.0f}")
             )
-        except Exception as error:  # noqa: BLE001 -- any failure is the answer
-            self._key_note.setText(str(error))
-        finally:
-            self._check.setEnabled(True)
+        else:
+            self._key_note.setText(message)
+
+    def _checking_over(self) -> None:
+        self._waiting.stop()
+        self._check.setEnabled(True)
 
     def _sync_condense(self, on: bool) -> None:
         self.app.store.settings.condense = on

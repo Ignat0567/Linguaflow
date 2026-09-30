@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QSurface
+from PySide6.QtGui import QIcon, QPainter, QSurface
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lt_core.install import install_root
 from lt_core.runtime import bootstrap
 
 from . import backdrop as backdrop_module
@@ -74,6 +75,10 @@ class Window(QWidget):
     def __init__(self, store: Store | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Linguaflow")
+        # Also on the window itself, not only on the application: a window
+        # created before `run` set the application icon -- a test, a
+        # screenshot pass -- would otherwise carry Qt's default.
+        self.setWindowIcon(brand_icon())
         # The window lets the desktop through, and the compositor is asked to
         # frost it on the way, so that what shows through is a surface rather
         # than somebody's browser. Two things are needed and only together:
@@ -276,14 +281,49 @@ class Window(QWidget):
         self.update()
 
 
+#: The mark, cut from the supplied logotype by `tools/make_icon.py`.
+APP_ICON = install_root() / "assets" / "icon.ico"
+
+#: Windows groups taskbar buttons by this, and takes the group's icon from
+#: whatever it thinks the application is. Without one of our own, a program
+#: started through a Python interpreter is "Python": Python's icon on the
+#: taskbar, and our windows filed under it.
+APP_ID = "Linguaflow.Linguaflow.Desktop.1"
+
+
+def brand_icon() -> QIcon:
+    """The application's own icon, or an empty one if it is not there.
+
+    An empty QIcon is what Qt already had; a missing file should cost the
+    picture, not the program.
+    """
+    return QIcon(str(APP_ICON)) if APP_ICON.is_file() else QIcon()
+
+
+def _claim_taskbar_identity() -> None:
+    """Tell Windows this is its own application, before a window exists."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except (AttributeError, OSError):
+        # Older Windows, or a shell that will not say. The window icon is
+        # still set; only the grouping is lost.
+        pass
+
+
 def run(
     data_dir: Path | str | None = None,
     screenshot: Path | str | None = None,
 ) -> int:
     bootstrap(MODEL_ROOT)
+    _claim_taskbar_identity()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Linguaflow")
     app.setApplicationDisplayName("Linguaflow")
+    app.setWindowIcon(brand_icon())
     if screenshot and data_dir is None:
         import tempfile
         data_dir = tempfile.mkdtemp(prefix="linguaflow-")
